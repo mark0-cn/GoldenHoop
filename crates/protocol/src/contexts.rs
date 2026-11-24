@@ -43,18 +43,40 @@ pub enum CodeContextState {
     Unknown,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CodeContextDesiredState {
+    #[default]
+    Open,
+    Closed,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CodeContext {
     pub id: Uuid,
     pub sandbox_id: Uuid,
     pub spec: CodeContextSpec,
     pub state: CodeContextState,
+    #[serde(default)]
+    pub desired_state: CodeContextDesiredState,
     pub cleanup: CleanupState,
     pub created_at: DateTime<Utc>,
     pub ready_at: Option<DateTime<Utc>>,
     pub finished_at: Option<DateTime<Utc>>,
     pub kernel_info: Option<serde_json::Value>,
     pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct CodeContextPage {
+    pub items: Vec<CodeContext>,
+    pub next_after: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct CodeRunPage {
+    pub items: Vec<CodeRun>,
+    pub next_after: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

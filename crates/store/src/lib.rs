@@ -1,5 +1,6 @@
 //! Durable control state. Runtime access belongs exclusively to the worker.
 mod artifacts;
+mod contexts;
 mod executions;
 mod lifecycle;
 mod sessions;
@@ -51,6 +52,24 @@ pub struct StoredArtifact {
 pub struct StoredSessionControl {
     pub request: SessionControl,
     pub receipt: SessionControlReceipt,
+}
+
+#[derive(Debug, Clone)]
+pub struct StoredCodeContext {
+    pub context: CodeContext,
+    /// Set before any create RPC. A missing previously dispatched ID is not replayable.
+    pub dispatched: bool,
+    pub ever_ready: bool,
+    /// Agent acknowledgement cursor, distinct from the public event cursor.
+    pub cursor: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct StoredCodeRun {
+    pub run: CodeRun,
+    pub spec: CodeRunSpec,
+    pub dispatched: bool,
+    pub cancel_requested: bool,
 }
 
 /// Private host metadata. Never serialize this structure through the public API.
@@ -225,7 +244,7 @@ impl Store {
                 .fetch_one(&mut *tx)
                 .await
                 .map_err(db)?;
-        if !matches!(version.as_str(), "1" | "2" | "3") {
+        if !matches!(version.as_str(), "1" | "2" | "3" | "4") {
             return Err(ApiError::new(
                 ErrorCode::UnsupportedCapability,
                 "database schema version is unsupported",
@@ -237,8 +256,14 @@ impl Store {
                 .await
                 .map_err(db)?;
         }
-        if version != "3" {
+        if matches!(version.as_str(), "1" | "2") {
             sqlx::raw_sql(include_str!("schema-v3.sql"))
+                .execute(&mut *tx)
+                .await
+                .map_err(db)?;
+        }
+        if version != "4" {
+            sqlx::raw_sql(include_str!("schema-v4.sql"))
                 .execute(&mut *tx)
                 .await
                 .map_err(db)?;

@@ -118,6 +118,7 @@ impl Agent {
             sandbox_id: Uuid::nil(),
             spec,
             state: CodeContextState::Starting,
+            desired_state: CodeContextDesiredState::Open,
             cleanup: CleanupState::Pending,
             created_at: Utc::now(),
             ready_at: None,
@@ -155,6 +156,7 @@ impl Agent {
     ) -> Result<AgentResponse, ApiError> {
         let context = self.context(id).await?;
         let mut record = context.record.lock().await;
+        record.desired_state = CodeContextDesiredState::Closed;
         if matches!(
             record.state,
             CodeContextState::Starting | CodeContextState::Ready
