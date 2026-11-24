@@ -103,7 +103,7 @@ impl Store {
     }
 
     pub async fn execution_work(&self, sandbox_id: Uuid) -> Result<Vec<StoredExecution>, ApiError> {
-        sqlx::query("SELECT * FROM executions WHERE sandbox_id=? AND state IN('pending','running','unknown') ORDER BY id")
+        sqlx::query("SELECT * FROM executions WHERE sandbox_id=? AND state IN('pending','running','unknown') ORDER BY cancel_requested DESC,CASE state WHEN 'running' THEN 0 WHEN 'unknown' THEN 1 ELSE 2 END,json_extract(payload,'$.created_at'),id")
             .bind(sandbox_id.to_string()).fetch_all(&self.pool).await.map_err(db)?.iter().map(execution_row).collect()
     }
 

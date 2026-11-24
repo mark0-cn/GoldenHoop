@@ -46,6 +46,10 @@ jobs:
           docker pull debian:bookworm-slim
           docker build -f tests/fixtures/image-policy.Dockerfile -t goldenhoop-image-policy:test .
           cargo run --locked --quiet -p goldenhoop-docker --example contract
+      - name: Build independent API and worker services
+        run: cargo build --locked -p goldenhoop-control --bin goldenhoopd
+      - name: Exercise API restart, worker recovery and cleanup
+        run: python3 -B tests/api_contract.py --binary target/debug/goldenhoopd --runtime ${{ matrix.runtime }} --work-dir .test-work --output evidence/api-${{ matrix.runtime }}.json
       - name: Verify no test containers remain
         if: always()
         shell: bash

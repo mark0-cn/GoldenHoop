@@ -96,7 +96,10 @@ pub fn transition(current: SandboxState, next: SandboxState) -> Result<SandboxSt
         Paused => matches!(next, Resuming | Stopping | Failed | Unknown),
         Resuming => matches!(next, Running | Stopping | Failed | Unknown),
         Stopping => matches!(next, Terminated | Failed | Unknown),
-        Unknown => matches!(next, Running | Paused | Stopping | Terminated | Failed),
+        Unknown => matches!(
+            next,
+            Starting | Running | Paused | Stopping | Terminated | Failed
+        ),
         Terminated | Failed => false,
     };
     if allowed {

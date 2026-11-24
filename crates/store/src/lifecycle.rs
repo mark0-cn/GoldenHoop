@@ -337,17 +337,21 @@ impl Store {
         error: Option<ApiError>,
     ) -> Result<(), ApiError> {
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
-        let sandbox = sandbox_row(
+        let stored = sandbox_row(
             &sqlx::query("SELECT * FROM sandboxes WHERE id=?")
                 .bind(id.to_string())
                 .fetch_one(&mut *tx)
                 .await
                 .map_err(db)?,
-        )?
-        .sandbox;
+        )?;
+        let sandbox = &stored.sandbox;
         if state == OperationState::Succeeded
             && !match kind {
-                "create" | "resume" => sandbox.state == SandboxState::Running,
+                "create" => {
+                    stored.ever_running
+                        && matches!(sandbox.state, SandboxState::Running | SandboxState::Paused)
+                }
+                "resume" => sandbox.state == SandboxState::Running,
                 "pause" => sandbox.state == SandboxState::Paused,
                 "terminate" => sandbox.cleanup == CleanupState::Complete,
                 _ => false,
