@@ -62,6 +62,7 @@ def run(args):
             evidence["logs"] = (logs.stdout + logs.stderr)[-65536:]
             raise AssertionError(f"kernel experiment failed: exit={exit_code}, records={len(records)}")
         result = records[0]
+        assert result["transport"] == "goldenhoop_bounded_zmtp30"
         assert result["result"] == "passed" and result["kernel_exit_code"] == 0 and result["private_files_removed"] is True
         assert [run["reply"]["status"] for run in result["runs"]] == ["ok", "ok", "error"]
         assert result["runs"][1]["stream"] == "42\n" and result["runs"][2]["exception"] == "ValueError"

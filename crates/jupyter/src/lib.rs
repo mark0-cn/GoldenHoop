@@ -6,6 +6,9 @@ use sha2_11::Sha256;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
+#[cfg(target_os = "linux")]
+pub mod ipc;
+
 pub const DELIMITER: &[u8] = b"<IDS|MSG>";
 pub const MAX_MESSAGE_BYTES: usize = 16 * 1024 * 1024;
 pub const MAX_JSON_BYTES: usize = 2 * 1024 * 1024;

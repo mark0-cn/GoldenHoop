@@ -13,37 +13,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
 #[cfg(target_os = "linux")]
 mod linux {
-    use bytes::Bytes;
+    use goldenhoop_jupyter::ipc::{Role, Socket};
     use goldenhoop_jupyter::{Codec, Message};
     use serde_json::{Value, json};
     use std::{process::Stdio, time::Duration};
     use tokio::time::Instant;
     use uuid::Uuid;
-    use zeromq::{DealerSocket, Socket, SocketRecv, SocketSend, SubSocket, ZmqMessage};
 
     type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
     struct Peer {
         codec: Codec,
-        shell: DealerSocket,
-        publish: SubSocket,
-        control: DealerSocket,
+        shell: Socket,
+        publish: Socket,
+        control: Socket,
     }
     impl Peer {
-        fn frame(&self, id: Uuid, kind: &str, content: Value) -> Result<ZmqMessage> {
-            Ok(self
-                .codec
-                .request(id, kind, content)?
-                .into_iter()
-                .map(Bytes::from)
-                .collect::<Vec<_>>()
-                .try_into()
-                .map_err(|_| "empty kernel request")?)
+        fn frame(&self, id: Uuid, kind: &str, content: Value) -> Result<Vec<Vec<u8>>> {
+            Ok(self.codec.request(id, kind, content)?)
         }
         async fn next(&mut self, deadline: Instant) -> Result<Message> {
             let raw=tokio::time::timeout_at(deadline,async {
-                tokio::select! {message=self.shell.recv()=>message,message=self.publish.recv()=>message}
+                tokio::select! {message=self.shell.receive()=>message,message=self.publish.receive()=>message}
             }).await??;
-            Ok(self.codec.decode(&raw.into_vec())?)
+            Ok(self.codec.decode(&raw)?)
         }
         async fn ready(&mut self) -> Result<Value> {
             // Kernel-info is safe to retry while establishing real subscription readiness.
@@ -128,8 +120,8 @@ mod linux {
                 .await?;
             let deadline = Instant::now() + Duration::from_secs(5);
             loop {
-                let raw = tokio::time::timeout_at(deadline, self.control.recv()).await??;
-                let reply = self.codec.decode(&raw.into_vec())?;
+                let raw = tokio::time::timeout_at(deadline, self.control.receive()).await??;
+                let reply = self.codec.decode(&raw)?;
                 if reply.message_type() == "shutdown_reply"
                     && reply.parent_id() == Some(parent.as_str())
                 {
@@ -196,28 +188,34 @@ mod linux {
             }
             let mut peer = Peer {
                 codec: Codec::new(key.as_bytes().to_vec(), Uuid::new_v4())?,
-                shell: DealerSocket::new(),
-                publish: SubSocket::new(),
-                control: DealerSocket::new(),
+                publish: tokio::time::timeout(
+                    Duration::from_secs(5),
+                    Socket::connect(
+                        std::path::Path::new(&format!("{}-2", prefix.display())),
+                        Role::Subscriber,
+                        1000,
+                    ),
+                )
+                .await??,
+                shell: tokio::time::timeout(
+                    Duration::from_secs(5),
+                    Socket::connect(
+                        std::path::Path::new(&format!("{}-1", prefix.display())),
+                        Role::Dealer,
+                        1000,
+                    ),
+                )
+                .await??,
+                control: tokio::time::timeout(
+                    Duration::from_secs(5),
+                    Socket::connect(
+                        std::path::Path::new(&format!("{}-4", prefix.display())),
+                        Role::Dealer,
+                        1000,
+                    ),
+                )
+                .await??,
             };
-            peer.publish.subscribe("").await?;
-            tokio::time::timeout(
-                Duration::from_secs(5),
-                peer.publish
-                    .connect(&format!("ipc://{}-2", prefix.display())),
-            )
-            .await??;
-            tokio::time::timeout(
-                Duration::from_secs(5),
-                peer.shell.connect(&format!("ipc://{}-1", prefix.display())),
-            )
-            .await??;
-            tokio::time::timeout(
-                Duration::from_secs(5),
-                peer.control
-                    .connect(&format!("ipc://{}-4", prefix.display())),
-            )
-            .await??;
             let info = peer.ready().await?;
             let first = peer.execute("value = 40\nprint('first')").await?;
             let second = peer.execute("print(value + 2)\nvalue + 2").await?;
@@ -240,7 +238,7 @@ mod linux {
                 return Err("kernel did not exit successfully after shutdown".into());
             }
             Ok::<_, Box<dyn std::error::Error + Send + Sync>>(
-                json!({"suite":"jupyter-ipc-interoperability","result":"passed","kernel_info":info,"runs":[first,second,third],"kernel_exit_code":status.code()}),
+                json!({"suite":"jupyter-ipc-interoperability","transport":"goldenhoop_bounded_zmtp30","result":"passed","kernel_info":info,"runs":[first,second,third],"kernel_exit_code":status.code()}),
             )
         };
         let result = tokio::time::timeout(Duration::from_secs(40), operation).await;
