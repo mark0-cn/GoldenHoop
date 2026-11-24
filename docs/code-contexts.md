@@ -2,7 +2,9 @@
 
 Code contexts are the next M2 increment and are not implemented or advertised yet. This plan preserves the Rust production-code requirement while using existing language kernels as workload dependencies. It does not mark M2 complete.
 
-The initial goldenhoop-jupyter crate implements only bounded request framing and JSON-frame HMAC verification. Three portable tests cover an independently computed Python-stdlib signature vector, exact-byte verification, unsigned/tampered/wrong-key refusal, bounds and the protocol's unsigned routing/buffer scope. Actual kernel transport, startup, interpreter execution and cleanup remain unimplemented and unverified.
+The initial goldenhoop-jupyter crate implements bounded request framing and JSON-frame HMAC verification. Three portable tests cover an independently computed Python-stdlib signature vector, exact-byte verification, unsigned/tampered/wrong-key refusal, bounds and the protocol's unsigned routing/buffer scope.
+
+A Linux-only experimental Rust peer now connects over IPC to an actual IPyKernel workload. The [local runc experiment](evidence/m2-kernel-ipc-runc-windows-docker.json) observed authenticated kernel-info plus matching output-idle readiness, two snippets retaining state and returning 42, and a third snippet reporting the expected ValueError. Completion requires both the matching execute reply and output idle. Shutdown observed process exit 0 and private-file absence; the harness confirmed container and fixture-image removal. The workload used UID 1000, no network, a read-only root, dropped capabilities and bounded cgroup resources. The actual kernel reported Jupyter protocol 5.3. This experiment is not the production agent context lifecycle, scoped UID collection, durable execution or public API. The expanded gVisor experiment remains pending.
 
 ## Execution boundary
 
@@ -20,7 +22,7 @@ The adapter accepts only its generated IPC paths, fixed channel assignments and 
 
 Startup must observe an authenticated kernel-info reply and usable output subscription. A kernel launch or connection-file write alone is insufficient. The actual implementation must handle subscription readiness without assuming a sleep proves delivery. Protocol-version negotiation must support the selected real fixture and reject incompatible versions explicitly.
 
-The [Jupyter messaging specification](https://jupyter-client.readthedocs.io/en/stable/messaging.html) defines the channel/framing/authentication contract. The [zeromq crate API](https://docs.rs/zeromq/latest/zeromq/) exposes the Rust socket roles; its configuration and bounds still require implementation review. [IPyKernel connection documentation](https://ipykernel.readthedocs.io/en/stable/api/ipykernel.html) describes kernel connection files. These references do not establish a working GoldenHoop adapter.
+The [Jupyter messaging specification](https://jupyter-client.readthedocs.io/en/stable/messaging.html) defines the channel/framing/authentication contract. The [zeromq crate API](https://docs.rs/zeromq/latest/zeromq/) exposes the Rust socket roles. The experiment uses zeromq 0.7 with only Tokio and IPC transport enabled. Production review must still establish transport allocation bounds before advertising them; codec checks after message assembly alone do not establish a preallocation bound. [IPyKernel connection documentation](https://ipykernel.readthedocs.io/en/stable/api/ipykernel.html) describes kernel connection files. The linked specifications support the design; actual runtime observations support the narrower experiment described above.
 
 ## Results and lifetimes
 
