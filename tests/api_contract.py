@@ -20,6 +20,7 @@ from contextlib import closing
 from pathlib import Path
 from artifact_contract import Contract as ArtifactFixture
 from api_context_contract import ContextCases
+from api_isolated_contract import IsolatedCases
 
 
 def docker(*args):
@@ -36,7 +37,7 @@ class ApiFailure(RuntimeError):
         super().__init__(f"HTTP {status}: {error.get('code')}: {error.get('message')}")
 
 
-class Contract(ContextCases):
+class Contract(ContextCases, IsolatedCases):
     def __init__(self, args):
         self.args = args
         self.work = Path(args.work_dir).resolve()
@@ -357,6 +358,7 @@ class Contract(ContextCases):
                             "GOLDENHOOP_TEST_PROFILE": "local-gvisor" if self.args.runtime == "runsc" else "local-runc-dev",
                             "GOLDENHOOP_TEST_IMAGE": self.args.image,
                             "GOLDENHOOP_TEST_DIRECTORY": str(self.root),
+                            "GOLDENHOOP_TEST_ISOLATED_SESSIONS": "1",
                             "PYTHONPATH": str(root / "sdk" / "python" / "src")})
         environment.pop("GOLDENHOOP_TEST_KERNEL_IMAGE", None)
         if self.args.kernel_image:
@@ -365,7 +367,7 @@ class Contract(ContextCases):
         for command in ([str(Path(self.args.rust_client).resolve())],
                         [sys.executable, "-B", str(root / "tests" / "client_contract.py"), "--cli", str(Path(self.args.cli).resolve())]):
             result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8",
-                                    env=environment, timeout=180,
+                                    env=environment, timeout=300,
                                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             assert result.returncode == 0, (command, result.stdout, result.stderr)
             self.sdk_results.append(json.loads(result.stdout))
@@ -825,10 +827,13 @@ assert not alive,alive
                          "pty_public_controls_resize_binary_input_and_half_close_refusal",
                          "lost_runtime_never_replays_queued_session_input",
                          "paused_interactive_session_expires_while_api_is_down")
-            for name in (() if self.args.clients_only or self.args.contexts_only else cases):
+            for name in (() if self.args.clients_only or self.args.contexts_only or self.args.isolated_only else cases):
                 self.check(name, getattr(self, name))
-            if self.args.kernel_image and not self.args.clients_only:
+            if self.args.kernel_image and not self.args.clients_only and not self.args.isolated_only:
                 for name in self.context_cases:
+                    self.check(name, getattr(self, name))
+            if not self.args.clients_only and not self.args.contexts_only:
+                for name in self.isolated_cases:
                     self.check(name, getattr(self, name))
             if self.args.rust_client and self.args.cli:
                 self.check("actual_sdk_and_cli_contracts", self.actual_sdk_and_cli_contracts)
@@ -848,11 +853,13 @@ assert not alive,alive
             sources.extend((root / "crates").rglob("Cargo.toml"))
             sources.append(root / "tests" / "artifact_contract.py")
             sources.append(root / "tests" / "api_context_contract.py")
+            sources.append(root / "tests" / "api_isolated_contract.py")
             if self.args.rust_client:
                 sources.extend((root / "sdk").rglob("*.py"))
                 sources.extend((root / "sdk").rglob("pyproject.toml"))
                 sources.append(root / "tests" / "client_contract.py")
                 sources.append(root / "tests" / "code_client_contract.py")
+                sources.append(root / "tests" / "isolated_client_contract.py")
                 evidence["client_binary_sha256"] = {name: hashlib.sha256(Path(path).read_bytes()).hexdigest()
                                                      for name, path in (("rust", self.args.rust_client), ("cli", self.args.cli))}
             evidence["source_files_sha256"] = {p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(sources)}
@@ -935,6 +942,7 @@ if __name__ == "__main__":
     parser.add_argument("--clients-only", action="store_true")
     parser.add_argument("--kernel-image")
     parser.add_argument("--contexts-only", action="store_true")
+    parser.add_argument("--isolated-only", action="store_true")
     parser.add_argument("--artifact-backend", choices=("local", "s3"), default="local")
     parser.add_argument("--remove-artifact-fixture-image", action="store_true")
     arguments = parser.parse_args()
@@ -944,4 +952,6 @@ if __name__ == "__main__":
         parser.error("--clients-only requires --rust-client and --cli")
     if arguments.contexts_only and (not arguments.kernel_image or arguments.clients_only):
         parser.error("--contexts-only requires --kernel-image and cannot be combined with --clients-only")
+    if arguments.isolated_only and (arguments.contexts_only or arguments.clients_only):
+        parser.error("--isolated-only cannot be combined with --contexts-only or --clients-only")
     Contract(arguments).run()

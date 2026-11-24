@@ -1,5 +1,5 @@
 use super::*;
-use goldenhoop_core::{MAX_SESSION_TOTAL_INPUT_BYTES, expired, validate_session_control};
+use goldenhoop_core::{MAX_SESSION_TOTAL_INPUT_BYTES, validate_session_control};
 
 fn control_row(row: &sqlx::sqlite::SqliteRow) -> Result<StoredSessionControl, ApiError> {
     Ok(StoredSessionControl {
@@ -138,20 +138,23 @@ impl Store {
             tx.commit().await.map_err(db)?;
             return Ok(receipt);
         }
-        let row=sqlx::query("SELECT e.payload AS execution,e.cancel_requested,b.payload AS sandbox,b.desired AS desired FROM sessions s JOIN executions e ON e.id=s.execution_id JOIN sandboxes b ON b.id=e.sandbox_id WHERE e.id=?")
+        let row=sqlx::query("SELECT e.payload AS execution,e.cancel_requested,s.spec AS session FROM sessions s JOIN executions e ON e.id=s.execution_id WHERE e.id=?")
             .bind(id.to_string()).fetch_optional(&mut *tx).await.map_err(db)?.ok_or_else(||not_found("session"))?;
         let execution: Execution = decode(row.try_get("execution").map_err(db)?)?;
-        let sandbox: Sandbox = decode(row.try_get("sandbox").map_err(db)?)?;
+        let session: SessionSpec = decode(row.try_get("session").map_err(db)?)?;
         if execution.state.is_terminal()
             || row.try_get::<bool, _>("cancel_requested").map_err(db)?
-            || sandbox.state != SandboxState::Running
-            || row.try_get::<&str, _>("desired").map_err(db)? != "running"
-            || expired(&sandbox, Utc::now())
         {
             return Err(ApiError::new(
                 ErrorCode::InvalidState,
                 "session is not accepting controls",
             ));
+        }
+        super::isolated::require_work(&mut tx, execution.sandbox_id, Capability::ShellSessions)
+            .await?;
+        if session.terminal.is_some() {
+            super::isolated::require_feature_limit(&mut tx, execution.sandbox_id, Capability::Pty)
+                .await?;
         }
         let count: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM session_controls WHERE execution_id=?")

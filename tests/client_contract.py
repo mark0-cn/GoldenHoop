@@ -301,4 +301,8 @@ if __name__ == "__main__":
         from code_client_contract import sync_code_contract, async_code_contract, cli_code_contract
         for result,code in zip(results,[sync_code_contract(),asyncio.run(async_code_contract()),cli_code_contract(args.cli)],strict=True):
             result["code_contexts"]=code
+    if os.environ.get("GOLDENHOOP_TEST_ISOLATED_SESSIONS") == "1":
+        from isolated_client_contract import sync_isolated_contract, async_isolated_contract, cli_isolated_contract
+        for result, isolated in zip(results, [sync_isolated_contract(), asyncio.run(async_isolated_contract()), cli_isolated_contract(args.cli)], strict=True):
+            result["isolated_sessions"] = isolated
     print(json.dumps({"clients": results, "httpx": httpx.__version__, "result": "passed"}))

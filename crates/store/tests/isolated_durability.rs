@@ -35,6 +35,11 @@ fn profile() -> RuntimeProfile {
         capabilities: BTreeSet::from([
             Capability::Commands,
             Capability::Files,
+            Capability::ShellSessions,
+            Capability::Pty,
+            Capability::CodeContexts,
+            Capability::Artifacts,
+            Capability::Diagnostics,
             Capability::Pause,
             Capability::NetworkIsolation,
             Capability::IsolatedSessions,
@@ -89,6 +94,441 @@ async fn collect(store: &Store, id: Uuid) {
     }
     record.sandbox.cleanup = CleanupState::Complete;
     store.observe(record).await.unwrap();
+}
+
+async fn ready_context(store: &Store, sandbox: Uuid) -> CodeContext {
+    let mut context = store
+        .create_code_context(sandbox, &CodeContextSpec::default(), "ready")
+        .await
+        .unwrap();
+    assert!(store.dispatch_code_context(context.id).await.unwrap());
+    context.state = CodeContextState::Ready;
+    context.ready_at = Some(chrono::Utc::now());
+    context.kernel_info =
+        Some(serde_json::json!({"protocol_version":"5.3","language_info":{"name":"python"}}));
+    store
+        .append_code_context_events(
+            context.id,
+            &[CodeContextEvent {
+                context_id: context.id,
+                run_id: None,
+                sequence: 1,
+                timestamp: chrono::Utc::now(),
+                kind: CodeContextEventKind::Ready,
+                data: serde_json::to_value(&context).unwrap(),
+            }],
+        )
+        .await
+        .unwrap();
+    context
+}
+
+#[tokio::test]
+async fn immutable_feature_ceilings_fence_every_new_work_entry_point() {
+    checked(|store, _| async move {
+        let parent = root(&store, Some(limits(1000, 512, 128)), 300).await;
+        let spec = CreateIsolatedSession {
+            resources: limits(100, 64, 16),
+            feature_limit: Some(BTreeSet::new()),
+            ..Default::default()
+        };
+        let child = store
+            .create_isolated_session(&profile(), parent, &spec, "denied")
+            .await
+            .unwrap()
+            .sandbox
+            .id;
+        running(&store, child).await;
+        assert_eq!(
+            store
+                .create_execution(child, &CommandSpec::new(["true"]), "cmd")
+                .await
+                .unwrap_err()
+                .code,
+            ErrorCode::Forbidden
+        );
+        assert_eq!(
+            store
+                .create_session(child, &SessionSpec::shell(), "shell")
+                .await
+                .unwrap_err()
+                .code,
+            ErrorCode::Forbidden
+        );
+        assert_eq!(
+            store
+                .create_code_context(child, &CodeContextSpec::default(), "ctx")
+                .await
+                .unwrap_err()
+                .code,
+            ErrorCode::Forbidden
+        );
+        assert_eq!(
+            store
+                .create_artifact(
+                    child,
+                    &CreateArtifact {
+                        path: "file".into(),
+                        name: "file".into()
+                    },
+                    "artifact"
+                )
+                .await
+                .unwrap_err()
+                .code,
+            ErrorCode::Forbidden
+        );
+        for feature in [
+            Capability::Files,
+            Capability::Diagnostics,
+            Capability::Artifacts,
+            Capability::CodeContexts,
+        ] {
+            assert_eq!(
+                store
+                    .authorize_feature(child, feature)
+                    .await
+                    .unwrap_err()
+                    .code,
+                ErrorCode::Forbidden
+            );
+        }
+        assert_eq!(
+            store
+                .set_desired(child, DesiredState::Paused, "pause")
+                .await
+                .unwrap_err()
+                .code,
+            ErrorCode::Forbidden
+        );
+        assert_eq!(
+            store
+                .create_isolated_session(
+                    &profile(),
+                    child,
+                    &CreateIsolatedSession::default(),
+                    "grandchild"
+                )
+                .await
+                .unwrap_err()
+                .code,
+            ErrorCode::Forbidden
+        );
+        let shell = store
+            .create_isolated_session(
+                &profile(),
+                parent,
+                &CreateIsolatedSession {
+                    resources: limits(100, 64, 16),
+                    feature_limit: Some(BTreeSet::from([Capability::ShellSessions])),
+                    ..Default::default()
+                },
+                "shell-only",
+            )
+            .await
+            .unwrap()
+            .sandbox
+            .id;
+        running(&store, shell).await;
+        store
+            .create_session(shell, &SessionSpec::shell(), "pipe")
+            .await
+            .unwrap();
+        let mut pty = SessionSpec::shell();
+        pty.terminal = Some(TerminalSize {
+            rows: 24,
+            columns: 80,
+        });
+        assert_eq!(
+            store
+                .create_session(shell, &pty, "pty")
+                .await
+                .unwrap_err()
+                .code,
+            ErrorCode::Forbidden
+        );
+        assert_eq!(
+            store
+                .create_execution(shell, &CommandSpec::new(["true"]), "cmd")
+                .await
+                .unwrap_err()
+                .code,
+            ErrorCode::Forbidden
+        );
+        collect(&store, child).await;
+        collect(&store, shell).await;
+        collect(&store, parent).await;
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn ancestor_pause_fences_acceptance_and_dispatch_but_preserves_replay_and_close() {
+    checked(|store, _| async move {
+        let parent = root(&store, Some(limits(1000, 512, 128)), 300).await;
+        let child = store
+            .create_isolated_session(
+                &profile(),
+                parent,
+                &CreateIsolatedSession {
+                    resources: limits(100, 64, 16),
+                    ..Default::default()
+                },
+                "child",
+            )
+            .await
+            .unwrap()
+            .sandbox
+            .id;
+        running(&store, child).await;
+        let command = CommandSpec::new(["true"]);
+        let execution = store
+            .create_execution(child, &command, "old")
+            .await
+            .unwrap();
+        let session = store
+            .create_session(child, &SessionSpec::shell(), "old")
+            .await
+            .unwrap();
+        let control = SessionControl {
+            sequence: 1,
+            action: SessionAction::CloseInput,
+        };
+        store
+            .enqueue_session_control(session.execution.id, &control)
+            .await
+            .unwrap();
+        let context = ready_context(&store, child).await;
+        let run_spec = CodeRunSpec::new("42");
+        let run = store
+            .create_code_run(context.id, &run_spec, "old")
+            .await
+            .unwrap();
+        let pending = store
+            .create_code_context(child, &CodeContextSpec::default(), "pending")
+            .await
+            .unwrap();
+        let artifact_spec = CreateArtifact {
+            path: "file".into(),
+            name: "file".into(),
+        };
+        let artifact = store
+            .create_artifact(child, &artifact_spec, "old")
+            .await
+            .unwrap();
+        store
+            .set_desired(parent, DesiredState::Paused, "pause")
+            .await
+            .unwrap();
+        assert_eq!(
+            store.sandbox(child).await.unwrap().sandbox.desired_state,
+            DesiredState::Running
+        );
+        assert_eq!(
+            store
+                .authorize_work(child, Capability::Files)
+                .await
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidState
+        );
+        assert_eq!(
+            store
+                .create_execution(child, &command, "new")
+                .await
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidState
+        );
+        assert_eq!(
+            store
+                .create_session(child, &SessionSpec::shell(), "new")
+                .await
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidState
+        );
+        assert_eq!(
+            store
+                .enqueue_session_control(
+                    session.execution.id,
+                    &SessionControl {
+                        sequence: 2,
+                        action: SessionAction::CloseInput
+                    }
+                )
+                .await
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidState
+        );
+        assert_eq!(
+            store
+                .create_code_context(child, &CodeContextSpec::default(), "new")
+                .await
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidState
+        );
+        assert_eq!(
+            store
+                .dispatch_code_context(pending.id)
+                .await
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidState
+        );
+        assert_eq!(
+            store
+                .create_code_run(context.id, &run_spec, "new")
+                .await
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidState
+        );
+        assert_eq!(
+            store.dispatch_code_run(run.id).await.unwrap_err().code,
+            ErrorCode::InvalidState
+        );
+        assert_eq!(
+            store
+                .create_artifact(child, &artifact_spec, "new")
+                .await
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidState
+        );
+        assert_eq!(
+            store
+                .create_execution(child, &command, "old")
+                .await
+                .unwrap()
+                .id,
+            execution.id
+        );
+        assert_eq!(
+            store
+                .create_session(child, &SessionSpec::shell(), "old")
+                .await
+                .unwrap()
+                .execution
+                .id,
+            session.execution.id
+        );
+        store
+            .enqueue_session_control(session.execution.id, &control)
+            .await
+            .unwrap();
+        assert_eq!(
+            store
+                .create_code_run(context.id, &run_spec, "old")
+                .await
+                .unwrap()
+                .id,
+            run.id
+        );
+        assert_eq!(
+            store
+                .create_artifact(child, &artifact_spec, "old")
+                .await
+                .unwrap()
+                .artifact
+                .id,
+            artifact.artifact.id
+        );
+        store
+            .authorize_feature(child, Capability::Diagnostics)
+            .await
+            .unwrap();
+        store
+            .set_desired(parent, DesiredState::Running, "resume")
+            .await
+            .unwrap();
+        store
+            .authorize_work(child, Capability::Files)
+            .await
+            .unwrap();
+        assert!(store.dispatch_code_context(pending.id).await.unwrap());
+        assert!(store.dispatch_code_run(run.id).await.unwrap());
+        store.cancel_execution(execution.id).await.unwrap();
+        store.cancel_code_run(run.id).await.unwrap();
+        store.close_code_context(context.id, "close").await.unwrap();
+        collect(&store, child).await;
+        collect(&store, parent).await;
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn pause_acknowledgement_waits_for_descendants_and_observed_failure_closes_them_atomically() {
+    checked(|store, _| async move {
+        let parent = root(&store, Some(limits(1000, 512, 128)), 300).await;
+        let child = store
+            .create_isolated_session(
+                &profile(),
+                parent,
+                &CreateIsolatedSession {
+                    resources: limits(100, 64, 16),
+                    ..Default::default()
+                },
+                "child",
+            )
+            .await
+            .unwrap()
+            .sandbox
+            .id;
+        running(&store, child).await;
+        assert!(store.subtree_settled(parent).await.unwrap());
+        store
+            .set_desired(parent, DesiredState::Paused, "pause")
+            .await
+            .unwrap();
+        for state in [SandboxState::Pausing, SandboxState::Paused] {
+            let mut record = store.sandbox(parent).await.unwrap();
+            record.sandbox.state = state;
+            store.observe(record).await.unwrap();
+        }
+        assert!(!store.subtree_settled(parent).await.unwrap());
+        assert_eq!(
+            store
+                .set_desired(parent, DesiredState::Paused, "pause-again")
+                .await
+                .unwrap()
+                .state,
+            OperationState::Pending
+        );
+        for state in [SandboxState::Pausing, SandboxState::Paused] {
+            let mut record = store.sandbox(child).await.unwrap();
+            record.sandbox.state = state;
+            store.observe(record).await.unwrap();
+        }
+        assert!(store.subtree_settled(parent).await.unwrap());
+        let mut failed = store.sandbox(parent).await.unwrap();
+        failed.sandbox.state = SandboxState::Failed;
+        failed.sandbox.cleanup = CleanupState::Pending;
+        store.observe(failed).await.unwrap();
+        assert_eq!(
+            store.sandbox(child).await.unwrap().sandbox.desired_state,
+            DesiredState::Terminated
+        );
+        assert_eq!(
+            store.effective_desired(child).await.unwrap(),
+            DesiredState::Terminated
+        );
+        assert!(!store.children_collected(parent).await.unwrap());
+        assert_eq!(
+            store
+                .authorize_work(child, Capability::Files)
+                .await
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidState
+        );
+        collect(&store, child).await;
+        assert!(store.children_collected(parent).await.unwrap());
+        collect(&store, parent).await;
+    })
+    .await;
 }
 
 #[tokio::test]

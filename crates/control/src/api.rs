@@ -20,6 +20,7 @@ use crate::{InternalArtifactCall, InternalFileCall, InternalSandboxCall, http::*
 use base64::{Engine, engine::general_purpose::STANDARD};
 
 mod contexts;
+mod isolated;
 mod sessions;
 
 struct App {
@@ -55,6 +56,11 @@ pub fn router(store: Store, token: &str) -> Result<Router, ApiError> {
         .route("/v1/profiles", get(profiles))
         .route("/v1/sandboxes", get(list).post(create))
         .route("/v1/sandboxes/{id}", get(inspect).delete(terminate))
+        .route(
+            "/v1/sandboxes/{id}/isolated-sessions",
+            get(isolated::list).post(isolated::create),
+        )
+        .route("/v1/sandboxes/{id}/scope", get(isolated::scope))
         .route("/v1/sandboxes/{id}/pause", post(pause))
         .route("/v1/sandboxes/{id}/resume", post(resume))
         .route("/v1/sandboxes/{id}/diagnostics", get(diagnostics))

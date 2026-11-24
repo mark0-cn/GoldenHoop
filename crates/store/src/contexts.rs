@@ -1,5 +1,5 @@
 use super::*;
-use goldenhoop_core::{expired, validate_code_context, validate_code_run};
+use goldenhoop_core::{validate_code_context, validate_code_run};
 mod events;
 
 fn context_row(row: &sqlx::sqlite::SqliteRow) -> Result<StoredCodeContext, ApiError> {
@@ -64,25 +64,7 @@ async fn running_source(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     id: Uuid,
 ) -> Result<(), ApiError> {
-    let source = sandbox_row(
-        &sqlx::query("SELECT * FROM sandboxes WHERE id=?")
-            .bind(id.to_string())
-            .fetch_optional(&mut **tx)
-            .await
-            .map_err(db)?
-            .ok_or_else(|| not_found("sandbox"))?,
-    )?
-    .sandbox;
-    if source.state != SandboxState::Running
-        || source.desired_state != DesiredState::Running
-        || expired(&source, Utc::now())
-    {
-        return Err(ApiError::new(
-            ErrorCode::InvalidState,
-            "sandbox is not accepting code operations",
-        ));
-    }
-    Ok(())
+    super::isolated::require_work(tx, id, Capability::CodeContexts).await
 }
 async fn close_intent(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,

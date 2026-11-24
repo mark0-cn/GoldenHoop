@@ -7,6 +7,8 @@ use goldenhoop_client::*;
 use uuid::Uuid;
 #[path = "sdk_contract/contexts.rs"]
 mod contexts;
+#[path = "sdk_contract/isolated.rs"]
+mod isolated;
 
 fn append_session_output(bytes: &mut Vec<u8>, event: &ExecutionEvent) {
     if event.kind == EventKind::Stdout {
@@ -377,10 +379,20 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     } else {
         None
     };
+    let isolated_sessions =
+        if std::env::var("GOLDENHOOP_TEST_ISOLATED_SESSIONS").as_deref() == Ok("1") {
+            let kernel = std::env::var("GOLDENHOOP_TEST_KERNEL_IMAGE").ok();
+            let image = kernel
+                .clone()
+                .unwrap_or(std::env::var("GOLDENHOOP_TEST_IMAGE")?);
+            Some(isolated::run(&client, &profile, &image, kernel.is_some()).await?)
+        } else {
+            None
+        };
     println!(
         "{}",
         serde_json::json!({"client":"rust","result":"passed","sandbox_id":id,"cleanup":"complete",
-        "cases":["profiles","lease","binary_files","traversal_refusal","literal_argv","nonzero_binary_output","idempotency","timeout","cancel","sse_resume","pause_resume","confirmed_cleanup","retained_artifact_and_confirmed_delete"],"code_contexts":code_contexts})
+        "cases":["profiles","lease","binary_files","traversal_refusal","literal_argv","nonzero_binary_output","idempotency","timeout","cancel","sse_resume","pause_resume","confirmed_cleanup","retained_artifact_and_confirmed_delete"],"code_contexts":code_contexts,"isolated_sessions":isolated_sessions})
     );
     Ok(())
 }

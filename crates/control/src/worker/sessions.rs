@@ -20,13 +20,32 @@ impl Worker {
                 Ok(_) => return Err(unexpected()),
                 Err(error) if error.code == ErrorCode::NotFound => {
                     let latest = self.store.execution(id).await?;
-                    let sandbox = self.store.sandbox(handle.sandbox_id).await?.sandbox;
                     if actual.state != ExecutionState::Running
                         || latest.cancel_requested
-                        || sandbox.desired_state != DesiredState::Running
-                        || expired(&sandbox, Utc::now())
+                        || self.store.effective_desired(handle.sandbox_id).await?
+                            != DesiredState::Running
                     {
                         break;
+                    }
+                    if let Err(error) = self
+                        .store
+                        .authorize_work(handle.sandbox_id, Capability::ShellSessions)
+                        .await
+                    {
+                        if error.code == ErrorCode::InvalidState {
+                            break;
+                        }
+                        return Err(error);
+                    }
+                    if self
+                        .store
+                        .session_spec(id)
+                        .await?
+                        .is_some_and(|spec| spec.terminal.is_some())
+                    {
+                        self.store
+                            .authorize_feature(handle.sandbox_id, Capability::Pty)
+                            .await?;
                     }
                     match driver
                         .rpc(

@@ -232,6 +232,12 @@ impl Store {
         .execute(&mut *tx)
         .await
         .map_err(db)?;
+        if matches!(
+            stored.sandbox.state,
+            SandboxState::Stopping | SandboxState::Failed | SandboxState::Terminated
+        ) {
+            super::isolated::terminate_descendants(&mut tx, stored.sandbox.id).await?;
+        }
         tx.commit().await.map_err(db)?;
         Ok(())
     }
@@ -263,6 +269,9 @@ impl Store {
             .map_err(db)?
             .ok_or_else(|| not_found("sandbox"))?;
         let mut stored = sandbox_row(&row)?;
+        if desired != DesiredState::Terminated {
+            super::isolated::require_feature_limit(&mut tx, id, Capability::Pause).await?;
+        }
         if stored.sandbox.desired_state == desired {
             let pending: Option<String> = sqlx::query_scalar("SELECT payload FROM operations WHERE resource_id=? AND kind=? AND state IN('pending','running') LIMIT 1")
                 .bind(id.to_string()).bind(kind).fetch_optional(&mut *tx).await.map_err(db)?;
@@ -297,7 +306,7 @@ impl Store {
                 "sandbox cannot change to requested live state",
             ));
         }
-        let satisfied = match desired {
+        let mut satisfied = match desired {
             DesiredState::Running => {
                 stored.sandbox.desired_state == desired
                     && stored.sandbox.state == SandboxState::Running
@@ -308,6 +317,9 @@ impl Store {
             }
             DesiredState::Terminated => stored.sandbox.cleanup == CleanupState::Complete,
         };
+        if satisfied && desired != DesiredState::Terminated {
+            satisfied = super::isolated::subtree_settled(&mut tx, id).await?;
+        }
         let now = Utc::now();
         let operation = Operation {
             id: operation_id,
@@ -353,8 +365,7 @@ impl Store {
         if desired == DesiredState::Terminated {
             // Permanent ancestor closure is a durable subtree intent. Pauses
             // are inherited separately so a child's own pause is preserved.
-            sqlx::query("WITH RECURSIVE descendants(id) AS (SELECT sandbox_id FROM sandbox_scopes WHERE parent_id=? UNION ALL SELECT s.sandbox_id FROM sandbox_scopes s JOIN descendants d ON s.parent_id=d.id) UPDATE sandboxes SET desired='terminated' WHERE id IN (SELECT id FROM descendants) AND cleanup!='complete'")
-                .bind(id.to_string()).execute(&mut *tx).await.map_err(db)?;
+            super::isolated::terminate_descendants(&mut tx, id).await?;
         }
         sqlx::query("INSERT INTO operations(id,resource_id,kind,state,payload) VALUES(?,?,?,?,?)")
             .bind(operation.id.to_string())

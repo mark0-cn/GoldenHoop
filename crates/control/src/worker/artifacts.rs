@@ -105,7 +105,8 @@ impl Worker {
             }
         }
         let sandbox = self.store.sandbox(artifact.sandbox_id).await?.sandbox;
-        if sandbox.desired_state == DesiredState::Terminated
+        let effective = self.store.effective_desired(artifact.sandbox_id).await?;
+        if effective == DesiredState::Terminated
             || matches!(
                 sandbox.state,
                 SandboxState::Terminated | SandboxState::Failed
@@ -122,8 +123,7 @@ impl Worker {
                 )
                 .await;
         }
-        if sandbox.state != SandboxState::Running || sandbox.desired_state != DesiredState::Running
-        {
+        if sandbox.state != SandboxState::Running || effective != DesiredState::Running {
             return Ok(());
         }
         let bytes = match self.capture_artifact(&stored).await {
@@ -184,6 +184,9 @@ impl Worker {
             .lock_owned()
             .await;
         let sandbox = self.store.sandbox(stored.artifact.sandbox_id).await?;
+        self.store
+            .authorize_work(stored.artifact.sandbox_id, Capability::Artifacts)
+            .await?;
         if sandbox.sandbox.state != SandboxState::Running
             || sandbox.sandbox.desired_state != DesiredState::Running
             || expired(&sandbox.sandbox, Utc::now())
@@ -287,6 +290,10 @@ pub(super) async fn content(
 ) -> Result<Json<FileData>, HttpError> {
     let _guard = worker.lock(call.artifact_id).await.lock_owned().await;
     let artifact = worker.store.artifact(call.artifact_id).await?.artifact;
+    worker
+        .store
+        .authorize_feature(artifact.sandbox_id, Capability::Artifacts)
+        .await?;
     if artifact.state != ArtifactState::Available
         || artifact.desired_state != ArtifactDesiredState::Available
     {

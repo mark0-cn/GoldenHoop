@@ -16,6 +16,7 @@ use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
 
 mod contexts;
+mod isolated;
 mod sessions;
 struct ProbeSupport {
     diagnostics: bool,
@@ -100,6 +101,22 @@ fn missing(error: &DockerError) -> bool {
 }
 fn unavailable(message: &str) -> ApiError {
     ApiError::new(ErrorCode::BackendUnavailable, message)
+}
+
+fn valid_deadline(
+    created: chrono::DateTime<Utc>,
+    expires: chrono::DateTime<Utc>,
+    ttl: u64,
+) -> bool {
+    let Some(duration) = i64::try_from(ttl)
+        .ok()
+        .and_then(chrono::Duration::try_seconds)
+    else {
+        return false;
+    };
+    created
+        .checked_add_signed(duration)
+        .is_some_and(|latest| expires > created && expires <= latest)
 }
 
 impl DockerDriver {
@@ -893,8 +910,7 @@ impl RuntimeDriver for DockerDriver {
             || sandbox.image != request.image
             || sandbox.resources != request.resources
             || expired(sandbox, Utc::now())
-            || sandbox.expires_at
-                != sandbox.created_at + chrono::Duration::seconds(request.ttl_seconds as i64)
+            || !valid_deadline(sandbox.created_at, sandbox.expires_at, request.ttl_seconds)
         {
             return Err(ApiError::new(
                 ErrorCode::InvalidRequest,
@@ -1165,5 +1181,46 @@ impl AgentTransport for DockerDriver {
         request: &AgentRequest,
     ) -> Result<AgentResponse, ApiError> {
         self.bridge(handle, request).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_clamped_child_deadline_is_valid_but_extension_and_invalid_lifetimes_are_refused() {
+        let created = Utc::now();
+        assert!(valid_deadline(
+            created,
+            created + chrono::Duration::seconds(60),
+            60
+        ));
+        assert!(valid_deadline(
+            created,
+            created + chrono::Duration::milliseconds(1550),
+            60
+        ));
+        assert!(!valid_deadline(
+            created,
+            created + chrono::Duration::milliseconds(60001),
+            60
+        ));
+        assert!(!valid_deadline(created, created, 60));
+        assert!(!valid_deadline(
+            created,
+            created - chrono::Duration::seconds(1),
+            60
+        ));
+        assert!(!valid_deadline(
+            created,
+            created + chrono::Duration::seconds(1),
+            0
+        ));
+        assert!(!valid_deadline(
+            created,
+            created + chrono::Duration::seconds(1),
+            u64::MAX
+        ));
     }
 }

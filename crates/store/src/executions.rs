@@ -1,5 +1,5 @@
 use super::*;
-use goldenhoop_core::{expired, validate_command};
+use goldenhoop_core::validate_command;
 
 fn execution_row(row: &sqlx::sqlite::SqliteRow) -> Result<StoredExecution, ApiError> {
     Ok(StoredExecution {
@@ -57,23 +57,18 @@ impl Store {
         if let Some(session) = session {
             goldenhoop_core::validate_session(session)?;
         }
-        let sandbox = sandbox_row(
-            &sqlx::query("SELECT * FROM sandboxes WHERE id=?")
-                .bind(sandbox_id.to_string())
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(db)?
-                .ok_or_else(|| not_found("sandbox"))?,
-        )?
-        .sandbox;
-        if sandbox.state != SandboxState::Running
-            || sandbox.desired_state != DesiredState::Running
-            || expired(&sandbox, Utc::now())
-        {
-            return Err(ApiError::new(
-                ErrorCode::InvalidState,
-                "sandbox is not accepting commands",
-            ));
+        super::isolated::require_work(
+            &mut tx,
+            sandbox_id,
+            if session.is_some() {
+                Capability::ShellSessions
+            } else {
+                Capability::Commands
+            },
+        )
+        .await?;
+        if session.is_some_and(|spec| spec.terminal.is_some()) {
+            super::isolated::require_feature_limit(&mut tx, sandbox_id, Capability::Pty).await?;
         }
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM executions WHERE sandbox_id=?")
             .bind(sandbox_id.to_string())

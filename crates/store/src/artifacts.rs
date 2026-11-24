@@ -135,24 +135,7 @@ impl Store {
             tx.commit().await.map_err(db)?;
             return self.artifact_created(existing).await;
         }
-        let sandbox = sandbox_row(
-            &sqlx::query("SELECT * FROM sandboxes WHERE id=?")
-                .bind(sandbox_id.to_string())
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(db)?
-                .ok_or_else(|| not_found("sandbox"))?,
-        )?
-        .sandbox;
-        if sandbox.state != SandboxState::Running
-            || sandbox.desired_state != DesiredState::Running
-            || goldenhoop_core::expired(&sandbox, Utc::now())
-        {
-            return Err(ApiError::new(
-                ErrorCode::InvalidState,
-                "artifact capture requires a live running source sandbox",
-            ));
-        }
+        super::isolated::require_work(&mut tx, sandbox_id, Capability::Artifacts).await?;
         let count:i64=sqlx::query_scalar("SELECT COUNT(*) FROM artifacts WHERE NOT(state IN('deleted','failed') AND cleanup='complete')")
             .fetch_one(&mut *tx).await.map_err(db)?;
         if count >= 256 {

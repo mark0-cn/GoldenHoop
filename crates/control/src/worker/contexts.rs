@@ -28,8 +28,7 @@ impl Worker {
         driver: &DockerDriver,
     ) -> Result<bool, ApiError> {
         for stored in self.store.code_context_work(handle.sandbox_id).await? {
-            let sandbox = self.store.sandbox(handle.sandbox_id).await?.sandbox;
-            if sandbox.desired_state != DesiredState::Running || expired(&sandbox, Utc::now()) {
+            if self.store.effective_desired(handle.sandbox_id).await? != DesiredState::Running {
                 break;
             }
             if !self.sync_context(handle, driver, stored).await? {
@@ -261,10 +260,8 @@ impl Worker {
         }
         for run in self.store.code_run_work(id).await? {
             let current = self.store.code_context(id).await?.context;
-            let sandbox = self.store.sandbox(handle.sandbox_id).await?.sandbox;
             if current.desired_state != CodeContextDesiredState::Open
-                || sandbox.desired_state != DesiredState::Running
-                || expired(&sandbox, Utc::now())
+                || self.store.effective_desired(handle.sandbox_id).await? != DesiredState::Running
             {
                 break;
             }

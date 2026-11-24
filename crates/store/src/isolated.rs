@@ -122,6 +122,103 @@ pub(super) async fn require_running_tree(
     }
     Ok(())
 }
+pub(super) async fn require_feature_limit(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    id: Uuid,
+    capability: Capability,
+) -> Result<(), ApiError> {
+    let mut next = Some(id);
+    for _ in 0..5 {
+        let Some(id) = next else {
+            return Ok(());
+        };
+        let record = scope(tx, id).await?;
+        if record
+            .feature_limit
+            .as_ref()
+            .is_some_and(|allowed| !allowed.contains(&capability))
+        {
+            return Err(ApiError::new(
+                ErrorCode::Forbidden,
+                format!("{capability:?} is outside the sandbox or ancestor feature ceiling"),
+            ));
+        }
+        next = record.parent_id;
+    }
+    if next.is_some() {
+        return Err(internal());
+    }
+    Ok(())
+}
+pub(super) async fn require_work(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    id: Uuid,
+    capability: Capability,
+) -> Result<(), ApiError> {
+    require_feature_limit(tx, id, capability).await?;
+    require_running_tree(tx, id).await
+}
+pub(super) async fn terminate_descendants(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    id: Uuid,
+) -> Result<(), ApiError> {
+    sqlx::query("WITH RECURSIVE descendants(id) AS (SELECT sandbox_id FROM sandbox_scopes WHERE parent_id=? UNION ALL SELECT s.sandbox_id FROM sandbox_scopes s JOIN descendants d ON s.parent_id=d.id) UPDATE sandboxes SET desired='terminated' WHERE id IN (SELECT id FROM descendants) AND cleanup!='complete'")
+        .bind(id.to_string()).execute(&mut **tx).await.map_err(db)?;
+    Ok(())
+}
+async fn effective_desired(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    id: Uuid,
+) -> Result<DesiredState, ApiError> {
+    let own = source(tx, id).await?.sandbox;
+    let mut result = own.desired_state;
+    let mut next = Some(id);
+    for level in 0..5 {
+        let Some(id) = next else {
+            return Ok(result);
+        };
+        let record = source(tx, id).await?.sandbox;
+        if record.desired_state == DesiredState::Terminated
+            || expired(&record, Utc::now())
+            || matches!(
+                record.state,
+                SandboxState::Failed | SandboxState::Terminated
+            )
+        {
+            return Ok(DesiredState::Terminated);
+        }
+        if level > 0
+            && (record.desired_state == DesiredState::Paused
+                || record.state != SandboxState::Running)
+        {
+            result = DesiredState::Paused;
+        }
+        next = scope(tx, id).await?.parent_id;
+    }
+    if next.is_some() {
+        return Err(internal());
+    }
+    Ok(result)
+}
+pub(super) async fn subtree_settled(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    id: Uuid,
+) -> Result<bool, ApiError> {
+    let rows=sqlx::query("WITH RECURSIVE subtree(id) AS (SELECT ? UNION ALL SELECT s.sandbox_id FROM sandbox_scopes s JOIN subtree p ON s.parent_id=p.id) SELECT b.* FROM sandboxes b JOIN subtree s ON s.id=b.id WHERE b.cleanup!='complete'")
+        .bind(id.to_string()).fetch_all(&mut **tx).await.map_err(db)?;
+    for row in rows {
+        let record = sandbox_row(&row)?.sandbox;
+        let desired = effective_desired(tx, record.id).await?;
+        if !matches!(
+            (desired, record.state),
+            (DesiredState::Running, SandboxState::Running)
+                | (DesiredState::Paused, SandboxState::Paused)
+        ) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
 pub(super) async fn confirm_children_absent(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     id: Uuid,
@@ -138,6 +235,35 @@ pub(super) async fn confirm_children_absent(
 }
 
 impl Store {
+    /// Checks immutable feature ceilings; runtime availability is checked by the caller.
+    pub async fn authorize_feature(
+        &self,
+        id: Uuid,
+        capability: Capability,
+    ) -> Result<(), ApiError> {
+        let mut tx = self.pool.begin().await.map_err(db)?;
+        require_feature_limit(&mut tx, id, capability).await?;
+        tx.commit().await.map_err(db)?;
+        Ok(())
+    }
+    /// A single snapshot checks feature ceilings, desired state and all ancestor deadlines.
+    pub async fn authorize_work(&self, id: Uuid, capability: Capability) -> Result<(), ApiError> {
+        let mut tx = self.pool.begin().await.map_err(db)?;
+        require_work(&mut tx, id, capability).await?;
+        tx.commit().await.map_err(db)?;
+        Ok(())
+    }
+    pub async fn children_collected(&self, id: Uuid) -> Result<bool, ApiError> {
+        let count:i64=sqlx::query_scalar("SELECT COUNT(*) FROM sandbox_scopes c JOIN sandboxes b ON b.id=c.sandbox_id WHERE c.parent_id=? AND b.cleanup!='complete'")
+            .bind(id.to_string()).fetch_one(&self.pool).await.map_err(db)?;
+        Ok(count == 0)
+    }
+    pub async fn subtree_settled(&self, id: Uuid) -> Result<bool, ApiError> {
+        let mut tx = self.pool.begin().await.map_err(db)?;
+        let settled = subtree_settled(&mut tx, id).await?;
+        tx.commit().await.map_err(db)?;
+        Ok(settled)
+    }
     pub async fn sandbox_scope(&self, id: Uuid) -> Result<SandboxScope, ApiError> {
         let mut tx = self.pool.begin().await.map_err(db)?;
         let result = scope(&mut tx, id).await?;
@@ -333,36 +459,7 @@ impl Store {
     /// Ancestor pause is inherited without overwriting a child's own desire.
     pub async fn effective_desired(&self, id: Uuid) -> Result<DesiredState, ApiError> {
         let mut tx = self.pool.begin().await.map_err(db)?;
-        let own = source(&mut tx, id).await?.sandbox;
-        let mut result = own.desired_state;
-        let mut next = Some(id);
-        for level in 0..5 {
-            let Some(id) = next else {
-                tx.commit().await.map_err(db)?;
-                return Ok(result);
-            };
-            let record = source(&mut tx, id).await?.sandbox;
-            if record.desired_state == DesiredState::Terminated
-                || expired(&record, Utc::now())
-                || matches!(
-                    record.state,
-                    SandboxState::Failed | SandboxState::Terminated
-                )
-            {
-                result = DesiredState::Terminated;
-                break;
-            }
-            if level > 0
-                && (record.desired_state == DesiredState::Paused
-                    || record.state != SandboxState::Running)
-            {
-                result = DesiredState::Paused;
-            }
-            next = scope(&mut tx, id).await?.parent_id;
-        }
-        if result != DesiredState::Terminated && next.is_some() {
-            return Err(internal());
-        }
+        let result = effective_desired(&mut tx, id).await?;
         tx.commit().await.map_err(db)?;
         Ok(result)
     }

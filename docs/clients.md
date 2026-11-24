@@ -141,3 +141,28 @@ python -B tests/api_contract.py --binary target/debug/goldenhoopd --rust-client 
 Use `runsc` only on a real gVisor host. `--clients-only` isolates client debugging and is not a complete API contract pass. All four clients capture output, close the source sandbox, verify retained bytes and explicitly delete the artifact. The harness confirms removal of its labeled containers, volumes, service processes and temporary directory on failure as well as success. Protocol regressions separately exercise premature EOF, partial-frame reconnect, sequence validation, deadline handling and artifact digest mismatch; these do not establish a runtime isolation boundary.
 
 Public code contexts and all four client loops pass on actual [gVisor](evidence/ci-45393987529/agent-runsc/api-runsc.json), [runc](evidence/ci-45393987529/agent-runc/api-runc.json) and [S3-compatible storage](evidence/ci-45393987398/api-s3/api-s3.json), with owned resources and temporary files collected.
+
+
+## Isolated child sandboxes
+
+Reserve an additional child budget when creating the parent. Its own resources stay its workload hard limits; the installation charges the complete envelope once. Child creation uses the parent's profile/image, bounded expiry and a separate workspace. Allocations remain held until collection, including Unknown cleanup. Inspect reservations with sandbox_scope/scope and list direct children with isolated_sessions/isolated-list.
+
+```python
+from goldenhoop import Client, CreateSandbox, CreateIsolatedSession, Command
+
+request = CreateSandbox(
+    "local-gvisor", "goldenhoop-agent:test",
+    child_budget={"cpu_millis": 1000, "memory_bytes": 1073741824, "pids": 256},
+)
+with Client(endpoint, token) as client:
+    with client.lease(request) as parent:
+        with client.isolated_lease(parent.id, CreateIsolatedSession(
+            feature_limit=["commands", "files"],
+        )) as child:
+            output = client.run(child.id, Command(["python3", "-c", "print(42)"]))
+            assert output.stdout == b"42\n"
+```
+
+AsyncClient supports the same operations with await and async with. Rust provides create_isolated_session, isolated_sessions, sandbox_scope and isolated_lease. Both lease types confirm child cleanup, and closing a parent collects any remaining descendants. Explicit create calls accept caller-owned idempotency keys; uncertain acceptance must replay the same parent, key and specification. Cancelling an observer does not cancel its child workload.
+
+CLI create and isolated-create accept --child-cpu-millis, --child-memory-bytes and --child-pids together. --feature-limit commands,files sets an immutable callable-feature ceiling; --no-features sets an empty ceiling. --require lists required verified capabilities. isolated-create accepts an optional image/TTL and --no-wait, while emitting accepted identity before waiting. Use ordinary exec/files/sessions/contexts/delete commands with the child UUID. A feature ceiling controls platform calls; it does not prevent filesystem access by a permitted interpreter or command. Ancestor lifecycle and mandatory isolation enforcement still apply.

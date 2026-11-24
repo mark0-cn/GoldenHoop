@@ -1,6 +1,6 @@
 # Isolated child sandboxes
 
-This is the implementation contract for the next M2 increment. Protocol, validation and schema-5 reservation primitives are implemented; runtime/worker/API/client integration and actual isolation gates remain pending. IsolatedSessions is not advertised. Python code contexts retain separate interpreter state inside one shared source sandbox; an isolated session will use a separate child sandbox and the existing sandbox command/file/context interfaces.
+Protocol, schema-5 allocation, worker reconciliation, public routes, Rust/Python clients and CLI bindings implement the isolated-session contract. The worker composes IsolatedSessions only after the mandatory runtime probe and a separate actual two-sandbox isolation gate pass. The native driver does not advertise host hierarchy support. Python code contexts retain separate interpreter state inside one source sandbox; an isolated session uses a separate child sandbox and the existing sandbox command/file/context interfaces. Current validation results and remaining release gates are recorded in progress.md.
 
 ## Allocation and inheritance
 
@@ -14,6 +14,8 @@ Children inherit their parent's runtime profile and default image. Profile subst
 
 An optional immutable `feature_limit` restricts callable platform capabilities. Effective child features intersect the parent ceiling, requested ceiling and currently verified profile support. This controls API operations; it does not make a writable workspace read-only when code execution is granted. Filesystem and network security continue to require actual runtime enforcement. The current child network policy inherits default denial; broader policy requests fail. M3 must preserve ancestor constraints when dynamic egress/credential policies are added.
 
+Children retain that verified feature ceiling across worker configuration changes. Enabling an optional kernel probe later does not grant code contexts to an existing child that was created without that capability. Configure optional features before creating children that need them. Ancestor lifecycle control and mandatory network isolation remain enforced even if the child's callable feature ceiling is empty.
+
 ## Lifetime and recovery
 
 Child expiry is at most its parent's original absolute expiry. A parent pause blocks new work in its descendants and pauses their runtimes. A child's own desired pause state is retained, so resuming an ancestor does not resume a child the caller paused separately. TTL continues while paused and while the API is offline.
@@ -22,18 +24,22 @@ Parent termination, expiry or confirmed unexpected loss closes the subtree. A pa
 
 Hierarchy, reservations, request identities and desired state survive worker/API restart. Unknown runtime or collection observations remain charged. The independent runtime reaper uses the bounded child deadline too. Host/daemon downtime and destruction latency affect final acknowledgement, as for ordinary sandbox TTL.
 
-## Planned public surface
+## Public surface
 
-Root create adds optional child_budget and feature_limit fields. Empty defaults preserve current request fingerprints and ordinary sandbox behavior. These non-default controls are refused until the complete implementation and actual capability gate are available.
+Root create adds optional child_budget and feature_limit fields. Empty defaults preserve current request fingerprints and ordinary sandbox behavior. Non-default controls are refused when the profile lacks the verified IsolatedSessions capability.
 
 - POST /v1/sandboxes/{parent}/isolated-sessions creates an idempotent child and returns its sandbox/create operation.
 - GET /v1/sandboxes/{parent}/isolated-sessions pages its direct children.
 - GET /v1/sandboxes/{id}/scope returns parent/root identity, immutable ceiling and reservation/usage observations.
 - Existing sandbox commands, files, sessions, contexts, diagnostics and deletion use the child sandbox UUID.
 
+Rust, Python sync/async and CLI expose child creation, direct-child pages and scope inspection. Rust `isolated_lease` and Python `isolated_lease` use the same confirmed cleanup semantics as root leases. A parent lease cascades collection to any remaining descendants. CLI `isolated-create`, `isolated-list` and `scope` accompany root/child reservation and feature-ceiling flags. Explicit request keys remain recoverable after transport or observer cancellation; waiting alone does not cancel a child workload.
+
 CreateIsolatedSession defaults to the parent's profile/image and the normal workload resources; callers select a smaller child allocation when needed. Its optional child_budget reserves part of this allocation for the next generation as an additional amount, subject to the parent's available reservation. Capabilities, deadline and quotas are checked before provisioning. Unsupported profile changes or broader feature/policy requests fail without allocating a runtime.
 
 ## Required evidence
+
+The native isolation gate uses two owned runtimes with distinct CPU/memory/task limits. It checks effective configuration and separate workspaces, process visibility, SysV IPC, shared-memory files, abstract Unix sockets and loopback listeners, denied external routes, independent child removal, explicit command completion and confirmed collection. Failed gates keep the host capability absent; they do not select another runtime. Probe failures retain bounded guest stderr for diagnosis. Only the two fresh probe UUIDs are collected, including partially completed provisioning.
 
 File-backed tests must cover concurrent reservation, rollback, stable create replay, root charging without double counting, child limits/history/depth, unknown collection charging, ancestor pause/termination and schema-4 migration preserving all existing records. Effective feature checks must cover every workload entry point before the capability can be advertised.
 

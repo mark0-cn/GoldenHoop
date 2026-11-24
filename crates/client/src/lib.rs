@@ -2,6 +2,7 @@
 mod artifacts;
 mod contexts;
 mod events;
+mod isolated;
 mod sessions;
 pub use contexts::{CodeContextEventStream, CodeRunOutput};
 pub use events::{EventStream, RunOutput};
@@ -443,6 +444,9 @@ impl Client {
             }
             Err(error) => return Err(error),
         };
+        self.lease_created(created).await
+    }
+    async fn lease_created(&self, created: SandboxCreated) -> Result<SandboxLease> {
         let mut lease = SandboxLease {
             client: self.clone(),
             id: created.sandbox.id,

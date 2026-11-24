@@ -24,9 +24,67 @@ struct Args {
     command: Command,
 }
 
+fn capability(value: &str) -> std::result::Result<Capability, String> {
+    serde_json::from_value(serde_json::Value::String(value.into()))
+        .map_err(|_| format!("unknown capability: {value}"))
+}
+
+#[derive(clap::Args)]
+struct ScopeArgs {
+    #[arg(long, requires_all=["child_memory_bytes","child_pids"])]
+    child_cpu_millis: Option<u32>,
+    #[arg(long, requires_all=["child_cpu_millis","child_pids"])]
+    child_memory_bytes: Option<u64>,
+    #[arg(long, requires_all=["child_cpu_millis","child_memory_bytes"])]
+    child_pids: Option<u32>,
+    #[arg(long, value_delimiter=',', value_parser=capability)]
+    feature_limit: Option<Vec<Capability>>,
+    #[arg(long, conflicts_with = "feature_limit")]
+    no_features: bool,
+    #[arg(long="require", value_delimiter=',', value_parser=capability)]
+    required_capabilities: Vec<Capability>,
+}
+impl ScopeArgs {
+    fn budget(&self) -> Option<ResourceLimits> {
+        self.child_cpu_millis
+            .zip(self.child_memory_bytes)
+            .zip(self.child_pids)
+            .map(|((cpu_millis, memory_bytes), pids)| ResourceLimits {
+                cpu_millis,
+                memory_bytes,
+                pids,
+            })
+    }
+    fn features(&self) -> Option<std::collections::BTreeSet<Capability>> {
+        if self.no_features {
+            Some(Default::default())
+        } else {
+            self.feature_limit
+                .as_ref()
+                .map(|items| items.iter().copied().collect())
+        }
+    }
+}
+
 #[derive(Subcommand)]
 enum Command {
     Profiles,
+    #[command(flatten)]
+    Sandbox(SandboxCommand),
+    #[command(flatten)]
+    Execution(ExecutionCommand),
+    #[command(flatten)]
+    Filesystem(FilesystemCommand),
+    #[command(flatten)]
+    Artifacts(ArtifactsCommand),
+    #[command(flatten)]
+    Sessions(SessionsCommand),
+    #[command(flatten)]
+    Code(CodeCommand),
+}
+
+#[derive(Subcommand)]
+enum SandboxCommand {
     Create {
         #[arg(long)]
         profile: String,
@@ -40,6 +98,8 @@ enum Command {
         cpu_millis: u32,
         #[arg(long, default_value_t = 256)]
         pids: u32,
+        #[command(flatten)]
+        scope: ScopeArgs,
         #[arg(long)]
         idempotency_key: Option<String>,
     },
@@ -51,6 +111,35 @@ enum Command {
     },
     Get {
         id: Uuid,
+    },
+    Scope {
+        id: Uuid,
+    },
+    IsolatedCreate {
+        parent: Uuid,
+        #[arg(long)]
+        image: Option<String>,
+        #[arg(long)]
+        ttl: Option<u64>,
+        #[arg(long, default_value_t = 1000)]
+        cpu_millis: u32,
+        #[arg(long, default_value_t = 1073741824)]
+        memory_bytes: u64,
+        #[arg(long, default_value_t = 256)]
+        pids: u32,
+        #[command(flatten)]
+        scope: ScopeArgs,
+        #[arg(long)]
+        idempotency_key: Option<String>,
+        #[arg(long)]
+        no_wait: bool,
+    },
+    IsolatedList {
+        parent: Uuid,
+        #[arg(long)]
+        after: Option<Uuid>,
+        #[arg(long, default_value_t = 100)]
+        limit: u32,
     },
     Diagnostics {
         id: Uuid,
@@ -73,6 +162,10 @@ enum Command {
     Operation {
         id: Uuid,
     },
+}
+
+#[derive(Subcommand)]
+enum ExecutionCommand {
     Execution {
         id: Uuid,
     },
@@ -95,6 +188,10 @@ enum Command {
         #[arg(last = true, required = true)]
         argv: Vec<String>,
     },
+}
+
+#[derive(Subcommand)]
+enum FilesystemCommand {
     Files {
         sandbox: Uuid,
         #[arg(default_value = ".")]
@@ -115,7 +212,12 @@ enum Command {
         sandbox: Uuid,
         path: String,
     },
-    ArtifactCapture {
+}
+
+#[derive(Subcommand)]
+enum ArtifactsCommand {
+    #[command(name = "artifact-capture")]
+    Capture {
         sandbox: Uuid,
         path: String,
         #[arg(long, default_value = "artifact.bin")]
@@ -123,10 +225,10 @@ enum Command {
         #[arg(long)]
         idempotency_key: Option<String>,
     },
-    ArtifactGet {
-        id: Uuid,
-    },
-    ArtifactList {
+    #[command(name = "artifact-get")]
+    Get { id: Uuid },
+    #[command(name = "artifact-list")]
+    List {
         #[arg(long)]
         sandbox: Option<Uuid>,
         #[arg(long)]
@@ -134,16 +236,20 @@ enum Command {
         #[arg(long, default_value_t = 100)]
         limit: u32,
     },
-    ArtifactDownload {
-        id: Uuid,
-        local: PathBuf,
-    },
-    ArtifactDelete {
+    #[command(name = "artifact-download")]
+    Download { id: Uuid, local: PathBuf },
+    #[command(name = "artifact-delete")]
+    Delete {
         id: Uuid,
         #[arg(long)]
         idempotency_key: Option<String>,
     },
-    SessionCreate {
+}
+
+#[derive(Subcommand)]
+enum SessionsCommand {
+    #[command(name = "session-create")]
+    Create {
         sandbox: Uuid,
         #[arg(long)]
         pty: bool,
@@ -160,10 +266,10 @@ enum Command {
         #[arg(last = true)]
         argv: Vec<String>,
     },
-    SessionGet {
-        id: Uuid,
-    },
-    SessionList {
+    #[command(name = "session-get")]
+    Get { id: Uuid },
+    #[command(name = "session-list")]
+    List {
         #[arg(long)]
         sandbox: Option<Uuid>,
         #[arg(long)]
@@ -172,31 +278,34 @@ enum Command {
         limit: u32,
     },
     /// Submit at most 64 KiB from a file, or - for stdin. This acknowledges delivery.
-    SessionWrite {
+    #[command(name = "session-write")]
+    Write {
         id: Uuid,
         sequence: u64,
         local: PathBuf,
     },
-    SessionCloseInput {
-        id: Uuid,
-        sequence: u64,
-    },
-    SessionResize {
+    #[command(name = "session-close-input")]
+    CloseInput { id: Uuid, sequence: u64 },
+    #[command(name = "session-resize")]
+    Resize {
         id: Uuid,
         sequence: u64,
         rows: u16,
         columns: u16,
     },
-    SessionReceipt {
-        id: Uuid,
-        sequence: u64,
-    },
+    #[command(name = "session-receipt")]
+    Receipt { id: Uuid, sequence: u64 },
     /// Emit durable events as JSON lines; EOF without completion is an error.
-    SessionEvents {
+    #[command(name = "session-events")]
+    Events {
         id: Uuid,
         #[arg(long, default_value_t = 0)]
         after: u64,
     },
+}
+
+#[derive(Subcommand)]
+enum CodeCommand {
     ContextCreate {
         sandbox: Uuid,
         #[arg(long, default_value = "/workspace")]
@@ -323,15 +432,16 @@ async fn run(args: Args) -> CliResult<u8> {
     let client = Client::new(&args.endpoint, &token)?;
     match args.command {
         Command::Profiles => print_json(&client.profiles().await?)?,
-        Command::Create {
+        Command::Sandbox(SandboxCommand::Create {
             profile,
             image,
             ttl,
             memory_bytes,
             cpu_millis,
             pids,
+            scope,
             idempotency_key,
-        } => {
+        }) => {
             let mut request = CreateSandbox::new(profile, image);
             request.ttl_seconds = ttl;
             request.resources = ResourceLimits {
@@ -339,6 +449,9 @@ async fn run(args: Args) -> CliResult<u8> {
                 memory_bytes,
                 pids,
             };
+            request.child_budget = scope.budget();
+            request.feature_limit = scope.features();
+            request.required_capabilities = scope.required_capabilities.into_iter().collect();
             let key = key(idempotency_key);
             eprintln!("idempotency_key={key}");
             let mut created = client.create(&request, &key).await?;
@@ -353,13 +466,67 @@ async fn run(args: Args) -> CliResult<u8> {
             created.sandbox = client.sandbox(created.sandbox.id).await?;
             print_json(&created)?;
         }
-        Command::Get { id } => print_json(&client.sandbox(id).await?)?,
-        Command::Diagnostics { id } => print_json(&client.diagnostics(id).await?)?,
-        Command::List { after, limit } => print_json(&client.list(after, limit).await?)?,
-        Command::Delete {
+        Command::Sandbox(SandboxCommand::Get { id }) => print_json(&client.sandbox(id).await?)?,
+        Command::Sandbox(SandboxCommand::Scope { id }) => {
+            print_json(&client.sandbox_scope(id).await?)?
+        }
+        Command::Sandbox(SandboxCommand::IsolatedList {
+            parent,
+            after,
+            limit,
+        }) => print_json(&client.isolated_sessions(parent, after, limit).await?)?,
+        Command::Sandbox(SandboxCommand::IsolatedCreate {
+            parent,
+            image,
+            ttl,
+            cpu_millis,
+            memory_bytes,
+            pids,
+            scope,
+            idempotency_key,
+            no_wait,
+        }) => {
+            let request = CreateIsolatedSession {
+                image,
+                ttl_seconds: ttl,
+                resources: ResourceLimits {
+                    cpu_millis,
+                    memory_bytes,
+                    pids,
+                },
+                child_budget: scope.budget(),
+                feature_limit: scope.features(),
+                required_capabilities: scope.required_capabilities.into_iter().collect(),
+                ..Default::default()
+            };
+            let key = key(idempotency_key);
+            eprintln!("idempotency_key={key}");
+            let mut created = client
+                .create_isolated_session(parent, &request, &key)
+                .await?;
+            eprintln!(
+                "sandbox_id={} operation_id={}",
+                created.sandbox.id, created.operation.id
+            );
+            if !no_wait {
+                created.operation = client
+                    .wait_operation(created.operation.id, Duration::from_secs(60))
+                    .await?;
+                created.sandbox = client.sandbox(created.sandbox.id).await?;
+                created.scope = client.sandbox_scope(created.sandbox.id).await?;
+            }
+            print_json(&created)?;
+        }
+        Command::Sandbox(SandboxCommand::Diagnostics { id }) => {
+            print_json(&client.diagnostics(id).await?)?
+        }
+        Command::Sandbox(SandboxCommand::List { after, limit }) => {
+            print_json(&client.list(after, limit).await?)?
+        }
+        Command::Sandbox(SandboxCommand::Delete {
             id,
             idempotency_key,
-        } => {
+        }) => {
             let operation = client.terminate(id, &key(idempotency_key)).await?;
             print_json(
                 &client
@@ -376,10 +543,10 @@ async fn run(args: Args) -> CliResult<u8> {
                 return Err(Error::Protocol("sandbox cleanup is not confirmed").into());
             }
         }
-        Command::Pause {
+        Command::Sandbox(SandboxCommand::Pause {
             id,
             idempotency_key,
-        } => {
+        }) => {
             let operation = client.pause(id, &key(idempotency_key)).await?;
             print_json(
                 &client
@@ -387,10 +554,10 @@ async fn run(args: Args) -> CliResult<u8> {
                     .await?,
             )?;
         }
-        Command::Resume {
+        Command::Sandbox(SandboxCommand::Resume {
             id,
             idempotency_key,
-        } => {
+        }) => {
             let operation = client.resume(id, &key(idempotency_key)).await?;
             print_json(
                 &client
@@ -398,10 +565,16 @@ async fn run(args: Args) -> CliResult<u8> {
                     .await?,
             )?;
         }
-        Command::Operation { id } => print_json(&client.operation(id).await?)?,
-        Command::Execution { id } => print_json(&client.execution(id).await?)?,
-        Command::Cancel { id } => print_json(&client.cancel(id).await?)?,
-        Command::SessionCreate {
+        Command::Sandbox(SandboxCommand::Operation { id }) => {
+            print_json(&client.operation(id).await?)?
+        }
+        Command::Execution(ExecutionCommand::Execution { id }) => {
+            print_json(&client.execution(id).await?)?
+        }
+        Command::Execution(ExecutionCommand::Cancel { id }) => {
+            print_json(&client.cancel(id).await?)?
+        }
+        Command::Sessions(SessionsCommand::Create {
             sandbox,
             pty,
             rows,
@@ -410,7 +583,7 @@ async fn run(args: Args) -> CliResult<u8> {
             cwd,
             idempotency_key,
             argv,
-        } => {
+        }) => {
             let key = key(idempotency_key);
             eprintln!("idempotency_key={key}");
             let mut spec = SessionSpec::shell();
@@ -428,17 +601,17 @@ async fn run(args: Args) -> CliResult<u8> {
             eprintln!("session_id={}", session.execution.id);
             print_json(&session)?;
         }
-        Command::SessionGet { id } => print_json(&client.session(id).await?)?,
-        Command::SessionList {
+        Command::Sessions(SessionsCommand::Get { id }) => print_json(&client.session(id).await?)?,
+        Command::Sessions(SessionsCommand::List {
             sandbox,
             after,
             limit,
-        } => print_json(&client.list_sessions(sandbox, after, limit).await?)?,
-        Command::SessionWrite {
+        }) => print_json(&client.list_sessions(sandbox, after, limit).await?)?,
+        Command::Sessions(SessionsCommand::Write {
             id,
             sequence,
             local,
-        } => {
+        }) => {
             let mut bytes = Vec::new();
             if local == std::path::Path::new("-") {
                 std::io::stdin().take(65537).read_to_end(&mut bytes)?;
@@ -462,7 +635,7 @@ async fn run(args: Args) -> CliResult<u8> {
             )
             .await;
         }
-        Command::SessionCloseInput { id, sequence } => {
+        Command::Sessions(SessionsCommand::CloseInput { id, sequence }) => {
             return submit_control(
                 &client,
                 id,
@@ -473,12 +646,12 @@ async fn run(args: Args) -> CliResult<u8> {
             )
             .await;
         }
-        Command::SessionResize {
+        Command::Sessions(SessionsCommand::Resize {
             id,
             sequence,
             rows,
             columns,
-        } => {
+        }) => {
             return submit_control(
                 &client,
                 id,
@@ -491,15 +664,17 @@ async fn run(args: Args) -> CliResult<u8> {
             )
             .await;
         }
-        Command::SessionReceipt { id, sequence } => {
+        Command::Sessions(SessionsCommand::Receipt { id, sequence }) => {
             print_json(&client.session_control_status(id, sequence).await?)?
         }
-        Command::SessionEvents { id, after } => session_events(&client, id, after).await?,
-        Command::ContextCreate {
+        Command::Sessions(SessionsCommand::Events { id, after }) => {
+            session_events(&client, id, after).await?
+        }
+        Command::Code(CodeCommand::ContextCreate {
             sandbox,
             cwd,
             idempotency_key,
-        } => {
+        }) => {
             let key = key(idempotency_key);
             eprintln!("idempotency_key={key}");
             let context = client
@@ -519,16 +694,18 @@ async fn run(args: Args) -> CliResult<u8> {
                     .await?,
             )?;
         }
-        Command::ContextGet { id } => print_json(&client.code_context(id).await?)?,
-        Command::ContextList {
+        Command::Code(CodeCommand::ContextGet { id }) => {
+            print_json(&client.code_context(id).await?)?
+        }
+        Command::Code(CodeCommand::ContextList {
             sandbox,
             after,
             limit,
-        } => print_json(&client.list_code_contexts(sandbox, after, limit).await?)?,
-        Command::ContextClose {
+        }) => print_json(&client.list_code_contexts(sandbox, after, limit).await?)?,
+        Command::Code(CodeCommand::ContextClose {
             id,
             idempotency_key,
-        } => {
+        }) => {
             let key = key(idempotency_key);
             eprintln!("context_id={id} idempotency_key={key}");
             client.close_code_context(id, &key).await?;
@@ -538,20 +715,20 @@ async fn run(args: Args) -> CliResult<u8> {
                     .await?,
             )?;
         }
-        Command::CodeGet { id } => print_json(&client.code_run(id).await?)?,
-        Command::CodeList {
+        Command::Code(CodeCommand::CodeGet { id }) => print_json(&client.code_run(id).await?)?,
+        Command::Code(CodeCommand::CodeList {
             context,
             after,
             limit,
-        } => print_json(&client.list_code_runs(context, after, limit).await?)?,
-        Command::CodeRun {
+        }) => print_json(&client.list_code_runs(context, after, limit).await?)?,
+        Command::Code(CodeCommand::CodeRun {
             context,
             local,
             timeout,
             output_limit,
             idempotency_key,
             no_wait,
-        } => {
+        }) => {
             let mut bytes = Vec::new();
             if local == std::path::Path::new("-") {
                 std::io::stdin().take(65537).read_to_end(&mut bytes)?;
@@ -588,7 +765,7 @@ async fn run(args: Args) -> CliResult<u8> {
                 return Ok(status);
             }
         }
-        Command::CodeCancel { id } => {
+        Command::Code(CodeCommand::CodeCancel { id }) => {
             let accepted = client.cancel_code_run(id).await?;
             if !accepted.state.is_terminal() {
                 client
@@ -604,7 +781,7 @@ async fn run(args: Args) -> CliResult<u8> {
             print_json(&result)?;
             return Ok(status);
         }
-        Command::ContextEvents { id, after } => {
+        Command::Code(CodeCommand::ContextEvents { id, after }) => {
             let mut cursor = after;
             eprintln!("context_id={id} after={cursor}");
             for attempt in 0..3 {
@@ -643,7 +820,7 @@ async fn run(args: Args) -> CliResult<u8> {
             }
             return Err(format!("context {id} stream ended without collection; resume after={cursor}; the context was not cancelled").into());
         }
-        Command::Exec {
+        Command::Execution(ExecutionCommand::Exec {
             sandbox,
             timeout,
             output_limit,
@@ -651,7 +828,7 @@ async fn run(args: Args) -> CliResult<u8> {
             idempotency_key,
             json,
             argv,
-        } => {
+        }) => {
             let mut command = CommandSpec::new(argv);
             command.timeout_seconds = timeout;
             command.max_output_bytes = output_limit;
@@ -678,23 +855,25 @@ async fn run(args: Args) -> CliResult<u8> {
                     .unwrap_or(1),
             });
         }
-        Command::Files { sandbox, path } => print_json(&client.list_files(sandbox, &path).await?)?,
-        Command::FilePut {
+        Command::Filesystem(FilesystemCommand::Files { sandbox, path }) => {
+            print_json(&client.list_files(sandbox, &path).await?)?
+        }
+        Command::Filesystem(FilesystemCommand::FilePut {
             sandbox,
             local,
             remote,
-        } => {
+        }) => {
             let mut data = Vec::new();
             std::fs::File::open(local)?
                 .take(16 * 1024 * 1024 + 1)
                 .read_to_end(&mut data)?;
             client.write_file(sandbox, &remote, &data).await?;
         }
-        Command::FileGet {
+        Command::Filesystem(FilesystemCommand::FileGet {
             sandbox,
             remote,
             local,
-        } => {
+        }) => {
             let data = client.read_file(sandbox, &remote, 16 * 1024 * 1024).await?;
             let parent = local
                 .parent()
@@ -707,13 +886,15 @@ async fn run(args: Args) -> CliResult<u8> {
                 .persist_noclobber(local)
                 .map_err(|error| error.error)?;
         }
-        Command::FileRemove { sandbox, path } => client.remove_file(sandbox, &path).await?,
-        Command::ArtifactCapture {
+        Command::Filesystem(FilesystemCommand::FileRemove { sandbox, path }) => {
+            client.remove_file(sandbox, &path).await?
+        }
+        Command::Artifacts(ArtifactsCommand::Capture {
             sandbox,
             path,
             name,
             idempotency_key,
-        } => {
+        }) => {
             let key = key(idempotency_key);
             eprintln!("idempotency_key={key}");
             let created = client
@@ -732,13 +913,15 @@ async fn run(args: Args) -> CliResult<u8> {
             }
             print_json(&artifact)?;
         }
-        Command::ArtifactGet { id } => print_json(&client.artifact(id).await?)?,
-        Command::ArtifactList {
+        Command::Artifacts(ArtifactsCommand::Get { id }) => {
+            print_json(&client.artifact(id).await?)?
+        }
+        Command::Artifacts(ArtifactsCommand::List {
             sandbox,
             after,
             limit,
-        } => print_json(&client.list_artifacts(sandbox, after, limit).await?)?,
-        Command::ArtifactDownload { id, local } => {
+        }) => print_json(&client.list_artifacts(sandbox, after, limit).await?)?,
+        Command::Artifacts(ArtifactsCommand::Download { id, local }) => {
             let bytes = client.artifact_bytes(id).await?;
             let parent = local
                 .parent()
@@ -751,10 +934,10 @@ async fn run(args: Args) -> CliResult<u8> {
                 .persist_noclobber(local)
                 .map_err(|error| error.error)?;
         }
-        Command::ArtifactDelete {
+        Command::Artifacts(ArtifactsCommand::Delete {
             id,
             idempotency_key,
-        } => {
+        }) => {
             let operation = client.delete_artifact(id, &key(idempotency_key)).await?;
             client
                 .wait_operation(operation.id, Duration::from_secs(60))

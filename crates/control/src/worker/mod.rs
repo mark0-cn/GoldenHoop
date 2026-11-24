@@ -83,6 +83,14 @@ impl Worker {
                     }
                 };
             }
+            if observed.availability == Availability::Available {
+                match driver.probe_isolated_sandboxes().await {
+                    Ok(()) => {
+                        observed.capabilities.insert(Capability::IsolatedSessions);
+                    }
+                    Err(error) => report("isolated_runtime_probe_failed", &error),
+                }
+            }
             profiles.push(observed);
             drivers.insert(profile.id().into(), driver);
         }
@@ -312,6 +320,10 @@ async fn diagnostics(
 ) -> Result<Json<SandboxDiagnostics>, HttpError> {
     let _guard = worker.lock(call.sandbox_id).await.lock_owned().await;
     let stored = worker.store.sandbox(call.sandbox_id).await?;
+    worker
+        .store
+        .authorize_feature(call.sandbox_id, Capability::Diagnostics)
+        .await?;
     let profile = worker
         .registration
         .profiles
@@ -364,16 +376,10 @@ async fn files(
     }
     let _guard = worker.lock(call.sandbox_id).await.lock_owned().await;
     let stored = worker.store.sandbox(call.sandbox_id).await?;
-    if stored.sandbox.state != SandboxState::Running
-        || stored.sandbox.desired_state == DesiredState::Terminated
-        || expired(&stored.sandbox, Utc::now())
-    {
-        return Err(ApiError::new(
-            ErrorCode::InvalidState,
-            "sandbox is not accepting file operations",
-        )
-        .into());
-    }
+    worker
+        .store
+        .authorize_work(call.sandbox_id, Capability::Files)
+        .await?;
     let profile = worker
         .registration
         .profiles

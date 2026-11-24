@@ -18,6 +18,8 @@ from ._protocol import (
 from ._protocol import ArtifactError, CreateArtifact, check_artifact_bytes, check_artifact_created
 from ._protocol import SessionSpec, SessionControl, SessionControlError, check_session, check_session_receipt
 from ._code_sync import CodeClientMixin
+from ._protocol import CreateIsolatedSession
+from ._isolated import check_scope, check_isolated_created
 
 
 class Client(CodeClientMixin):
@@ -72,6 +74,24 @@ class Client(CodeClientMixin):
     def sandbox(self, sandbox_id: str) -> Json:
         sid = identity(sandbox_id)
         return check_record(self._request("GET", f"v1/sandboxes/{sid}"), sid)
+
+    def create_isolated_session(self, parent_id: str, request: CreateIsolatedSession | Json, key: str) -> Json:
+        parent_id, request = identity(parent_id), body(request)
+        parent, scope = self.sandbox(parent_id), self.sandbox_scope(parent_id)
+        return check_isolated_created(self._request("POST", f"v1/sandboxes/{parent_id}/isolated-sessions", request, key=key), request, parent, scope)
+
+    def sandbox_scope(self, sandbox_id: str) -> Json:
+        sid = identity(sandbox_id)
+        return check_scope(self._request("GET", f"v1/sandboxes/{sid}/scope"), sid)
+
+    def isolated_sessions(self, parent_id: str, after: str | None = None, limit: int = 100) -> Json:
+        params = {"limit": limit}
+        if after is not None:
+            params["after"] = identity(after)
+        return self._request("GET", f"v1/sandboxes/{identity(parent_id)}/isolated-sessions", params=params)
+
+    def isolated_lease(self, parent_id: str, request: CreateIsolatedSession | Json) -> SandboxLease:
+        return SandboxLease(self, request, parent_id=identity(parent_id))
 
     def diagnostics(self, sandbox_id: str) -> Json:
         sid = identity(sandbox_id)
@@ -324,8 +344,9 @@ class Client(CodeClientMixin):
 
 
 class SandboxLease:
-    def __init__(self, client: Client, request: CreateSandbox | Json):
+    def __init__(self, client: Client, request: CreateSandbox | CreateIsolatedSession | Json, *, parent_id: str | None = None):
         self.client, self.request = client, request
+        self.parent_id = parent_id
         self._id: str | None = None
         self._delete_key = str(uuid4())
         self._closed = False
@@ -341,7 +362,7 @@ class SandboxLease:
             raise ProtocolError("lease cannot be entered twice")
         key = str(uuid4())
         try:
-            created = self.client.create(self.request, key)
+            created = self.client.create(self.request, key) if self.parent_id is None else self.client.create_isolated_session(self.parent_id, self.request, key)
         except TransportError:
             raise UncertainRequest(key) from None
         except ApiError as error:

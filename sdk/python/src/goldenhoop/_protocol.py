@@ -89,6 +89,20 @@ class CreateSandbox:
     required_capabilities: list[str] = field(default_factory=list)
     network: Json = field(default_factory=lambda: {"default_action": "deny", "rules": []})
     metadata: dict[str, str] = field(default_factory=dict)
+    child_budget: Json | None = None
+    feature_limit: list[str] | None = None
+
+
+@dataclass(frozen=True)
+class CreateIsolatedSession:
+    image: str | None = None
+    resources: Json = field(default_factory=lambda: {"cpu_millis": 1000, "memory_bytes": 1073741824, "pids": 256})
+    ttl_seconds: int | None = None
+    required_capabilities: list[str] = field(default_factory=list)
+    child_budget: Json | None = None
+    feature_limit: list[str] | None = None
+    network: Json | None = None
+    metadata: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -160,8 +174,13 @@ class CodeRunOutput:
     errors: list[Json]
 
 
-def body(value: CreateSandbox | Command | CreateArtifact | SessionSpec | SessionControl | CodeContextSpec | CodeRunSpec | Json) -> Json:
-    return asdict(value) if isinstance(value, (CreateSandbox, Command, CreateArtifact, SessionSpec, SessionControl, CodeContextSpec, CodeRunSpec)) else dict(value)
+def body(value: CreateSandbox | CreateIsolatedSession | Command | CreateArtifact | SessionSpec | SessionControl | CodeContextSpec | CodeRunSpec | Json) -> Json:
+    result = asdict(value) if isinstance(value, (CreateSandbox, CreateIsolatedSession, Command, CreateArtifact, SessionSpec, SessionControl, CodeContextSpec, CodeRunSpec)) else dict(value)
+    if isinstance(value, (CreateSandbox, CreateIsolatedSession)):
+        for name in ("child_budget", "feature_limit", "ttl_seconds", "image", "network"):
+            if result.get(name) is None:
+                result.pop(name, None)
+    return result
 
 
 def check_session(value: Any, execution_id: str | None = None, sandbox_id: str | None = None, request: Json | None = None) -> Json:

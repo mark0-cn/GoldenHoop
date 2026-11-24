@@ -73,7 +73,23 @@ impl Worker {
                     self.cancellations.lock().await.remove(&id);
                     return Ok(true);
                 }
+                let feature = if session.is_some() {
+                    Capability::ShellSessions
+                } else {
+                    Capability::Commands
+                };
+                if let Err(error) = self.store.authorize_work(handle.sandbox_id, feature).await {
+                    if error.code == ErrorCode::InvalidState {
+                        return Ok(false);
+                    }
+                    return Err(error);
+                }
                 let start = if let Some(session) = &session {
+                    if session.terminal.is_some() {
+                        self.store
+                            .authorize_feature(handle.sandbox_id, Capability::Pty)
+                            .await?;
+                    }
                     AgentRequest::StartSession {
                         id,
                         session: session.clone(),

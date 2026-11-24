@@ -18,6 +18,13 @@ impl Worker {
         // Artifact retention is implemented by the probed host storage worker.
         // Its availability is checked above; the native driver owns file capture.
         native.required_capabilities.remove(&Capability::Artifacts);
+        // Hierarchy allocation and feature ceilings are enforced by the host.
+        // The native runtime receives only this node's workload hard limits.
+        native
+            .required_capabilities
+            .remove(&Capability::IsolatedSessions);
+        native.child_budget = None;
+        native.feature_limit = None;
         Ok(native)
     }
     pub(super) async fn recovered_handle(
@@ -43,11 +50,11 @@ impl Worker {
                 "worker has no matching runtime driver",
             )
         })?;
-        if expired(&stored.sandbox, Utc::now())
+        if self.store.effective_desired(id).await? == DesiredState::Terminated
             && stored.sandbox.desired_state != DesiredState::Terminated
         {
             self.store
-                .set_desired(id, DesiredState::Terminated, &format!("expiry-{id}"))
+                .set_desired(id, DesiredState::Terminated, &format!("tree-close-{id}"))
                 .await?;
             stored = self.store.sandbox(id).await?;
         }
@@ -141,9 +148,8 @@ impl Worker {
                 .finish_operations(id, "create", OperationState::Succeeded, None)
                 .await?;
         }
-        if stored.sandbox.desired_state == DesiredState::Terminated
-            || expired(&stored.sandbox, Utc::now())
-        {
+        let effective = self.store.effective_desired(id).await?;
+        if effective == DesiredState::Terminated {
             return self
                 .stop(
                     stored,
@@ -156,7 +162,7 @@ impl Worker {
         let handle = stored.handle.clone().ok_or_else(|| {
             ApiError::new(ErrorCode::BackendUnavailable, "runtime handle is absent")
         })?;
-        if stored.sandbox.desired_state == DesiredState::Paused {
+        if effective == DesiredState::Paused {
             if stored.sandbox.state != SandboxState::Paused {
                 stored = self
                     .save(stored, SandboxState::Pausing, CleanupState::Pending, None)
@@ -165,9 +171,11 @@ impl Worker {
                 self.save(stored, SandboxState::Paused, CleanupState::Pending, None)
                     .await?;
             }
-            self.store
-                .finish_operations(id, "pause", OperationState::Succeeded, None)
-                .await?;
+            if self.store.subtree_settled(id).await? {
+                self.store
+                    .finish_operations(id, "pause", OperationState::Succeeded, None)
+                    .await?;
+            }
             return Ok(());
         }
         if stored.sandbox.state == SandboxState::Paused {
@@ -181,15 +189,16 @@ impl Worker {
         self.store
             .finish_operations(id, "create", OperationState::Succeeded, None)
             .await?;
-        self.store
-            .finish_operations(id, "resume", OperationState::Succeeded, None)
-            .await?;
+        if self.store.subtree_settled(id).await? {
+            self.store
+                .finish_operations(id, "resume", OperationState::Succeeded, None)
+                .await?;
+        }
         if !self.sync_contexts(&handle, driver).await? {
             return Ok(());
         }
         for execution in self.store.execution_work(id).await?.into_iter().take(16) {
-            let latest = self.store.sandbox(id).await?.sandbox;
-            if latest.desired_state != DesiredState::Running || expired(&latest, Utc::now()) {
+            if self.store.effective_desired(id).await? != DesiredState::Running {
                 break;
             }
             if !self.sync_execution(&handle, driver, execution).await? {
@@ -218,7 +227,11 @@ impl Worker {
             stored = self
                 .save(
                     stored,
-                    SandboxState::Stopping,
+                    if failed {
+                        SandboxState::Failed
+                    } else {
+                        SandboxState::Stopping
+                    },
                     CleanupState::Pending,
                     Some(reason.into()),
                 )
@@ -228,17 +241,6 @@ impl Worker {
             driver.remove(handle).await?;
         }
         stored.handle = None;
-        self.save(
-            stored,
-            if failed {
-                SandboxState::Failed
-            } else {
-                SandboxState::Terminated
-            },
-            CleanupState::Complete,
-            Some(reason.into()),
-        )
-        .await?;
         for context in self.store.code_context_work(id).await? {
             if expired || !failed {
                 self.store
@@ -277,6 +279,31 @@ impl Worker {
                 .await
                 .remove(&execution.execution.id);
         }
+        if !self.store.children_collected(id).await? {
+            self.save(
+                stored,
+                if failed {
+                    SandboxState::Failed
+                } else {
+                    SandboxState::Stopping
+                },
+                CleanupState::Pending,
+                Some(format!("{reason}; awaiting child collection")),
+            )
+            .await?;
+            return Ok(());
+        }
+        self.save(
+            stored,
+            if failed {
+                SandboxState::Failed
+            } else {
+                SandboxState::Terminated
+            },
+            CleanupState::Complete,
+            Some(reason.into()),
+        )
+        .await?;
         let error = Some(ApiError::new(ErrorCode::InvalidState, reason));
         for kind in ["create", "pause", "resume"] {
             self.store
