@@ -115,6 +115,7 @@ async fn contract(
     config: &DockerConfig,
     workload_image: &str,
 ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    eprintln!("contract phase: explicit development opt-in and runtime probe");
     let denied = DockerDriver::connect(DockerConfig {
         profile: DockerProfile::RuncDevelopment,
         allow_runc_development: false,
@@ -129,6 +130,7 @@ async fn contract(
         "resources":{"cpu_millis":1000,"memory_bytes":268435456,"pids":128}
     }))?;
     let record = sandbox(&request);
+    eprintln!("contract phase: foreign workload create and image policy");
     let handle = driver.create(&record, &request).await?;
     let engine = bollard::Docker::connect_with_socket_defaults()?;
     let effective = engine
@@ -168,6 +170,7 @@ async fn contract(
         handle.backend_ref
     );
     let data = STANDARD.encode([0_u8, 255, 10]);
+    eprintln!("contract phase: binary files and literal execution");
     driver
         .rpc(
             &handle,
@@ -198,6 +201,7 @@ async fn contract(
     assert_eq!(actual, b"$(touch /workspace/injected)");
 
     // Reconnect from a fresh worker using persisted labels and serialized handles.
+    eprintln!("contract phase: worker reconnect and ownership refusal");
     let restarted = DockerDriver::connect(config.clone()).await?;
     let handle: RuntimeHandle = serde_json::from_slice(&serde_json::to_vec(&handle)?)?;
     assert!(
@@ -220,6 +224,7 @@ async fn contract(
         ErrorCode::Forbidden
     );
     assert_eq!(driver.inspect(&handle).await?.state, ObservedState::Running);
+    eprintln!("contract phase: pause, create retry and resume");
     driver.pause(&handle).await?;
     assert_eq!(
         driver.create(&record, &request).await?.backend_ref,
@@ -238,11 +243,13 @@ async fn contract(
             .code,
         ErrorCode::Conflict
     );
+    eprintln!("contract phase: create conflict and confirmed repeat removal");
     driver.remove(&handle).await?;
     driver.remove(&handle).await?;
     assert_eq!(driver.inspect(&handle).await?.state, ObservedState::Missing);
 
     let mut short_request = request.clone();
+    eprintln!("contract phase: paused absolute expiry");
     short_request.ttl_seconds = 3;
     let expiring = sandbox(&short_request);
     let expired_handle = driver.create(&expiring, &short_request).await?;
@@ -280,6 +287,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .catch_unwind()
         .await;
     // Cleanup also follows failed checks; only this fresh installation is in scope.
+    eprintln!("contract phase: final owned-resource cleanup");
     for handle in driver.discover().await? {
         driver.remove(&handle).await?;
     }

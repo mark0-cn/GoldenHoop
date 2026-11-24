@@ -62,6 +62,11 @@ pub struct DockerDriver {
 }
 
 fn backend(error: DockerError) -> ApiError {
+    // Opt-in is restricted to the public-image contract workflow. Public API
+    // errors remain redacted; normal worker runs never print backend payloads.
+    if std::env::var("GOLDENHOOP_TEST_BACKEND_DIAGNOSTICS").as_deref() == Ok("1") {
+        eprintln!("goldenhoop test backend diagnostic: {error:?}");
+    }
     let code = match error {
         DockerError::DockerResponseServerError {
             status_code: 404, ..
