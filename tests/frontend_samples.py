@@ -1,4 +1,18 @@
 """Unprivileged wire client for actual workload DNS boundary tests."""
+SYSTEM_RESOLVER = r'''
+import json,os,socket,sys
+name=sys.argv[1]
+try:
+ addresses=sorted({row[4][0] for row in socket.getaddrinfo(name,19001,family=socket.AF_INET,type=socket.SOCK_STREAM)})
+ result={'ok':True,'addresses':addresses}
+except socket.gaierror as error:result={'ok':False,'error':type(error).__name__,'code':error.errno}
+try:
+ descriptor=os.open('/etc/resolv.conf',os.O_WRONLY)
+ os.close(descriptor);result['resolver_readonly']=False
+except OSError:result['resolver_readonly']=True
+print(json.dumps(result))
+'''
+
 CLIENT = r'''
 import json,socket,struct,sys
 mode,address,port=sys.argv[1:4];wire=bytes(json.loads(sys.argv[4]))

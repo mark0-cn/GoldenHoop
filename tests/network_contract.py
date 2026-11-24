@@ -114,7 +114,7 @@ class Contract:
         observed = json.loads(docker("inspect", identity).stdout)[0]
         self.owned(observed)
         assert observed["Image"] == self.evidence["image_id"], (observed["Image"], self.evidence["image_id"])
-        assert all(mount["Type"] == "tmpfs" for mount in observed.get("Mounts", []))
+        self.validate_mounts(role, observed.get("Mounts", []))
         host = observed["HostConfig"]
         guest = role == "guest"
         expected_memory = 1073741824 if guest else 134217728
@@ -130,6 +130,9 @@ class Contract:
         self.save()
         docker("start", identity)
         return identity
+
+    def validate_mounts(self, role, mounts):
+        assert all(mount["Type"] == "tmpfs" for mount in mounts), mounts
 
     def ensure_helper(self):
         result = docker("inspect", self.helper_name, check=False)

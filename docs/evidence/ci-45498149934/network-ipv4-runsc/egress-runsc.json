@@ -1,0 +1,3757 @@
+{
+  "suite": "rust-workload-ipv4-dns",
+  "runtime": "runsc",
+  "scope": "actual workload IPv4 DNS and private grant path; IPv6/L2/metadata/credentials/API integration incomplete",
+  "timestamp": "2026-11-24T22:13:01.950368+00:00",
+  "attempt": "cc8964dbdcbf4b06a3825d475a806bc4",
+  "receiver_publication": "routed",
+  "result": "failed",
+  "cleanup": "complete",
+  "cases": [
+    "allocation_alias_controller_lock_foreign_ownership_and_live_bridge_deletion_refuse",
+    "default_deny_is_installed_before_unprivileged_workload_start",
+    "stale_revision_and_unimplemented_name_policy_refuse_without_mutation",
+    "kernel_cidr_and_user_hierarchy_intersect_with_tcp_only_ports",
+    "kernel_user_deny_precedes_allow_in_both_orders",
+    "kernel_operator_deny_then_allow_precede_user_policy",
+    "kernel_tcp_cap_precedes_operator_allow_without_becoming_a_udp_cap",
+    "private_dns_answer_follows_confirmed_kernel_tcp_and_udp_grants",
+    "denied_domain_is_not_forwarded_to_the_owned_upstream",
+    "source_expiry_denies_packets_while_controller_and_target_remain_live",
+    "live_shared_ip_source_does_not_revive_the_expired_original_source",
+    "negative_aaaa_preserves_the_same_names_live_a_permission",
+    "dns_queries_cannot_renew_the_trusted_controller_lease",
+    "policy_replacement_clears_prior_dns_permissions",
+    "operator_domain_credit_precedes_user_address_denies",
+    "operator_address_deny_refuses_a_dns_answer_and_packet_grant",
+    "tcp_floor_precedes_dns_operator_permission",
+    "workload_dns_listener_is_on_the_verified_gateway_and_grants_real_packets",
+    "arbitrary_ipv4_udp_and_tcp_dns_destinations_are_transparently_intercepted",
+    "workload_denied_names_return_address_free_refused_without_upstream_queries",
+    "owned_filter_table_networks_and_containers_confirmed_absent"
+  ],
+  "resources": [
+    {
+      "role": "helper",
+      "container_id": "3574a2650df8fbdbde880a1a2419c23c19a2271b35681ef4a74a2e6a232c03ea",
+      "boundary": {
+        "Runtime": "runc",
+        "NetworkMode": "host",
+        "ReadonlyRootfs": true,
+        "CapDrop": [
+          "ALL"
+        ],
+        "CapAdd": [
+          "CAP_NET_ADMIN"
+        ],
+        "SecurityOpt": [
+          "no-new-privileges:true"
+        ],
+        "Memory": 134217728,
+        "MemorySwap": 134217728,
+        "NanoCpus": 250000000,
+        "PidsLimit": 32
+      }
+    },
+    {
+      "role": "guest-net",
+      "network_id": "6a84d3f87b4c62caedd09920fb5f84b89954a8d51ae3c1a3f8ed7edcfbd265e6",
+      "options": {
+        "com.docker.network.bridge.enable_ip_masquerade": "true",
+        "com.docker.network.bridge.name": "ghnpcc8964dbdcb"
+      },
+      "ipam": {
+        "Driver": "default",
+        "Options": {},
+        "Config": [
+          {
+            "Subnet": "172.18.0.0/16",
+            "Gateway": "172.18.0.1"
+          }
+        ]
+      }
+    },
+    {
+      "role": "target-net",
+      "network_id": "c4bb2fee4297a60a2535a930f6ce66bf02a498834f162b08971e9b5dd1e396b2",
+      "options": {
+        "com.docker.network.bridge.gateway_mode_ipv4": "routed"
+      },
+      "ipam": {
+        "Driver": "default",
+        "Options": {},
+        "Config": [
+          {
+            "Subnet": "172.19.0.0/16",
+            "Gateway": "172.19.0.1"
+          }
+        ]
+      }
+    },
+    {
+      "role": "target",
+      "container_id": "dbb63dfbdb8ab8717e9bf7a086edc6b443e45c941cd6b9fdc7ffdae15b999b7c",
+      "boundary": {
+        "Runtime": "runc",
+        "NetworkMode": "c4bb2fee4297a60a2535a930f6ce66bf02a498834f162b08971e9b5dd1e396b2",
+        "ReadonlyRootfs": true,
+        "CapDrop": [
+          "ALL"
+        ],
+        "CapAdd": null,
+        "SecurityOpt": [
+          "no-new-privileges:true"
+        ],
+        "Memory": 134217728,
+        "MemorySwap": 134217728,
+        "NanoCpus": 250000000,
+        "PidsLimit": 32
+      }
+    },
+    {
+      "role": "guest",
+      "container_id": "d8a5e4fabd2808cc77b7178aadbe1344b8beae6e5eb669cf420ce650c1e88d63",
+      "boundary": {
+        "Runtime": "runsc",
+        "NetworkMode": "6a84d3f87b4c62caedd09920fb5f84b89954a8d51ae3c1a3f8ed7edcfbd265e6",
+        "ReadonlyRootfs": true,
+        "CapDrop": [
+          "ALL"
+        ],
+        "CapAdd": null,
+        "SecurityOpt": [
+          "no-new-privileges:true"
+        ],
+        "Memory": 1073741824,
+        "MemorySwap": 1073741824,
+        "NanoCpus": 1000000000,
+        "PidsLimit": 256
+      }
+    },
+    {
+      "role": "dns-target",
+      "container_id": "33b67509a38372a6fdf49ac114eaf2bed7921ce131ff7b7ffd9273576d3d731a",
+      "boundary": {
+        "Runtime": "runc",
+        "NetworkMode": "c4bb2fee4297a60a2535a930f6ce66bf02a498834f162b08971e9b5dd1e396b2",
+        "ReadonlyRootfs": true,
+        "CapDrop": [
+          "ALL"
+        ],
+        "CapAdd": null,
+        "SecurityOpt": [
+          "no-new-privileges:true"
+        ],
+        "Memory": 134217728,
+        "MemorySwap": 134217728,
+        "NanoCpus": 250000000,
+        "PidsLimit": 32
+      }
+    }
+  ],
+  "observations": [
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.18.0.1",
+      "port": 43999,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": false,
+      "error": "TimeoutError"
+    },
+    {
+      "origin": "workload",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": false,
+      "error": "TimeoutError"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.18.0.1",
+      "port": 43999,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": false,
+      "error": "TimeoutError"
+    },
+    {
+      "origin": "workload",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": false,
+      "error": "TimeoutError"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.18.0.1",
+      "port": 43999,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": false,
+      "error": "TimeoutError"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.18.0.1",
+      "port": 43999,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": false,
+      "error": "TimeoutError"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.18.0.1",
+      "port": 43999,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": false,
+      "error": "TimeoutError"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.18.0.1",
+      "port": 43999,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": false,
+      "error": "TimeoutError"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.18.0.1",
+      "port": 43999,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": false,
+      "error": "TimeoutError"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "workload",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.18.0.1",
+      "port": 43999,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": false,
+      "error": "TimeoutError"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "workload",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": false,
+      "error": "TimeoutError"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.18.0.1",
+      "port": 43999,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": false,
+      "error": "TimeoutError"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": false,
+      "error": "TimeoutError"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.18.0.1",
+      "port": 43999,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": false,
+      "error": "TimeoutError"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.18.0.1",
+      "port": 43999,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": false,
+      "error": "TimeoutError"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "workload",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.18.0.1",
+      "port": 43999,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": false,
+      "error": "TimeoutError"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a63633839363464626463626634623036613338323564343735613830366263340a"
+    }
+  ],
+  "source_files_sha256": {
+    "tests/network_contract.py": "38494a2367b7c1e1df10f5d3b26fd4314c91ba635770bd547eaf6e45fba4b4a4",
+    "tests/network_samples.py": "7a776745a3d328313470c240207f726b540a2787562dda2367d19cae26da0a45",
+    "tests/fixtures/network.Dockerfile": "7b67bda5e4a310c36915acd85b3a270bddeebff3026b39831b0ce68f1871e9e2",
+    "tests/egress_contract.py": "c56aa15c9b7e85922da0bda7a34e0cb3213a18415486b318922bd413615e3e88",
+    "images/agent/Dockerfile": "7d32e48b7f7c7df4bd150650b527f0ee0a8544d4ae4281fb625f89b68cf08544",
+    "Cargo.toml": "01697d631f0717e4123e5f41c5d9484b0828ee669ac0df3eab9d8c9ed228fc48",
+    "Cargo.lock": "86069e84328c18b8c49a0847d4910efccbe00927ce9437871e8cbb0232445a28",
+    "crates/egress/src/plan.rs": "e40a62bce4f9490a842df422309e84ab1828838bfd8ddbe0ecc500d3d857c2a0",
+    "crates/egress/src/dns.rs": "68c9c685ff7c191dc863da5bb4ef92935c71db1127ec85c56de66d69e6b55570",
+    "crates/egress/src/main.rs": "92572644b21078fd474487552114945b54a42c28d3c523b6c17f9c3dea3a43f3",
+    "crates/egress/src/manager.rs": "2066c95c3b5e4b4fa3d6a55d8f12cfe31e3635a13e3101c2727d05c1bf300966",
+    "crates/egress/src/frontend.rs": "45fa0cda2d4a57ac585f3bf2cc2eb3cb9522c829562e31dcac4c9d5692f1aae2",
+    "crates/egress/src/lib.rs": "4d9e6a78acc3c367d8baf85561ea5c04092b586921eed2c754a0b68e2f2bc95d",
+    "crates/egress/tests/dns.rs": "61a287d48e1a72fe0bd1b252122d7b8388224eca9c6b7c2e7d8dc68fcc33e107",
+    "crates/egress/tests/admission.rs": "28787126ad9df68b8e0b8473dbb9b0c502f39943ba3b6957f5401c0b3626b676",
+    "crates/egress/tests/framing.rs": "39ad445d7df4e0d278927f3ecc70c6982999bd68c158d6376490e5c30fb3f83b",
+    "crates/egress/src/manager/resolver.rs": "e40e8c7db959701990a29ecfe2aa39ac4f12995ef019f37a5fb0a102f9ccbc2f",
+    "crates/egress/src/dns/upstream.rs": "1b131e36bc45571a71406ce9c062394bb0ee45532dcaa0dee47a3da2e5c145be",
+    "crates/egress/src/dns/leases.rs": "f4d4241b8887375399502b7528ccfcac3fd6a841711602d350eff5d3ea57aa1d",
+    "crates/egress/src/dns/probe.rs": "08843adfee6c3487e319954068b3b2985c31820ae3a6eab1856c52f6803b37d2",
+    "crates/egress/src/dns/sets.rs": "57a3ddc80c64f2596078b619988a6f9be31caa56d49439dcd5ca87d790760003",
+    "crates/egress/Cargo.toml": "65facff025a10c03b8dd23ad2ff2df7fe3614a3fc4355798c023c4d5942340cd",
+    "crates/policy/src/decision.rs": "e89ce9796904377a030f76d9e7593c2b5777b83d3e7322a1af9fea5d25e9c120",
+    "crates/policy/src/lib.rs": "4689666f161692d7424c0801055b37605e2c34ef71dac6e3ad1e3e4c033f8858",
+    "tests/dns_contract.py": "d829cc5f8680721384b24741743faf4961a3313073af3e87f583309e0d2e6e90",
+    "tests/dns_samples.py": "6da1f5135554af237b23676a0d39854ce3ec4227f7ff97e3a2cbb85b615e139a",
+    "tests/frontend_contract.py": "07228814f36a332a856d53076d1727be2ff24d5a2c62125ca92326558c55164b",
+    "tests/frontend_samples.py": "767355edac47693f8ffd6d943ed9a48b843877e9c75c5de7895bdb89eae1ef03"
+  },
+  "image_id": "sha256:084fab28c1ebe118f236b11052a1082e95d8dc2d1b86e43cb12d7dc92ba43c50",
+  "docker": {
+    "Platform": {
+      "Name": "Docker Engine - Community"
+    },
+    "Version": "29.4.2",
+    "ApiVersion": "1.54",
+    "MinAPIVersion": "1.40",
+    "Os": "linux",
+    "Arch": "amd64",
+    "Components": [
+      {
+        "Name": "Engine",
+        "Version": "29.4.2",
+        "Details": {
+          "ApiVersion": "1.54",
+          "Arch": "amd64",
+          "BuildTime": "Fri May  1 10:24:04 2026",
+          "Experimental": "false",
+          "GitCommit": "d329809",
+          "GoVersion": "go1.26.2",
+          "KernelVersion": "7.0.0-1016-aws",
+          "MinAPIVersion": "1.40",
+          "Module": "github.com/moby/moby/v2",
+          "ModuleVersion": "v2.0.0+unknown",
+          "Os": "linux"
+        }
+      },
+      {
+        "Name": "containerd",
+        "Version": "v2.4.2",
+        "Details": {
+          "GitCommit": "b7a25261e029d68978bbf290df0a62fc819b3c51"
+        }
+      },
+      {
+        "Name": "runc",
+        "Version": "1.5.3",
+        "Details": {
+          "GitCommit": "v1.5.3-0-g46365c62"
+        }
+      },
+      {
+        "Name": "docker-init",
+        "Version": "0.19.0",
+        "Details": {
+          "GitCommit": "de40ad0"
+        }
+      }
+    ],
+    "GitCommit": "d329809",
+    "GoVersion": "go1.26.2",
+    "KernelVersion": "7.0.0-1016-aws",
+    "BuildTime": "2026-05-01T10:24:04.000000000+00:00"
+  },
+  "target_port_bindings": {
+    "19001/tcp": [
+      {
+        "HostIp": "0.0.0.0",
+        "HostPort": ""
+      }
+    ],
+    "19002/udp": [
+      {
+        "HostIp": "0.0.0.0",
+        "HostPort": ""
+      }
+    ],
+    "19003/tcp": [
+      {
+        "HostIp": "0.0.0.0",
+        "HostPort": ""
+      }
+    ]
+  },
+  "controller_acknowledgements": [
+    {
+      "operation": "open",
+      "reply": {
+        "id": 1,
+        "result": {
+          "installed": false,
+          "maximum_lease_seconds": 10,
+          "revision": null,
+          "table_sha256": null,
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "install",
+      "reply": {
+        "error": {
+          "code": "conflict",
+          "message": "bridge allocation identity changed",
+          "request_id": null,
+          "retryable": false
+        },
+        "id": 2
+      }
+    },
+    {
+      "operation": "install",
+      "reply": {
+        "id": 3,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 0,
+          "table_sha256": "b20673e6b9c425738f9376eb6ee63d3f0570604b68c5490e40d172929875f059",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "remove",
+      "reply": {
+        "error": {
+          "code": "conflict",
+          "message": "collect the bridge before removing its filter",
+          "request_id": null,
+          "retryable": false
+        },
+        "id": 4
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "error": {
+          "code": "invalid_state",
+          "message": "egress lease is not renewable",
+          "request_id": null,
+          "retryable": false
+        },
+        "id": 5
+      }
+    },
+    {
+      "operation": "apply",
+      "reply": {
+        "id": 6,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 1,
+          "table_sha256": "017a99a807d10a2349db20c7a69eb41ab4ca867d73ea5095db0dd33c6d8dbfc8",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "apply",
+      "reply": {
+        "error": {
+          "code": "invalid_state",
+          "message": "quarantine is required before policy changes",
+          "request_id": null,
+          "retryable": false
+        },
+        "id": 7
+      }
+    },
+    {
+      "operation": "apply",
+      "reply": {
+        "error": {
+          "code": "unsupported_capability",
+          "message": "host adapter requires static address targets until DNS lease integration",
+          "request_id": null,
+          "retryable": false
+        },
+        "id": 8
+      }
+    },
+    {
+      "operation": "inspect",
+      "reply": {
+        "id": 9,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 1,
+          "table_sha256": "017a99a807d10a2349db20c7a69eb41ab4ca867d73ea5095db0dd33c6d8dbfc8",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "apply",
+      "reply": {
+        "id": 10,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 2,
+          "table_sha256": "caa9b04f9d7539bd30d48cbdc9033584aaac10fa738b10cb6536be536417257b",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 11,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 2,
+          "table_sha256": "5922108a52521662accb6217c6fe1fa40f0ae762b58ab9bf0d891fba6b1900e1",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "apply",
+      "reply": {
+        "id": 12,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 3,
+          "table_sha256": "af5212fd99f0f8735a2ac826a625e2e4ae2568ac9202186f451df368dee1b554",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 13,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 3,
+          "table_sha256": "44bb50eca6a4e1b7b21f7e4e6c876567ba17a8b93af38435902d5a9adfc6824e",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "apply",
+      "reply": {
+        "id": 14,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 4,
+          "table_sha256": "5f0d6c892615388e36712cbf2d1740104183f8e4e0549ef5264548011d8f9d72",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 15,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 4,
+          "table_sha256": "6b08d328493f0a6b8f31c935ad15a32f8404daac8f1e570acaef051669458ca7",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "apply",
+      "reply": {
+        "id": 16,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 5,
+          "table_sha256": "c2ca1607bed959403cfa82fcd74aea6f7e6ef8700bee0e18be5711a4062e4b7c",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 17,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 5,
+          "table_sha256": "176d8e70f6af638226061d3829e146170775d3fb71fe2387d614e727d5cc8859",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "apply",
+      "reply": {
+        "id": 18,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 6,
+          "table_sha256": "d681525eb2095cf7af205a293d8c4251ad6871b5d26a9382005c62b931170150",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 19,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 6,
+          "table_sha256": "ca964c23809add991ae634e23af00395b84fbb6fac6275650262c1403abfaa29",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "apply",
+      "reply": {
+        "id": 20,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 7,
+          "table_sha256": "36b958eaf912db7546c685f00ff9c1d545186324a166eb97f9df5c7223cd536b",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 21,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 7,
+          "table_sha256": "8b1f74e0dbdbfd97def6e8cb9ceca488f2c7a67b9dfd10270633e7c259250e22",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "quarantine",
+      "reply": {
+        "id": 22,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 8,
+          "table_sha256": "bd8e98f235fdc138169496e529b2433b8001583c91ff8c696518086bcc8c3b88",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "enable_dns",
+      "reply": {
+        "id": 23,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 8,
+          "table_sha256": "bd8e98f235fdc138169496e529b2433b8001583c91ff8c696518086bcc8c3b88",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "listen_dns",
+      "reply": {
+        "id": 24,
+        "result": {
+          "binding": {
+            "address": "172.18.0.1",
+            "port": 36619
+          },
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 9,
+          "table_sha256": "ddf777c0bfc67756a005fb5119bc0b848ab6d4caa80b48d3cac0ba10e8813889",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "apply",
+      "reply": {
+        "id": 25,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "table_sha256": "e9e63e7f880af49ca64e0d7f4dadb60c52d729072f95e9870c5462329eb58d96",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 26,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "table_sha256": "e9e63e7f880af49ca64e0d7f4dadb60c52d729072f95e9870c5462329eb58d96",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 27,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "table_sha256": "41505d83175a570b8516b1719b08207b56644bc81da964a48f664d5eb748b1b5",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "resolve",
+      "reply": {
+        "id": 28,
+        "result": {
+          "revision": 10,
+          "uncertain": false,
+          "wire": [
+            0,
+            71,
+            129,
+            128,
+            0,
+            1,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            5,
+            115,
+            104,
+            111,
+            114,
+            116,
+            4,
+            116,
+            101,
+            115,
+            116,
+            0,
+            0,
+            1,
+            0,
+            1,
+            192,
+            12,
+            0,
+            1,
+            0,
+            1,
+            0,
+            0,
+            0,
+            3,
+            0,
+            4,
+            172,
+            19,
+            0,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "operation": "resolve",
+      "reply": {
+        "error": {
+          "code": "forbidden",
+          "message": "DNS query is denied by policy",
+          "request_id": null,
+          "retryable": false
+        },
+        "id": 29
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 30,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "table_sha256": "8de8dce2bd8287d63f0b7695a5ef2c49cafe20c8d060033acbacbd738b0a6093",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 31,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "table_sha256": "8de8dce2bd8287d63f0b7695a5ef2c49cafe20c8d060033acbacbd738b0a6093",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 32,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "table_sha256": "314c85159cf6ea80aaf2cb63bb9b59dcad1ba124064ba8ac774a8280b31ebecc",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 33,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "table_sha256": "aebb579c2938995dcddb9b7b71756c86cdf7e8d92cd07fe7d4f07f38030dd7ed",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 34,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "table_sha256": "aebb579c2938995dcddb9b7b71756c86cdf7e8d92cd07fe7d4f07f38030dd7ed",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 35,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "table_sha256": "225c992f68fc8fafbc7895931656898748229ed2389be2549220935a0a8c66bc",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 36,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "table_sha256": "225c992f68fc8fafbc7895931656898748229ed2389be2549220935a0a8c66bc",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 37,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "table_sha256": "c4cdf8cd70887927e797ec59e69dc9207eb951ee3328bcfe1cefc4447dfbf79b",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 38,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "table_sha256": "c4cdf8cd70887927e797ec59e69dc9207eb951ee3328bcfe1cefc4447dfbf79b",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "dns_source",
+      "reply": {
+        "id": 39,
+        "result": {
+          "remaining_milliseconds": null,
+          "revision": 10,
+          "source_live": false,
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 40,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "table_sha256": "22f2278fa4334dc858413a2902d25bd1a5147dd595713412523446bbb369032a",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 41,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "table_sha256": "22f2278fa4334dc858413a2902d25bd1a5147dd595713412523446bbb369032a",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "resolve",
+      "reply": {
+        "id": 42,
+        "result": {
+          "revision": 10,
+          "uncertain": false,
+          "wire": [
+            0,
+            71,
+            129,
+            128,
+            0,
+            1,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            5,
+            115,
+            104,
+            111,
+            114,
+            116,
+            4,
+            116,
+            101,
+            115,
+            116,
+            0,
+            0,
+            1,
+            0,
+            1,
+            192,
+            12,
+            0,
+            1,
+            0,
+            1,
+            0,
+            0,
+            0,
+            3,
+            0,
+            4,
+            172,
+            19,
+            0,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 43,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "table_sha256": "6429e83d77404c135c0a598ca5caf3d1ba6906fbc76284fd5fd8e0b0fd7af655",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "resolve",
+      "reply": {
+        "id": 44,
+        "result": {
+          "revision": 10,
+          "uncertain": false,
+          "wire": [
+            0,
+            71,
+            129,
+            128,
+            0,
+            1,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            4,
+            108,
+            111,
+            110,
+            103,
+            4,
+            116,
+            101,
+            115,
+            116,
+            0,
+            0,
+            1,
+            0,
+            1,
+            192,
+            12,
+            0,
+            1,
+            0,
+            1,
+            0,
+            0,
+            0,
+            9,
+            0,
+            4,
+            172,
+            19,
+            0,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 45,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "table_sha256": "032a8a03be709740af4858b0f2dd37a64a564726eac2ae7c7637d6fdab9fcd57",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 46,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "table_sha256": "032a8a03be709740af4858b0f2dd37a64a564726eac2ae7c7637d6fdab9fcd57",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 47,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "table_sha256": "ca40e983b68d7ccbc003b5d7abf4e7c819987174ca44c0159da75789af12625e",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 48,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "table_sha256": "ca40e983b68d7ccbc003b5d7abf4e7c819987174ca44c0159da75789af12625e",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 49,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "table_sha256": "c26209e0ec5633443de9bc189eb1766db0046bb8a3ade95ce7c56bd256372a68",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 50,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "table_sha256": "ade272aa8313d71146bc4d2603f122942037842081d1d0af31b138a40298f78a",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 51,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "table_sha256": "401c0c660fb5a08086d0c577532751ff1f999c8bbf821663ac23223a16b480d6",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 52,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "table_sha256": "96dd9e5f20fd10d1b0b7d1c269be0f4dae2831955c72a905cf055e333ad11e44",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 53,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "table_sha256": "96dd9e5f20fd10d1b0b7d1c269be0f4dae2831955c72a905cf055e333ad11e44",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "dns_source",
+      "reply": {
+        "id": 54,
+        "result": {
+          "remaining_milliseconds": null,
+          "revision": 10,
+          "source_live": false,
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "dns_source",
+      "reply": {
+        "id": 55,
+        "result": {
+          "remaining_milliseconds": 25396,
+          "revision": 10,
+          "source_live": true,
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 56,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "table_sha256": "246f092fbfec1db8b4302f8728ff211e1254d85ec8f993ec8a53bcc92621fbd3",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "resolve",
+      "reply": {
+        "id": 57,
+        "result": {
+          "revision": 10,
+          "uncertain": false,
+          "wire": [
+            0,
+            71,
+            129,
+            128,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4,
+            108,
+            111,
+            110,
+            103,
+            4,
+            116,
+            101,
+            115,
+            116,
+            0,
+            0,
+            28,
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "operation": "dns_source",
+      "reply": {
+        "id": 58,
+        "result": {
+          "remaining_milliseconds": 25218,
+          "revision": 10,
+          "source_live": true,
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "dns_source",
+      "reply": {
+        "id": 59,
+        "result": {
+          "remaining_milliseconds": null,
+          "revision": 10,
+          "source_live": false,
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 60,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "table_sha256": "7940956959cb8bcccfaae82f13f826f68f9af602b1f827ab00b6464f20529afb",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "resolve",
+      "reply": {
+        "id": 61,
+        "result": {
+          "revision": 10,
+          "uncertain": false,
+          "wire": [
+            0,
+            71,
+            129,
+            128,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4,
+            108,
+            111,
+            110,
+            103,
+            4,
+            116,
+            101,
+            115,
+            116,
+            0,
+            0,
+            28,
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "operation": "resolve",
+      "reply": {
+        "id": 62,
+        "result": {
+          "revision": 10,
+          "uncertain": false,
+          "wire": [
+            0,
+            71,
+            129,
+            128,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4,
+            108,
+            111,
+            110,
+            103,
+            4,
+            116,
+            101,
+            115,
+            116,
+            0,
+            0,
+            28,
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "operation": "resolve",
+      "reply": {
+        "id": 63,
+        "result": {
+          "revision": 10,
+          "uncertain": false,
+          "wire": [
+            0,
+            71,
+            129,
+            128,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4,
+            108,
+            111,
+            110,
+            103,
+            4,
+            116,
+            101,
+            115,
+            116,
+            0,
+            0,
+            28,
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "operation": "resolve",
+      "reply": {
+        "id": 64,
+        "result": {
+          "revision": 10,
+          "uncertain": false,
+          "wire": [
+            0,
+            71,
+            129,
+            128,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4,
+            108,
+            111,
+            110,
+            103,
+            4,
+            116,
+            101,
+            115,
+            116,
+            0,
+            0,
+            28,
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "operation": "resolve",
+      "reply": {
+        "id": 65,
+        "result": {
+          "revision": 10,
+          "uncertain": false,
+          "wire": [
+            0,
+            71,
+            129,
+            128,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4,
+            108,
+            111,
+            110,
+            103,
+            4,
+            116,
+            101,
+            115,
+            116,
+            0,
+            0,
+            28,
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "operation": "resolve",
+      "reply": {
+        "id": 66,
+        "result": {
+          "revision": 10,
+          "uncertain": false,
+          "wire": [
+            0,
+            71,
+            129,
+            128,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4,
+            108,
+            111,
+            110,
+            103,
+            4,
+            116,
+            101,
+            115,
+            116,
+            0,
+            0,
+            28,
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "operation": "resolve",
+      "reply": {
+        "id": 67,
+        "result": {
+          "revision": 10,
+          "uncertain": false,
+          "wire": [
+            0,
+            71,
+            129,
+            128,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4,
+            108,
+            111,
+            110,
+            103,
+            4,
+            116,
+            101,
+            115,
+            116,
+            0,
+            0,
+            28,
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "operation": "resolve",
+      "reply": {
+        "id": 68,
+        "result": {
+          "revision": 10,
+          "uncertain": false,
+          "wire": [
+            0,
+            71,
+            129,
+            128,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4,
+            108,
+            111,
+            110,
+            103,
+            4,
+            116,
+            101,
+            115,
+            116,
+            0,
+            0,
+            28,
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "operation": "resolve",
+      "reply": {
+        "error": {
+          "code": "invalid_state",
+          "message": "DNS requires a known live controller lease",
+          "request_id": null,
+          "retryable": false
+        },
+        "id": 69
+      }
+    },
+    {
+      "operation": "quarantine",
+      "reply": {
+        "id": 70,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 11,
+          "table_sha256": "0a0478f46f9777c8a1c664e37df4db73016e3ee2c97576226a922ba9fd3b3317",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "apply",
+      "reply": {
+        "id": 71,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 12,
+          "table_sha256": "b1dafb3eb1fe4e127921d80199e37fa637878eb11325ef46f50c53c65779b4e6",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 72,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 12,
+          "table_sha256": "b1dafb3eb1fe4e127921d80199e37fa637878eb11325ef46f50c53c65779b4e6",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "resolve",
+      "reply": {
+        "id": 73,
+        "result": {
+          "revision": 12,
+          "uncertain": false,
+          "wire": [
+            0,
+            71,
+            129,
+            128,
+            0,
+            1,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            4,
+            108,
+            111,
+            110,
+            103,
+            4,
+            116,
+            101,
+            115,
+            116,
+            0,
+            0,
+            1,
+            0,
+            1,
+            192,
+            12,
+            0,
+            1,
+            0,
+            1,
+            0,
+            0,
+            0,
+            9,
+            0,
+            4,
+            172,
+            19,
+            0,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "operation": "apply",
+      "reply": {
+        "id": 74,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 13,
+          "table_sha256": "2225e41e769c1dc31b11899a183f97b91ed6eec6f6ca2426a53506aed611285a",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "resolve",
+      "reply": {
+        "error": {
+          "code": "forbidden",
+          "message": "DNS query is denied by policy",
+          "request_id": null,
+          "retryable": false
+        },
+        "id": 75
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 76,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 13,
+          "table_sha256": "e6dbfcb70376af9bc5093e5c5b69e9f4d9589351f033b829432360a627870597",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "apply",
+      "reply": {
+        "id": 77,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 14,
+          "table_sha256": "a26ecf06ce55b87933280e87dc0729ba25565904107fd972cc510dafc8196c97",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 78,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 14,
+          "table_sha256": "a26ecf06ce55b87933280e87dc0729ba25565904107fd972cc510dafc8196c97",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "resolve",
+      "reply": {
+        "id": 79,
+        "result": {
+          "revision": 14,
+          "uncertain": false,
+          "wire": [
+            0,
+            71,
+            129,
+            128,
+            0,
+            1,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            8,
+            111,
+            112,
+            101,
+            114,
+            97,
+            116,
+            111,
+            114,
+            4,
+            116,
+            101,
+            115,
+            116,
+            0,
+            0,
+            1,
+            0,
+            1,
+            192,
+            12,
+            0,
+            1,
+            0,
+            1,
+            0,
+            0,
+            0,
+            9,
+            0,
+            4,
+            172,
+            19,
+            0,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "operation": "apply",
+      "reply": {
+        "id": 80,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 15,
+          "table_sha256": "76ef6c42d56faa0b3c2ed59d019995764f60f4c86d29f1771f9baefb13a5b343",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "resolve",
+      "reply": {
+        "error": {
+          "code": "forbidden",
+          "message": "resolved DNS address is denied by policy",
+          "request_id": null,
+          "retryable": false
+        },
+        "id": 81
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 82,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 15,
+          "table_sha256": "b0931277b5f306dc57aa8183b45c93656471eb99ea70dbea0214d8af36531701",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "apply",
+      "reply": {
+        "id": 83,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 16,
+          "table_sha256": "293aa3a9f7d6224cbd84c7c22850fe2f0c0e89dd3249c958422bd29a15aa5f79",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 84,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 16,
+          "table_sha256": "293aa3a9f7d6224cbd84c7c22850fe2f0c0e89dd3249c958422bd29a15aa5f79",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "resolve",
+      "reply": {
+        "id": 85,
+        "result": {
+          "revision": 16,
+          "uncertain": false,
+          "wire": [
+            0,
+            71,
+            129,
+            128,
+            0,
+            1,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            8,
+            111,
+            112,
+            101,
+            114,
+            97,
+            116,
+            111,
+            114,
+            4,
+            116,
+            101,
+            115,
+            116,
+            0,
+            0,
+            1,
+            0,
+            1,
+            192,
+            12,
+            0,
+            1,
+            0,
+            1,
+            0,
+            0,
+            0,
+            9,
+            0,
+            4,
+            172,
+            19,
+            0,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 86,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 16,
+          "table_sha256": "d0b46a323537f7c2192ff6c442aac871fe6b76083ca41c6cd91205e144fae029",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "apply",
+      "reply": {
+        "id": 87,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 17,
+          "table_sha256": "73aba77587d56bf84d6f6f4b53c0e69831d4fa47d725f8b8260e5c059cb9fc69",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 88,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 17,
+          "table_sha256": "73aba77587d56bf84d6f6f4b53c0e69831d4fa47d725f8b8260e5c059cb9fc69",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 89,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 17,
+          "table_sha256": "c6240e9fa2858a8d7b1aea374196788f4ecee8ba4d49e2a01223ac1cdaf84001",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 90,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 17,
+          "table_sha256": "73df74ed8298f6d0109ee38d8bd78c3b5909e565a10331da7de40c835192e7fe",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "inspect",
+      "reply": {
+        "id": 91,
+        "result": {
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 17,
+          "table_sha256": "b330935f8044d1613ba2166c8132ca417be79d8a1808c34c0c1dc74681b7078f",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "remove",
+      "reply": {
+        "id": 92,
+        "result": {
+          "installed": false,
+          "maximum_lease_seconds": 10,
+          "revision": null,
+          "table_sha256": null,
+          "uncertain": false
+        }
+      }
+    }
+  ],
+  "workload_identity": {
+    "uid": 1000,
+    "gid": 1000,
+    "groups": [
+      1000
+    ],
+    "credentials": {
+      "CapEff": "0000000000000000",
+      "NoNewPrivs": "1"
+    },
+    "nft_exit_code": 3
+  },
+  "owned_dns_listener": {
+    "binding": {
+      "address": "172.18.0.1",
+      "port": 36619
+    },
+    "installed": true,
+    "maximum_lease_seconds": 10,
+    "revision": 9,
+    "table_sha256": "ddf777c0bfc67756a005fb5119bc0b848ab6d4caa80b48d3cac0ba10e8813889",
+    "uncertain": false
+  },
+  "dns_expired_existing_flow": {
+    "ok": false,
+    "error": "TimeoutError"
+  },
+  "owned_dns_queries": [
+    {
+      "query": "short.test",
+      "kind": 1
+    },
+    {
+      "query": "short.test",
+      "kind": 1
+    },
+    {
+      "query": "long.test",
+      "kind": 1
+    },
+    {
+      "query": "long.test",
+      "kind": 28
+    },
+    {
+      "query": "long.test",
+      "kind": 28
+    },
+    {
+      "query": "long.test",
+      "kind": 28
+    },
+    {
+      "query": "long.test",
+      "kind": 28
+    },
+    {
+      "query": "long.test",
+      "kind": 28
+    },
+    {
+      "query": "long.test",
+      "kind": 28
+    },
+    {
+      "query": "long.test",
+      "kind": 28
+    },
+    {
+      "query": "long.test",
+      "kind": 28
+    },
+    {
+      "query": "long.test",
+      "kind": 28
+    },
+    {
+      "query": "long.test",
+      "kind": 1
+    },
+    {
+      "query": "operator.test",
+      "kind": 1
+    },
+    {
+      "query": "operator.test",
+      "kind": 1
+    },
+    {
+      "query": "operator.test",
+      "kind": 1
+    }
+  ],
+  "workload_dns_observations": [
+    {
+      "container_role": "guest",
+      "mode": "udp",
+      "address": "172.18.0.1",
+      "port": 36619,
+      "name": "listener.test",
+      "reply": {
+        "ok": true,
+        "rcode": 0,
+        "answers": 1,
+        "addresses": [
+          "172.19.0.2"
+        ]
+      }
+    },
+    {
+      "container_role": "guest",
+      "mode": "udp",
+      "address": "198.51.100.53",
+      "port": 53,
+      "name": "redirect-udp.test",
+      "reply": {
+        "ok": true,
+        "rcode": 0,
+        "answers": 1,
+        "addresses": [
+          "172.19.0.2"
+        ]
+      }
+    },
+    {
+      "container_role": "guest",
+      "mode": "tcp",
+      "address": "198.51.100.53",
+      "port": 53,
+      "name": "redirect-tcp.test",
+      "reply": {
+        "ok": true,
+        "rcode": 0,
+        "answers": 1,
+        "addresses": [
+          "172.19.0.2"
+        ]
+      }
+    },
+    {
+      "container_role": "guest",
+      "mode": "udp",
+      "address": "198.51.100.53",
+      "port": 53,
+      "name": "denied.test",
+      "reply": {
+        "ok": true,
+        "rcode": 5,
+        "answers": 0,
+        "addresses": []
+      }
+    },
+    {
+      "container_role": "guest",
+      "mode": "tcp",
+      "address": "198.51.100.53",
+      "port": 53,
+      "name": "denied.test",
+      "reply": {
+        "ok": true,
+        "rcode": 5,
+        "answers": 0,
+        "addresses": []
+      }
+    },
+    {
+      "container_role": "guest",
+      "mode": "udp",
+      "address": "127.0.0.11",
+      "port": 53,
+      "name": "embedded.test",
+      "reply": {
+        "ok": false,
+        "error": "ConnectionRefusedError"
+      }
+    }
+  ],
+  "embedded_resolver_configuration": {
+    "dns": [
+      "172.18.0.1"
+    ],
+    "resolv_conf": "# Generated by Docker Engine.\n# This file can be edited; Docker Engine will not make further changes once it\n# has been modified.\n\nnameserver 127.0.0.11\nsearch ec2.internal\noptions edns0 trust-ad ndots:0\n\n# Based on host file: '/etc/resolv.conf' (internal resolver)\n# ExtServers: [172.18.0.1]\n# Overrides: [nameservers]\n# Option ndots from: internal\n"
+  },
+  "error": "{'ok': False, 'error': 'ConnectionRefusedError'}",
+  "failure_filter_table": [
+    {
+      "metainfo": {
+        "version": "1.0.6",
+        "release_name": "Lester Gooch #5",
+        "json_schema_version": 1
+      }
+    },
+    {
+      "table": {
+        "family": "inet",
+        "name": "gh_e_cc8964dbdcbf4b06a3825d475a806bc4",
+        "handle": 26
+      }
+    },
+    {
+      "set": {
+        "family": "inet",
+        "name": "live",
+        "table": "gh_e_cc8964dbdcbf4b06a3825d475a806bc4",
+        "type": "ifname",
+        "handle": 3,
+        "flags": [
+          "timeout"
+        ],
+        "timeout": 10,
+        "elem": [
+          {
+            "elem": {
+              "val": "ghnpcc8964dbdcb",
+              "expires": 9
+            }
+          }
+        ]
+      }
+    },
+    {
+      "set": {
+        "family": "inet",
+        "name": "d_f42b83860b58459781fdef3d91eae32d_u4",
+        "table": "gh_e_cc8964dbdcbf4b06a3825d475a806bc4",
+        "type": "ipv4_addr",
+        "handle": 60,
+        "flags": [
+          "timeout"
+        ],
+        "elem": [
+          {
+            "elem": {
+              "val": "172.19.0.2",
+              "timeout": 9,
+              "expires": 9
+            }
+          }
+        ]
+      }
+    },
+    {
+      "set": {
+        "family": "inet",
+        "name": "d_f42b83860b58459781fdef3d91eae32d_u6",
+        "table": "gh_e_cc8964dbdcbf4b06a3825d475a806bc4",
+        "type": "ipv6_addr",
+        "handle": 61,
+        "flags": [
+          "timeout"
+        ]
+      }
+    },
+    {
+      "set": {
+        "family": "inet",
+        "name": "d_f42b83860b58459781fdef3d91eae32d_o4",
+        "table": "gh_e_cc8964dbdcbf4b06a3825d475a806bc4",
+        "type": "ipv4_addr",
+        "handle": 62,
+        "flags": [
+          "timeout"
+        ]
+      }
+    },
+    {
+      "set": {
+        "family": "inet",
+        "name": "d_f42b83860b58459781fdef3d91eae32d_o6",
+        "table": "gh_e_cc8964dbdcbf4b06a3825d475a806bc4",
+        "type": "ipv6_addr",
+        "handle": 63,
+        "flags": [
+          "timeout"
+        ]
+      }
+    },
+    {
+      "chain": {
+        "family": "inet",
+        "table": "gh_e_cc8964dbdcbf4b06a3825d475a806bc4",
+        "name": "goldenhoop_cdfbda55a12ff437f9f03adc7011c6fde36ec444c20205f61342c62875e0b519",
+        "handle": 1
+      }
+    },
+    {
+      "chain": {
+        "family": "inet",
+        "table": "gh_e_cc8964dbdcbf4b06a3825d475a806bc4",
+        "name": "revision_17",
+        "handle": 2
+      }
+    },
+    {
+      "chain": {
+        "family": "inet",
+        "table": "gh_e_cc8964dbdcbf4b06a3825d475a806bc4",
+        "name": "input",
+        "handle": 4,
+        "type": "filter",
+        "hook": "input",
+        "prio": -190,
+        "policy": "accept"
+      }
+    },
+    {
+      "chain": {
+        "family": "inet",
+        "table": "gh_e_cc8964dbdcbf4b06a3825d475a806bc4",
+        "name": "dns_pre",
+        "handle": 11,
+        "type": "nat",
+        "hook": "prerouting",
+        "prio": -110,
+        "policy": "accept"
+      }
+    },
+    {
+      "chain": {
+        "family": "inet",
+        "table": "gh_e_cc8964dbdcbf4b06a3825d475a806bc4",
+        "name": "dns_out",
+        "handle": 12,
+        "type": "nat",
+        "hook": "output",
+        "prio": -110,
+        "policy": "accept"
+      }
+    },
+    {
+      "chain": {
+        "family": "inet",
+        "table": "gh_e_cc8964dbdcbf4b06a3825d475a806bc4",
+        "name": "guard",
+        "handle": 18
+      }
+    },
+    {
+      "chain": {
+        "family": "inet",
+        "table": "gh_e_cc8964dbdcbf4b06a3825d475a806bc4",
+        "name": "forward",
+        "handle": 19,
+        "type": "filter",
+        "hook": "forward",
+        "prio": -190,
+        "policy": "accept"
+      }
+    },
+    {
+      "chain": {
+        "family": "inet",
+        "table": "gh_e_cc8964dbdcbf4b06a3825d475a806bc4",
+        "name": "decision",
+        "handle": 25
+      }
+    },
+    {
+      "chain": {
+        "family": "inet",
+        "table": "gh_e_cc8964dbdcbf4b06a3825d475a806bc4",
+        "name": "level_0",
+        "handle": 30
+      }
+    },
+    {
+      "chain": {
+        "family": "inet",
+        "table": "gh_e_cc8964dbdcbf4b06a3825d475a806bc4",
+        "name": "dns_txn_f42b83860b58459781fdef3d91eae32d",
+        "handle": 71
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "gh_e_cc8964dbdcbf4b06a3825d475a806bc4",
+        "chain": "input",
+        "handle": 5,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": {
+                "meta": {
+                  "key": "iif"
+                }
+              },
+              "right": "ghnpcc8964dbdcb"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": {
+                "payload": {
+                  "protocol": "ip",
+                  "field": "daddr"
+                }
+              },
+              "right": "172.18.0.1"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": {
+                "payload": {
+                  "protocol": "udp",
+                  "field": "dport"
+                }
+              },
+              "right": 36619
+            }
+          },
+          {
+            "counter": {
+              "packets": 3,
+              "bytes": 179
+            }
+          },
+          {
+            "accept": null
+          }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "gh_e_cc8964dbdcbf4b06a3825d475a806bc4",
+        "chain": "input",
+        "handle": 6,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": {
+                "meta": {
+                  "key": "iifname"
+                }
+              },
+              "right": "lo"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": {
+                "payload": {
+                  "protocol": "ip",
+                  "field": "daddr"
+                }
+              },
+              "right": "172.18.0.1"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": {
+                "payload": {
+                  "protocol": "udp",
+                  "field": "dport"
+                }
+              },
+              "right": 36619
+            }
+          },
+          {
+            "counter": {
+              "packets": 0,
+              "bytes": 0
+            }
+          },
+          {
+            "accept": null
+          }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "gh_e_cc8964dbdcbf4b06a3825d475a806bc4",
+        "chain": "input",
+        "handle": 7,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": {
+                "payload": {
+                  "protocol": "ip",
+                  "field": "daddr"
+                }
+              },
+              "right": "172.18.0.1"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": {
+                "payload": {
+                  "protocol": "udp",
+                  "field": "dport"
+                }
+              },
+              "right": 36619
+            }
+          },
+          {
+            "counter": {
+              "packets": 0,
+              "bytes": 0
+            }
+          },
+          {
+            "drop": null
+          }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "gh_e_cc8964dbdcbf4b06a3825d475a806bc4",
+        "chain": "input",
+        "handle": 8,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": {
+                "meta": {
+                  "key": "iif"
+                }
+              },
+              "right": "ghnpcc8964dbdcb"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": {
+                "payload": {
+                  "protocol": "ip",
+                  "field": "daddr"
+                }
+              },
+              "right": "172.18.0.1"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": {
+                "payload": {
+                  "protocol": "tcp",
+                  "field": "dport"
+                }
+              },
+              "right": 36619
+            }
+          },
+          {
+            "counter": {
+              "packets": 14,
+              "bytes": 812
+            }
+          },
+          {
+            "accept": null
+          }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "gh_e_cc8964dbdcbf4b06a3825d475a806bc4",
+        "chain": "input",
+        "handle": 9,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": {
+                "meta": {
+                  "key": "iifname"
+                }
+              },
+              "right": "lo"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": {
+                "payload": {
+                  "protocol": "ip",
+                  "field": "daddr"
+                }
+              },
+              "right": "172.18.0.1"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": {
+                "payload": {
+                  "protocol": "tcp",
+                  "field": "dport"
+                }
+              },
+              "right": 36619
+            }
+          },
+          {
+            "counter": {
+              "packets": 0,
+              "bytes": 0
+            }
+          },
+          {
+            "accept": null
+          }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "gh_e_cc8964dbdcbf4b06a3825d475a806bc4",
+        "chain": "input",
+        "handle": 10,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": {
+                "payload": {
+                  "protocol": "ip",
+                  "field": "daddr"
+                }
+              },
+              "right": "172.18.0.1"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": {
+                "payload": {
+                  "protocol": "tcp",
+                  "field": "dport"
+                }
+              },
+              "right": 36619
+            }
+          },
+          {
+            "counter": {
+              "packets": 0,
+              "bytes": 0
+            }
+          },
+          {
+            "drop": null
+          }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "gh_e_cc8964dbdcbf4b06a3825d475a806bc4",
+        "chain": "input",
+        "handle": 17,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": {
+                "meta": {
+                  "key": "iif"
+                }
+              },
+              "right": "ghnpcc8964dbdcb"
+            }
+          },
+          {
+            "counter": {
+              "packets": 0,
+              "bytes": 0
+            }
+          },
+          {
+            "drop": null
+          }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "gh_e_cc8964dbdcbf4b06a3825d475a806bc4",
+        "chain": "dns_pre",
+        "handle": 13,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": {
+                "meta": {
+                  "key": "nfproto"
+                }
+              },
+              "right": "ipv4"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": {
+                "meta": {
+                  "key": "iif"
+                }
+              },
+              "right": "ghnpcc8964dbdcb"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": {
+                "payload": {
+                  "protocol": "udp",
+                  "field": "dport"
+                }
+              },
+              "right": 53
+            }
+          },
+          {
+            "dnat": {
+              "family": "ip",
+              "addr": "172.18.0.1",
+              "port": 36619
+            }
+          }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "gh_e_cc8964dbdcbf4b06a3825d475a806bc4",
+        "chain": "dns_pre",
+        "handle": 15,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": {
+                "meta": {
+                  "key": "nfproto"
+                }
+              },
+              "right": "ipv4"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": {
+                "meta": {
+                  "key": "iif"
+                }
+              },
+              "right": "ghnpcc8964dbdcb"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": {
+                "payload": {
+                  "protocol": "tcp",
+                  "field": "dport"
+                }
+              },
+              "right": 53
+            }
+          },
+          {
+            "dnat": {
+              "family": "ip",
+              "addr": "172.18.0.1",
+              "port": 36619
+            }
+          }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "gh_e_cc8964dbdcbf4b06a3825d475a806bc4",
+        "chain": "dns_out",
+        "handle": 14,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": {
+                "payload": {
+                  "protocol": "ip",
+                  "field": "daddr"
+                }
+              },
+              "right": "172.18.0.1"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": {
+                "payload": {
+                  "protocol": "udp",
+                  "field": "dport"
+                }
+              },
+              "right": 53
+            }
+          },
+          {
+            "dnat": {
+              "family": "ip",
+              "addr": "172.18.0.1",
+              "port": 36619
+            }
+          }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "gh_e_cc8964dbdcbf4b06a3825d475a806bc4",
+        "chain": "dns_out",
+        "handle": 16,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": {
+                "payload": {
+                  "protocol": "ip",
+                  "field": "daddr"
+                }
+              },
+              "right": "172.18.0.1"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": {
+                "payload": {
+                  "protocol": "tcp",
+                  "field": "dport"
+                }
+              },
+              "right": 53
+            }
+          },
+          {
+            "dnat": {
+              "family": "ip",
+              "addr": "172.18.0.1",
+              "port": 36619
+            }
+          }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "gh_e_cc8964dbdcbf4b06a3825d475a806bc4",
+        "chain": "guard",
+        "handle": 26,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": {
+                "meta": {
+                  "key": "iifname"
+                }
+              },
+              "right": "@live"
+            }
+          },
+          {
+            "jump": {
+              "target": "decision"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "gh_e_cc8964dbdcbf4b06a3825d475a806bc4",
+        "chain": "guard",
+        "handle": 27,
+        "expr": [
+          {
+            "counter": {
+              "packets": 0,
+              "bytes": 0
+            }
+          },
+          {
+            "drop": null
+          }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "gh_e_cc8964dbdcbf4b06a3825d475a806bc4",
+        "chain": "forward",
+        "handle": 20,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": {
+                "meta": {
+                  "key": "iif"
+                }
+              },
+              "right": "ghnpcc8964dbdcb"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": {
+                "meta": {
+                  "key": "iifname"
+                }
+              },
+              "right": "ghnpcc8964dbdcb"
+            }
+          },
+          {
+            "jump": {
+              "target": "guard"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "gh_e_cc8964dbdcbf4b06a3825d475a806bc4",
+        "chain": "decision",
+        "handle": 64,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": {
+                "payload": {
+                  "protocol": "ip",
+                  "field": "daddr"
+                }
+              },
+              "right": "@d_f42b83860b58459781fdef3d91eae32d_o4"
+            }
+          },
+          {
+            "counter": {
+              "packets": 0,
+              "bytes": 0
+            }
+          },
+          {
+            "accept": null
+          }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "gh_e_cc8964dbdcbf4b06a3825d475a806bc4",
+        "chain": "decision",
+        "handle": 65,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": {
+                "payload": {
+                  "protocol": "ip6",
+                  "field": "daddr"
+                }
+              },
+              "right": "@d_f42b83860b58459781fdef3d91eae32d_o6"
+            }
+          },
+          {
+            "counter": {
+              "packets": 0,
+              "bytes": 0
+            }
+          },
+          {
+            "accept": null
+          }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "gh_e_cc8964dbdcbf4b06a3825d475a806bc4",
+        "chain": "decision",
+        "handle": 66,
+        "expr": [
+          {
+            "jump": {
+              "target": "level_0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "gh_e_cc8964dbdcbf4b06a3825d475a806bc4",
+        "chain": "decision",
+        "handle": 70,
+        "expr": [
+          {
+            "counter": {
+              "packets": 0,
+              "bytes": 0
+            }
+          },
+          {
+            "accept": null
+          }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "gh_e_cc8964dbdcbf4b06a3825d475a806bc4",
+        "chain": "level_0",
+        "handle": 67,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": {
+                "payload": {
+                  "protocol": "ip",
+                  "field": "daddr"
+                }
+              },
+              "right": "@d_f42b83860b58459781fdef3d91eae32d_u4"
+            }
+          },
+          {
+            "counter": {
+              "packets": 0,
+              "bytes": 0
+            }
+          },
+          {
+            "return": null
+          }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "gh_e_cc8964dbdcbf4b06a3825d475a806bc4",
+        "chain": "level_0",
+        "handle": 68,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": {
+                "payload": {
+                  "protocol": "ip6",
+                  "field": "daddr"
+                }
+              },
+              "right": "@d_f42b83860b58459781fdef3d91eae32d_u6"
+            }
+          },
+          {
+            "counter": {
+              "packets": 0,
+              "bytes": 0
+            }
+          },
+          {
+            "return": null
+          }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "gh_e_cc8964dbdcbf4b06a3825d475a806bc4",
+        "chain": "level_0",
+        "handle": 69,
+        "expr": [
+          {
+            "counter": {
+              "packets": 0,
+              "bytes": 0
+            }
+          },
+          {
+            "drop": null
+          }
+        ]
+      }
+    }
+  ],
+  "ephemeral_ci_host_diagnostics": {
+    "nft --json list ruleset": {
+      "exit": 0,
+      "stdout": "{\"nftables\": [{\"metainfo\": {\"version\": \"1.0.6\", \"release_name\": \"Lester Gooch #5\", \"json_schema_version\": 1}}, {\"table\": {\"family\": \"ip\", \"name\": \"nat\", \"handle\": 1}}, {\"chain\": {\"family\": \"ip\", \"table\": \"nat\", \"name\": \"DOCKER\", \"handle\": 1}}, {\"chain\": {\"family\": \"ip\", \"table\": \"nat\", \"name\": \"PREROUTING\", \"handle\": 2, \"type\": \"nat\", \"hook\": \"prerouting\", \"prio\": -100, \"policy\": \"accept\"}}, {\"chain\": {\"family\": \"ip\", \"table\": \"nat\", \"name\": \"OUTPUT\", \"handle\": 4, \"type\": \"nat\", \"hook\": \"output\", \"prio\": -100, \"policy\": \"accept\"}}, {\"chain\": {\"family\": \"ip\", \"table\": \"nat\", \"name\": \"POSTROUTING\", \"handle\": 6, \"type\": \"nat\", \"hook\": \"postrouting\", \"prio\": 100, \"policy\": \"accept\"}}, {\"rule\": {\"family\": \"ip\", \"table\": \"nat\", \"chain\": \"PREROUTING\", \"handle\": 3, \"expr\": [{\"xt\": {\"type\": \"match\", \"name\": \"addrtype\"}}, {\"counter\": {\"packets\": 3, \"bytes\": 179}}, {\"jump\": {\"target\": \"DOCKER\"}}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"nat\", \"chain\": \"OUTPUT\", \"handle\": 5, \"expr\": [{\"match\": {\"op\": \"!=\", \"left\": {\"payload\": {\"protocol\": \"ip\", \"field\": \"daddr\"}}, \"right\": {\"prefix\": {\"addr\": \"127.0.0.0\", \"len\": 8}}}}, {\"xt\": {\"type\": \"match\", \"name\": \"addrtype\"}}, {\"counter\": {\"packets\": 17, \"bytes\": 1020}}, {\"jump\": {\"target\": \"DOCKER\"}}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"nat\", \"chain\": \"POSTROUTING\", \"handle\": 10, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"ip\", \"field\": \"saddr\"}}, \"right\": {\"prefix\": {\"addr\": \"172.18.0.0\", \"len\": 16}}}}, {\"match\": {\"op\": \"!=\", \"left\": {\"meta\": {\"key\": \"oifname\"}}, \"right\": \"ghnpcc8964dbdcb\"}}, {\"counter\": {\"packets\": 29, \"bytes\": 1743}}, {\"xt\": {\"type\": \"target\", \"name\": \"MASQUERADE\"}}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"nat\", \"chain\": \"POSTROUTING\", \"handle\": 8, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"ip\", \"field\": \"saddr\"}}, \"right\": {\"prefix\": {\"addr\": \"172.17.0.0\", \"len\": 16}}}}, {\"match\": {\"op\": \"!=\", \"left\": {\"meta\": {\"key\": \"oifname\"}}, \"right\": \"docker0\"}}, {\"counter\": {\"packets\": 31, \"bytes\": 1926}}, {\"xt\": {\"type\": \"target\", \"name\": \"MASQUERADE\"}}]}}, {\"table\": {\"family\": \"ip\", \"name\": \"filter\", \"handle\": 2}}, {\"chain\": {\"family\": \"ip\", \"table\": \"filter\", \"name\": \"DOCKER\", \"handle\": 1}}, {\"chain\": {\"family\": \"ip\", \"table\": \"filter\", \"name\": \"DOCKER-FORWARD\", \"handle\": 2}}, {\"chain\": {\"family\": \"ip\", \"table\": \"filter\", \"name\": \"DOCKER-BRIDGE\", \"handle\": 3}}, {\"chain\": {\"family\": \"ip\", \"table\": \"filter\", \"name\": \"DOCKER-CT\", \"handle\": 4}}, {\"chain\": {\"family\": \"ip\", \"table\": \"filter\", \"name\": \"DOCKER-INTERNAL\", \"handle\": 5}}, {\"chain\": {\"family\": \"ip\", \"table\": \"filter\", \"name\": \"FORWARD\", \"handle\": 6, \"type\": \"filter\", \"hook\": \"forward\", \"prio\": 0, \"policy\": \"drop\"}}, {\"chain\": {\"family\": \"ip\", \"table\": \"filter\", \"name\": \"DOCKER-USER\", \"handle\": 15}}, {\"rule\": {\"family\": \"ip\", \"table\": \"filter\", \"chain\": \"DOCKER\", \"handle\": 46, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"ip\", \"field\": \"daddr\"}}, \"right\": \"172.19.0.3\"}}, {\"match\": {\"op\": \"!=\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"br-c4bb2fee4297\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"oifname\"}}, \"right\": \"br-c4bb2fee4297\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"udp\", \"field\": \"dport\"}}, \"right\": 19004}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"accept\": null}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"filter\", \"chain\": \"DOCKER\", \"handle\": 45, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"ip\", \"field\": \"daddr\"}}, \"right\": \"172.19.0.3\"}}, {\"match\": {\"op\": \"!=\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"br-c4bb2fee4297\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"oifname\"}}, \"right\": \"br-c4bb2fee4297\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"tcp\", \"field\": \"dport\"}}, \"right\": 19004}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"accept\": null}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"filter\", \"chain\": \"DOCKER\", \"handle\": 44, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"ip\", \"field\": \"daddr\"}}, \"right\": \"172.19.0.2\"}}, {\"match\": {\"op\": \"!=\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"br-c4bb2fee4297\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"oifname\"}}, \"right\": \"br-c4bb2fee4297\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"tcp\", \"field\": \"dport\"}}, \"right\": 19003}}, {\"counter\": {\"packets\": 5, \"bytes\": 300}}, {\"accept\": null}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"filter\", \"chain\": \"DOCKER\", \"handle\": 43, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"ip\", \"field\": \"daddr\"}}, \"right\": \"172.19.0.2\"}}, {\"match\": {\"op\": \"!=\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"br-c4bb2fee4297\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"oifname\"}}, \"right\": \"br-c4bb2fee4297\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"udp\", \"field\": \"dport\"}}, \"right\": 19002}}, {\"counter\": {\"packets\": 3, \"bytes\": 183}}, {\"accept\": null}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"filter\", \"chain\": \"DOCKER\", \"handle\": 42, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"ip\", \"field\": \"daddr\"}}, \"right\": \"172.19.0.2\"}}, {\"match\": {\"op\": \"!=\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"br-c4bb2fee4297\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"oifname\"}}, \"right\": \"br-c4bb2fee4297\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"tcp\", \"field\": \"dport\"}}, \"right\": 19001}}, {\"counter\": {\"packets\": 9, \"bytes\": 540}}, {\"accept\": null}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"filter\", \"chain\": \"DOCKER\", \"handle\": 18, \"expr\": [{\"match\": {\"op\": \"!=\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"docker0\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"oifname\"}}, \"right\": \"docker0\"}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"drop\": null}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"filter\", \"chain\": \"DOCKER\", \"handle\": 34, \"expr\": [{\"match\": {\"op\": \"!=\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"ghnpcc8964dbdcb\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"oifname\"}}, \"right\": \"ghnpcc8964dbdcb\"}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"drop\": null}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"filter\", \"chain\": \"DOCKER\", \"handle\": 37, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"oifname\"}}, \"right\": \"br-c4bb2fee4297\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"ip\", \"field\": \"protocol\"}}, \"right\": \"icmp\"}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"accept\": null}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"filter\", \"chain\": \"DOCKER\", \"handle\": 39, \"expr\": [{\"match\": {\"op\": \"!=\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"br-c4bb2fee4297\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"oifname\"}}, \"right\": \"br-c4bb2fee4297\"}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"drop\": null}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"filter\", \"chain\": \"DOCKER-FORWARD\", \"handle\": 10, \"expr\": [{\"counter\": {\"packets\": 14631, \"bytes\": 166777875}}, {\"jump\": {\"target\": \"DOCKER-CT\"}}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"filter\", \"chain\": \"DOCKER-FORWARD\", \"handle\": 9, \"expr\": [{\"counter\": {\"packets\": 5894, \"bytes\": 391572}}, {\"jump\": {\"target\": \"DOCKER-INTERNAL\"}}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"filter\", \"chain\": \"DOCKER-FORWARD\", \"handle\": 8, \"expr\": [{\"counter\": {\"packets\": 5894, \"bytes\": 391572}}, {\"jump\": {\"target\": \"DOCKER-BRIDGE\"}}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"filter\", \"chain\": \"DOCKER-FORWARD\", \"handle\": 17, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"docker0\"}}, {\"counter\": {\"packets\": 5875, \"bytes\": 390429}}, {\"accept\": null}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"filter\", \"chain\": \"DOCKER-FORWARD\", \"handle\": 33, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"ghnpcc8964dbdcb\"}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"accept\": null}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"filter\", \"chain\": \"DOCKER-FORWARD\", \"handle\": 38, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"br-c4bb2fee4297\"}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"accept\": null}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"filter\", \"chain\": \"DOCKER-BRIDGE\", \"handle\": 20, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"oifname\"}}, \"right\": \"docker0\"}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"jump\": {\"target\": \"DOCKER\"}}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"filter\", \"chain\": \"DOCKER-BRIDGE\", \"handle\": 36, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"oifname\"}}, \"right\": \"ghnpcc8964dbdcb\"}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"jump\": {\"target\": \"DOCKER\"}}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"filter\", \"chain\": \"DOCKER-BRIDGE\", \"handle\": 41, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"oifname\"}}, \"right\": \"br-c4bb2fee4297\"}}, {\"counter\": {\"packets\": 17, \"bytes\": 1023}}, {\"jump\": {\"target\": \"DOCKER\"}}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"filter\", \"chain\": \"DOCKER-CT\", \"handle\": 19, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"oifname\"}}, \"right\": \"docker0\"}}, {\"xt\": {\"type\": \"match\", \"name\": \"conntrack\"}}, {\"counter\": {\"packets\": 8592, \"bytes\": 166377426}}, {\"accept\": null}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"filter\", \"chain\": \"DOCKER-CT\", \"handle\": 35, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"oifname\"}}, \"right\": \"ghnpcc8964dbdcb\"}}, {\"xt\": {\"type\": \"match\", \"name\": \"conntrack\"}}, {\"counter\": {\"packets\": 59, \"bytes\": 3756}}, {\"accept\": null}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"filter\", \"chain\": \"DOCKER-CT\", \"handle\": 40, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"oifname\"}}, \"right\": \"br-c4bb2fee4297\"}}, {\"xt\": {\"type\": \"match\", \"name\": \"conntrack\"}}, {\"counter\": {\"packets\": 70, \"bytes\": 4135}}, {\"accept\": null}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"filter\", \"chain\": \"FORWARD\", \"handle\": 16, \"expr\": [{\"counter\": {\"packets\": 14631, \"bytes\": 166777875}}, {\"jump\": {\"target\": \"DOCKER-USER\"}}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"filter\", \"chain\": \"FORWARD\", \"handle\": 7, \"expr\": [{\"counter\": {\"packets\": 14631, \"bytes\": 166777875}}, {\"jump\": {\"target\": \"DOCKER-FORWARD\"}}]}}, {\"table\": {\"family\": \"ip6\", \"name\": \"nat\", \"handle\": 3}}, {\"chain\": {\"family\": \"ip6\", \"table\": \"nat\", \"name\": \"DOCKER\", \"handle\": 1}}, {\"chain\": {\"family\": \"ip6\", \"table\": \"nat\", \"name\": \"PREROUTING\", \"handle\": 2, \"type\": \"nat\", \"hook\": \"prerouting\", \"prio\": -100, \"policy\": \"accept\"}}, {\"chain\": {\"family\": \"ip6\", \"table\": \"nat\", \"name\": \"OUTPUT\", \"handle\": 4, \"type\": \"nat\", \"hook\": \"output\", \"prio\": -100, \"policy\": \"accept\"}}, {\"rule\": {\"family\": \"ip6\", \"table\": \"nat\", \"chain\": \"PREROUTING\", \"handle\": 3, \"expr\": [{\"xt\": {\"type\": \"match\", \"name\": \"addrtype\"}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"jump\": {\"target\": \"DOCKER\"}}]}}, {\"rule\": {\"family\": \"ip6\", \"table\": \"nat\", \"chain\": \"OUTPUT\", \"handle\": 5, \"expr\": [{\"match\": {\"op\": \"!=\", \"left\": {\"payload\": {\"protocol\": \"ip6\", \"field\": \"daddr\"}}, \"right\": \"::1\"}}, {\"xt\": {\"type\": \"match\", \"name\": \"addrtype\"}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"jump\": {\"target\": \"DOCKER\"}}]}}, {\"table\": {\"family\": \"ip6\", \"name\": \"filter\", \"handle\": 4}}, {\"chain\": {\"family\": \"ip6\", \"table\": \"filter\", \"name\": \"DOCKER\", \"handle\": 1}}, {\"chain\": {\"family\": \"ip6\", \"table\": \"filter\", \"name\": \"DOCKER-FORWARD\", \"handle\": 2}}, {\"chain\": {\"family\": \"ip6\", \"table\": \"filter\", \"name\": \"DOCKER-BRIDGE\", \"handle\": 3}}, {\"chain\": {\"family\": \"ip6\", \"table\": \"filter\", \"name\": \"DOCKER-CT\", \"handle\": 4}}, {\"chain\": {\"family\": \"ip6\", \"table\": \"filter\", \"name\": \"DOCKER-INTERNAL\", \"handle\": 5}}, {\"chain\": {\"family\": \"ip6\", \"table\": \"filter\", \"name\": \"FORWARD\", \"handle\": 6, \"type\": \"filter\", \"hook\": \"forward\", \"prio\": 0, \"policy\": \"accept\"}}, {\"chain\": {\"family\": \"ip6\", \"table\": \"filter\", \"name\": \"DOCKER-USER\", \"handle\": 11}}, {\"rule\": {\"family\": \"ip6\", \"table\": \"filter\", \"chain\": \"DOCKER-FORWARD\", \"handle\": 10, \"expr\": [{\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"jump\": {\"target\": \"DOCKER-CT\"}}]}}, {\"rule\": {\"family\": \"ip6\", \"table\": \"filter\", \"chain\": \"DOCKER-FORWARD\", \"handle\": 9, \"expr\": [{\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"jump\": {\"target\": \"DOCKER-INTERNAL\"}}]}}, {\"rule\": {\"family\": \"ip6\", \"table\": \"filter\", \"chain\": \"DOCKER-FORWARD\", \"handle\": 8, \"expr\": [{\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"jump\": {\"target\": \"DOCKER-BRIDGE\"}}]}}, {\"rule\": {\"family\": \"ip6\", \"table\": \"filter\", \"chain\": \"FORWARD\", \"handle\": 12, \"expr\": [{\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"jump\": {\"target\": \"DOCKER-USER\"}}]}}, {\"rule\": {\"family\": \"ip6\", \"table\": \"filter\", \"chain\": \"FORWARD\", \"handle\": 7, \"expr\": [{\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"jump\": {\"target\": \"DOCKER-FORWARD\"}}]}}, {\"table\": {\"family\": \"ip\", \"name\": \"raw\", \"handle\": 5}}, {\"chain\": {\"family\": \"ip\", \"table\": \"raw\", \"name\": \"PREROUTING\", \"handle\": 1, \"type\": \"filter\", \"hook\": \"prerouting\", \"prio\": -300, \"policy\": \"accept\"}}, {\"rule\": {\"family\": \"ip\", \"table\": \"raw\", \"chain\": \"PREROUTING\", \"handle\": 8, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"ip\", \"field\": \"daddr\"}}, \"right\": \"172.18.0.2\"}}, {\"match\": {\"op\": \"!=\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"ghnpcc8964dbdcb\"}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"drop\": null}]}}, {\"table\": {\"family\": \"inet\", \"name\": \"gh_e_cc8964dbdcbf4b06a3825d475a806bc4\", \"handle\": 26}}, {\"set\": {\"family\": \"inet\", \"name\": \"live\", \"table\": \"gh_e_cc8964dbdcbf4b06a3825d475a806bc4\", \"type\": \"ifname\", \"handle\": 3, \"flags\": [\"timeout\"], \"timeout\": 10, \"elem\": [{\"elem\": {\"val\": \"ghnpcc8964dbdcb\", \"expires\": 9}}]}}, {\"set\": {\"family\": \"inet\", \"name\": \"d_f42b83860b58459781fdef3d91eae32d_u4\", \"table\": \"gh_e_cc8964dbdcbf4b06a3825d475a806bc4\", \"type\": \"ipv4_addr\", \"handle\": 60, \"flags\": [\"timeout\"], \"elem\": [{\"elem\": {\"val\": \"172.19.0.2\", \"timeout\": 9, \"expires\": 9}}]}}, {\"set\": {\"family\": \"inet\", \"name\": \"d_f42b83860b58459781fdef3d91eae32d_u6\", \"table\": \"gh_e_cc8964dbdcbf4b06a3825d475a806bc4\", \"type\": \"ipv6_addr\", \"handle\": 61, \"flags\": [\"timeout\"]}}, {\"set\": {\"family\": \"inet\", \"name\": \"d_f42b83860b58459781fdef3d91eae32d_o4\", \"table\": \"gh_e_cc8964dbdcbf4b06a3825d475a806bc4\", \"type\": \"ipv4_addr\", \"handle\": 62, \"flags\": [\"timeout\"]}}, {\"set\": {\"family\": \"inet\", \"name\": \"d_f42b83860b58459781fdef3d91eae32d_o6\", \"table\": \"gh_e_cc8964dbdcbf4b06a3825d475a806bc4\", \"type\": \"ipv6_addr\", \"handle\": 63, \"flags\": [\"timeout\"]}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_e_cc8964dbdcbf4b06a3825d475a806bc4\", \"name\": \"goldenhoop_cdfbda55a12ff437f9f03adc7011c6fde36ec444c20205f61342c62875e0b519\", \"handle\": 1}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_e_cc8964dbdcbf4b06a3825d475a806bc4\", \"name\": \"revision_17\", \"handle\": 2}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_e_cc8964dbdcbf4b06a3825d475a806bc4\", \"name\": \"input\", \"handle\": 4, \"type\": \"filter\", \"hook\": \"input\", \"prio\": -190, \"policy\": \"accept\"}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_e_cc8964dbdcbf4b06a3825d475a806bc4\", \"name\": \"dns_pre\", \"handle\": 11, \"type\": \"nat\", \"hook\": \"prerouting\", \"prio\": -110, \"policy\": \"accept\"}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_e_cc8964dbdcbf4b06a3825d475a806bc4\", \"name\": \"dns_out\", \"handle\": 12, \"type\": \"nat\", \"hook\": \"output\", \"prio\": -110, \"policy\": \"accept\"}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_e_cc8964dbdcbf4b06a3825d475a806bc4\", \"name\": \"guard\", \"handle\": 18}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_e_cc8964dbdcbf4b06a3825d475a806bc4\", \"name\": \"forward\", \"handle\": 19, \"type\": \"filter\", \"hook\": \"forward\", \"prio\": -190, \"policy\": \"accept\"}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_e_cc8964dbdcbf4b06a3825d475a806bc4\", \"name\": \"decision\", \"handle\": 25}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_e_cc8964dbdcbf4b06a3825d475a806bc4\", \"name\": \"level_0\", \"handle\": 30}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_e_cc8964dbdcbf4b06a3825d475a806bc4\", \"name\": \"dns_txn_f42b83860b58459781fdef3d91eae32d\", \"handle\": 71}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_e_cc8964dbdcbf4b06a3825d475a806bc4\", \"chain\": \"input\", \"handle\": 5, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iif\"}}, \"right\": \"ghnpcc8964dbdcb\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"ip\", \"field\": \"daddr\"}}, \"right\": \"172.18.0.1\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"udp\", \"field\": \"dport\"}}, \"right\": 36619}}, {\"counter\": {\"packets\": 3, \"bytes\": 179}}, {\"accept\": null}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_e_cc8964dbdcbf4b06a3825d475a806bc4\", \"chain\": \"input\", \"handle\": 6, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"lo\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"ip\", \"field\": \"daddr\"}}, \"right\": \"172.18.0.1\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"udp\", \"field\": \"dport\"}}, \"right\": 36619}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"accept\": null}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_e_cc8964dbdcbf4b06a3825d475a806bc4\", \"chain\": \"input\", \"handle\": 7, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"ip\", \"field\": \"daddr\"}}, \"right\": \"172.18.0.1\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"udp\", \"field\": \"dport\"}}, \"right\": 36619}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"drop\": null}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_e_cc8964dbdcbf4b06a3825d475a806bc4\", \"chain\": \"input\", \"handle\": 8, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iif\"}}, \"right\": \"ghnpcc8964dbdcb\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"ip\", \"field\": \"daddr\"}}, \"right\": \"172.18.0.1\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"tcp\", \"field\": \"dport\"}}, \"right\": 36619}}, {\"counter\": {\"packets\": 14, \"bytes\": 812}}, {\"accept\": null}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_e_cc8964dbdcbf4b06a3825d475a806bc4\", \"chain\": \"input\", \"handle\": 9, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"lo\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"ip\", \"field\": \"daddr\"}}, \"right\": \"172.18.0.1\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"tcp\", \"field\": \"dport\"}}, \"right\": 36619}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"accept\": null}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_e_cc8964dbdcbf4b06a3825d475a806bc4\", \"chain\": \"input\", \"handle\": 10, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"ip\", \"field\": \"daddr\"}}, \"right\": \"172.18.0.1\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"tcp\", \"field\": \"dport\"}}, \"right\": 36619}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"drop\": null}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_e_cc8964dbdcbf4b06a3825d475a806bc4\", \"chain\": \"input\", \"handle\": 17, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iif\"}}, \"right\": \"ghnpcc8964dbdcb\"}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"drop\": null}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_e_cc8964dbdcbf4b06a3825d475a806bc4\", \"chain\": \"dns_pre\", \"handle\": 13, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"nfproto\"}}, \"right\": \"ipv4\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iif\"}}, \"right\": \"ghnpcc8964dbdcb\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"udp\", \"field\": \"dport\"}}, \"right\": 53}}, {\"dnat\": {\"family\": \"ip\", \"addr\": \"172.18.0.1\", \"port\": 36619}}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_e_cc8964dbdcbf4b06a3825d475a806bc4\", \"chain\": \"dns_pre\", \"handle\": 15, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"nfproto\"}}, \"right\": \"ipv4\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iif\"}}, \"right\": \"ghnpcc8964dbdcb\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"tcp\", \"field\": \"dport\"}}, \"right\": 53}}, {\"dnat\": {\"family\": \"ip\", \"addr\": \"172.18.0.1\", \"port\": 36619}}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_e_cc8964dbdcbf4b06a3825d475a806bc4\", \"chain\": \"dns_out\", \"handle\": 14, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"ip\", \"field\": \"daddr\"}}, \"right\": \"172.18.0.1\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"udp\", \"field\": \"dport\"}}, \"right\": 53}}, {\"dnat\": {\"family\": \"ip\", \"addr\": \"172.18.0.1\", \"port\": 36619}}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_e_cc8964dbdcbf4b06a3825d475a806bc4\", \"chain\": \"dns_out\", \"handle\": 16, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"ip\", \"field\": \"daddr\"}}, \"right\": \"172.18.0.1\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"tcp\", \"field\": \"dport\"}}, \"right\": 53}}, {\"dnat\": {\"family\": \"ip\", \"addr\": \"172.18.0.1\", \"port\": 36619}}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_e_cc8964dbdcbf4b06a3825d475a806bc4\", \"chain\": \"guard\", \"handle\": 26, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"@live\"}}, {\"jump\": {\"target\": \"decision\"}}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_e_cc8964dbdcbf4b06a3825d475a806bc4\", \"chain\": \"guard\", \"handle\": 27, \"expr\": [{\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"drop\": null}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_e_cc8964dbdcbf4b06a3825d475a806bc4\", \"chain\": \"forward\", \"handle\": 20, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iif\"}}, \"right\": \"ghnpcc8964dbdcb\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"ghnpcc8964dbdcb\"}}, {\"jump\": {\"target\": \"guard\"}}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_e_cc8964dbdcbf4b06a3825d475a806bc4\", \"chain\": \"decision\", \"handle\": 64, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"ip\", \"field\": \"daddr\"}}, \"right\": \"@d_f42b83860b58459781fdef3d91eae32d_o4\"}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"accept\": null}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_e_cc8964dbdcbf4b06a3825d475a806bc4\", \"chain\": \"decision\", \"handle\": 65, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"ip6\", \"field\": \"daddr\"}}, \"right\": \"@d_f42b83860b58459781fdef3d91eae32d_o6\"}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"accept\": null}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_e_cc8964dbdcbf4b06a3825d475a806bc4\", \"chain\": \"decision\", \"handle\": 66, \"expr\": [{\"jump\": {\"target\": \"level_0\"}}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_e_cc8964dbdcbf4b06a3825d475a806bc4\", \"chain\": \"decision\", \"handle\": 70, \"expr\": [{\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"accept\": null}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_e_cc8964dbdcbf4b06a3825d475a806bc4\", \"chain\": \"level_0\", \"handle\": 67, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"ip\", \"field\": \"daddr\"}}, \"right\": \"@d_f42b83860b58459781fdef3d91eae32d_u4\"}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"return\": null}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_e_cc8964dbdcbf4b06a3825d475a806bc4\", \"chain\": \"level_0\", \"handle\": 68, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"ip6\", \"field\": \"daddr\"}}, \"right\": \"@d_f42b83860b58459781fdef3d91eae32d_u6\"}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"return\": null}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_e_cc8964dbdcbf4b06a3825d475a806bc4\", \"chain\": \"level_0\", \"handle\": 69, \"expr\": [{\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"drop\": null}]}}]}\n",
+      "stderr": ""
+    },
+    "iptables-save": {
+      "exit": 0,
+      "stdout": "# Generated by iptables-save v1.8.9 (nf_tables) on Tue Nov 24 22:13:55 2026\n*raw\n:PREROUTING ACCEPT [32827:421151187]\n:OUTPUT ACCEPT [0:0]\n-A PREROUTING -d 172.18.0.2/32 ! -i ghnpcc8964dbdcb -j DROP\nCOMMIT\n# Completed on Tue Nov 24 22:13:55 2026\n# Generated by iptables-save v1.8.9 (nf_tables) on Tue Nov 24 22:13:55 2026\n*filter\n:INPUT ACCEPT [0:0]\n:FORWARD DROP [0:0]\n:OUTPUT ACCEPT [0:0]\n:DOCKER - [0:0]\n:DOCKER-BRIDGE - [0:0]\n:DOCKER-CT - [0:0]\n:DOCKER-FORWARD - [0:0]\n:DOCKER-INTERNAL - [0:0]\n:DOCKER-USER - [0:0]\n-A FORWARD -j DOCKER-USER\n-A FORWARD -j DOCKER-FORWARD\n-A DOCKER -d 172.19.0.3/32 ! -i br-c4bb2fee4297 -o br-c4bb2fee4297 -p udp -m udp --dport 19004 -j ACCEPT\n-A DOCKER -d 172.19.0.3/32 ! -i br-c4bb2fee4297 -o br-c4bb2fee4297 -p tcp -m tcp --dport 19004 -j ACCEPT\n-A DOCKER -d 172.19.0.2/32 ! -i br-c4bb2fee4297 -o br-c4bb2fee4297 -p tcp -m tcp --dport 19003 -j ACCEPT\n-A DOCKER -d 172.19.0.2/32 ! -i br-c4bb2fee4297 -o br-c4bb2fee4297 -p udp -m udp --dport 19002 -j ACCEPT\n-A DOCKER -d 172.19.0.2/32 ! -i br-c4bb2fee4297 -o br-c4bb2fee4297 -p tcp -m tcp --dport 19001 -j ACCEPT\n-A DOCKER ! -i docker0 -o docker0 -j DROP\n-A DOCKER ! -i ghnpcc8964dbdcb -o ghnpcc8964dbdcb -j DROP\n-A DOCKER -o br-c4bb2fee4297 -p icmp -j ACCEPT\n-A DOCKER ! -i br-c4bb2fee4297 -o br-c4bb2fee4297 -j DROP\n-A DOCKER-BRIDGE -o docker0 -j DOCKER\n-A DOCKER-BRIDGE -o ghnpcc8964dbdcb -j DOCKER\n-A DOCKER-BRIDGE -o br-c4bb2fee4297 -j DOCKER\n-A DOCKER-CT -o docker0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT\n-A DOCKER-CT -o ghnpcc8964dbdcb -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT\n-A DOCKER-CT -o br-c4bb2fee4297 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT\n-A DOCKER-FORWARD -j DOCKER-CT\n-A DOCKER-FORWARD -j DOCKER-INTERNAL\n-A DOCKER-FORWARD -j DOCKER-BRIDGE\n-A DOCKER-FORWARD -i docker0 -j ACCEPT\n-A DOCKER-FORWARD -i ghnpcc8964dbdcb -j ACCEPT\n-A DOCKER-FORWARD -i br-c4bb2fee4297 -j ACCEPT\nCOMMIT\n# Completed on Tue Nov 24 22:13:55 2026\n# Generated by iptables-save v1.8.9 (nf_tables) on Tue Nov 24 22:13:55 2026\n*nat\n:PREROUTING ACCEPT [89:5412]\n:INPUT ACCEPT [0:0]\n:OUTPUT ACCEPT [258:22524]\n:POSTROUTING ACCEPT [241:21504]\n:DOCKER - [0:0]\n-A PREROUTING -m addrtype --dst-type LOCAL -j DOCKER\n-A OUTPUT ! -d 127.0.0.0/8 -m addrtype --dst-type LOCAL -j DOCKER\n-A POSTROUTING -s 172.18.0.0/16 ! -o ghnpcc8964dbdcb -j MASQUERADE\n-A POSTROUTING -s 172.17.0.0/16 ! -o docker0 -j MASQUERADE\nCOMMIT\n# Completed on Tue Nov 24 22:13:55 2026\n",
+      "stderr": ""
+    },
+    "iptables-legacy-save": {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    "ip -json route show": {
+      "exit": 0,
+      "stdout": "[{\"dst\":\"default\",\"gateway\":\"10.0.128.1\",\"dev\":\"enp39s0\",\"protocol\":\"dhcp\",\"prefsrc\":\"10.0.141.41\",\"metric\":100,\"flags\":[]},{\"dst\":\"10.0.0.2\",\"gateway\":\"10.0.128.1\",\"dev\":\"enp39s0\",\"protocol\":\"dhcp\",\"prefsrc\":\"10.0.141.41\",\"metric\":100,\"flags\":[]},{\"dst\":\"10.0.128.0/20\",\"dev\":\"enp39s0\",\"protocol\":\"kernel\",\"scope\":\"link\",\"prefsrc\":\"10.0.141.41\",\"metric\":100,\"flags\":[]},{\"dst\":\"10.0.128.1\",\"dev\":\"enp39s0\",\"protocol\":\"dhcp\",\"scope\":\"link\",\"prefsrc\":\"10.0.141.41\",\"metric\":100,\"flags\":[]},{\"dst\":\"172.17.0.0/16\",\"dev\":\"docker0\",\"protocol\":\"kernel\",\"scope\":\"link\",\"prefsrc\":\"172.17.0.1\",\"flags\":[\"linkdown\"]},{\"dst\":\"172.18.0.0/16\",\"dev\":\"ghnpcc8964dbdcb\",\"protocol\":\"kernel\",\"scope\":\"link\",\"prefsrc\":\"172.18.0.1\",\"flags\":[]},{\"dst\":\"172.19.0.0/16\",\"dev\":\"br-c4bb2fee4297\",\"protocol\":\"kernel\",\"scope\":\"link\",\"prefsrc\":\"172.19.0.1\",\"flags\":[]}]\n",
+      "stderr": ""
+    }
+  },
+  "rust_table_collection_confirmed": true,
+  "owned_filter_table_absent": true,
+  "image_removed": true
+}

@@ -81,7 +81,10 @@ jobs:
       - name: Verify the IPv4 routed-filter mechanism and scoped collection
         run: python3 -B tests/network_contract.py --runtime ${{ matrix.runtime }} --receiver-publication routed --ci-host-diagnostics --output evidence/network-ipv4-${{ matrix.runtime }}.json
       - name: Verify workload DNS interception, grants, source expiry and controller loss
-        run: python3 -B tests/frontend_contract.py --runtime ${{ matrix.runtime }} --receiver-publication routed --ci-host-diagnostics --remove-image --output evidence/egress-${{ matrix.runtime }}.json
+        run: python3 -B tests/frontend_contract.py --runtime ${{ matrix.runtime }} --receiver-publication routed --resolver-path owned --ci-host-diagnostics --output evidence/egress-${{ matrix.runtime }}.json
+      - name: Verify Docker embedded resolver compatibility on runc
+        if: matrix.runtime == 'runc'
+        run: python3 -B tests/frontend_contract.py --runtime runc --receiver-publication routed --resolver-path embedded --ci-host-diagnostics --output evidence/egress-embedded-runc.json
       - name: Verify owned containers and networks are absent
         if: always()
         shell: bash
