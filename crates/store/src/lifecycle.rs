@@ -1,6 +1,65 @@
 use super::*;
 use goldenhoop_core::{expired, request_fingerprint, transition, validate_create};
 
+pub(super) async fn check_quota(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    extra: &ResourceLimits,
+) -> Result<(), ApiError> {
+    let used=sqlx::query("SELECT COUNT(*) AS count,COALESCE(SUM(cpu_millis),0) AS cpu,COALESCE(SUM(memory_bytes),0) AS memory,COALESCE(SUM(pids),0) AS pids FROM sandboxes WHERE cleanup<>'complete'").fetch_one(&mut **tx).await.map_err(db)?;
+    if extra.memory_bytes > 32 * 1024 * 1024 * 1024
+        || used.try_get::<i64, _>("count").map_err(db)? >= 16
+        || used.try_get::<i64, _>("cpu").map_err(db)? + i64::from(extra.cpu_millis) > 16000
+        || used.try_get::<i64, _>("memory").map_err(db)? + extra.memory_bytes as i64
+            > 32 * 1024 * 1024 * 1024
+        || used.try_get::<i64, _>("pids").map_err(db)? + i64::from(extra.pids) > 4096
+    {
+        return Err(ApiError::new(
+            ErrorCode::QuotaExceeded,
+            "installation resource or live-sandbox quota exceeded",
+        ));
+    }
+    Ok(())
+}
+
+pub(super) async fn insert_sandbox(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    id: Uuid,
+    request: &CreateSandbox,
+    now: DateTime<Utc>,
+    expires_at: DateTime<Utc>,
+    charge: &ResourceLimits,
+) -> Result<SandboxCreated, ApiError> {
+    let sandbox = Sandbox {
+        id,
+        profile: request.profile.clone(),
+        image: request.image.clone(),
+        state: SandboxState::Pending,
+        desired_state: DesiredState::Running,
+        cleanup: CleanupState::Pending,
+        created_at: now,
+        expires_at,
+        observed_at: None,
+        resources: request.resources.clone(),
+        metadata: request.metadata.clone(),
+        reason: None,
+    };
+    let operation = Operation {
+        id: Uuid::new_v4(),
+        resource_id: id,
+        state: OperationState::Pending,
+        created_at: now,
+        finished_at: None,
+        error: None,
+    };
+    sqlx::query("INSERT INTO sandboxes(id,desired,state,cleanup,payload,request,cpu_millis,memory_bytes,pids,create_operation) VALUES(?,'running','pending','pending',?,?,?,?,?,?)")
+        .bind(id.to_string()).bind(encode(&sandbox)?).bind(encode(request)?)
+        .bind(i64::from(charge.cpu_millis)).bind(charge.memory_bytes as i64).bind(i64::from(charge.pids)).bind(operation.id.to_string())
+        .execute(&mut **tx).await.map_err(db)?;
+    sqlx::query("INSERT INTO operations(id,resource_id,kind,state,payload) VALUES(?,?,'create','pending',?)")
+        .bind(operation.id.to_string()).bind(id.to_string()).bind(encode(&operation)?).execute(&mut **tx).await.map_err(db)?;
+    Ok(SandboxCreated { sandbox, operation })
+}
+
 impl Store {
     pub async fn sandbox(&self, id: Uuid) -> Result<StoredSandbox, ApiError> {
         let row = sqlx::query("SELECT * FROM sandboxes WHERE id=?")
@@ -36,65 +95,37 @@ impl Store {
         key: &str,
     ) -> Result<SandboxCreated, ApiError> {
         let id = Uuid::new_v4();
-        let fingerprint = request_fingerprint(request)?;
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
-        if let Some(existing) = reserve(&mut tx, "sandboxes:create", key, &fingerprint, id).await? {
+        if let Some(existing) = reserve(
+            &mut tx,
+            "sandboxes:create",
+            key,
+            &request_fingerprint(request)?,
+            id,
+        )
+        .await?
+        {
             tx.commit().await.map_err(db)?;
             return self.created(existing).await;
         }
         validate_create(profile, request)?;
-        if request.ttl_seconds > 86_400 || request.resources.memory_bytes > 32 * 1024 * 1024 * 1024
-        {
+        if request.ttl_seconds > 86400 {
             return Err(ApiError::new(
                 ErrorCode::QuotaExceeded,
-                "installation lifetime or memory quota exceeded",
+                "installation lifetime quota exceeded",
             ));
         }
-        let used = sqlx::query("SELECT COUNT(*) AS count,COALESCE(SUM(cpu_millis),0) AS cpu,COALESCE(SUM(memory_bytes),0) AS memory,COALESCE(SUM(pids),0) AS pids FROM sandboxes WHERE cleanup<>'complete'").fetch_one(&mut *tx).await.map_err(db)?;
-        if used.try_get::<i64, _>("count").map_err(db)? >= 16
-            || used.try_get::<i64, _>("cpu").map_err(db)? + i64::from(request.resources.cpu_millis)
-                > 16_000
-            || used.try_get::<i64, _>("memory").map_err(db)? + request.resources.memory_bytes as i64
-                > 32 * 1024 * 1024 * 1024
-            || used.try_get::<i64, _>("pids").map_err(db)? + i64::from(request.resources.pids)
-                > 4096
-        {
-            return Err(ApiError::new(
-                ErrorCode::QuotaExceeded,
-                "installation resource quota exceeded",
-            ));
-        }
+        let envelope = goldenhoop_core::allocation_envelope(
+            &request.resources,
+            request.child_budget.as_ref(),
+        )?;
+        check_quota(&mut tx, &envelope).await?;
         let now = Utc::now();
-        let sandbox = Sandbox {
-            id,
-            profile: request.profile.clone(),
-            image: request.image.clone(),
-            state: SandboxState::Pending,
-            desired_state: DesiredState::Running,
-            cleanup: CleanupState::Pending,
-            created_at: now,
-            expires_at: now + chrono::Duration::seconds(request.ttl_seconds as i64),
-            observed_at: None,
-            resources: request.resources.clone(),
-            metadata: request.metadata.clone(),
-            reason: None,
-        };
-        let operation = Operation {
-            id: Uuid::new_v4(),
-            resource_id: id,
-            state: OperationState::Pending,
-            created_at: now,
-            finished_at: None,
-            error: None,
-        };
-        sqlx::query("INSERT INTO sandboxes(id,desired,state,cleanup,payload,request,cpu_millis,memory_bytes,pids,create_operation) VALUES(?,'running','pending','pending',?,?,?,?,?,?)")
-            .bind(id.to_string()).bind(encode(&sandbox)?).bind(encode(request)?)
-            .bind(i64::from(request.resources.cpu_millis)).bind(request.resources.memory_bytes as i64).bind(i64::from(request.resources.pids)).bind(operation.id.to_string())
-            .execute(&mut *tx).await.map_err(db)?;
-        sqlx::query("INSERT INTO operations(id,resource_id,kind,state,payload) VALUES(?,?,'create','pending',?)")
-            .bind(operation.id.to_string()).bind(id.to_string()).bind(encode(&operation)?).execute(&mut *tx).await.map_err(db)?;
+        let expiry = now + chrono::Duration::seconds(request.ttl_seconds as i64);
+        let created = insert_sandbox(&mut tx, id, request, now, expiry, &envelope).await?;
+        super::isolated::insert_scope(&mut tx, id, None, request).await?;
         tx.commit().await.map_err(db)?;
-        Ok(SandboxCreated { sandbox, operation })
+        Ok(created)
     }
 
     pub async fn list_sandboxes(
@@ -168,6 +199,9 @@ impl Store {
                 ErrorCode::InvalidState,
                 "termination requires confirmed cleanup",
             ));
+        }
+        if stored.sandbox.cleanup == CleanupState::Complete {
+            super::isolated::confirm_children_absent(&mut tx, stored.sandbox.id).await?;
         }
         // The worker only supplies observations; request identity and absolute TTL
         // remain the values committed by the API, even when its snapshot is stale.
@@ -316,6 +350,12 @@ impl Store {
             .execute(&mut *tx)
             .await
             .map_err(db)?;
+        if desired == DesiredState::Terminated {
+            // Permanent ancestor closure is a durable subtree intent. Pauses
+            // are inherited separately so a child's own pause is preserved.
+            sqlx::query("WITH RECURSIVE descendants(id) AS (SELECT sandbox_id FROM sandbox_scopes WHERE parent_id=? UNION ALL SELECT s.sandbox_id FROM sandbox_scopes s JOIN descendants d ON s.parent_id=d.id) UPDATE sandboxes SET desired='terminated' WHERE id IN (SELECT id FROM descendants) AND cleanup!='complete'")
+                .bind(id.to_string()).execute(&mut *tx).await.map_err(db)?;
+        }
         sqlx::query("INSERT INTO operations(id,resource_id,kind,state,payload) VALUES(?,?,?,?,?)")
             .bind(operation.id.to_string())
             .bind(id.to_string())

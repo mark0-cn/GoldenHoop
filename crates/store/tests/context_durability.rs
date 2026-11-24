@@ -814,7 +814,7 @@ async fn schema_three_migration_and_reopen_preserve_sessions_artifacts_and_ambig
     let result=AssertUnwindSafe(async {
         let (installation,sandbox,session,artifact,operation)=setup.unwrap();
         let mut connection=SqliteConnection::connect_with(&SqliteConnectOptions::new().filename(&db_path)).await.unwrap();
-        let downgrading=sqlx::raw_sql("DROP TABLE code_context_events;DROP TABLE code_context_sources;DROP TABLE code_runs;DROP TABLE code_contexts;UPDATE meta SET value='3' WHERE key='schema_version'").execute(&mut connection).await;
+        let downgrading=sqlx::raw_sql("DROP TABLE sandbox_scopes;DROP TABLE code_context_events;DROP TABLE code_context_sources;DROP TABLE code_runs;DROP TABLE code_contexts;UPDATE meta SET value='3' WHERE key='schema_version'").execute(&mut connection).await;
         connection.close().await.unwrap();downgrading.unwrap();
         let migrated=Store::open(&db_path).await.unwrap();
         let work=AssertUnwindSafe(async {

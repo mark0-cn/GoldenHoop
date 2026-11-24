@@ -45,7 +45,7 @@ pub fn validate_create(profile: &RuntimeProfile, request: &CreateSandbox) -> Res
             "TTL exceeds profile limits",
         ));
     }
-    let limits = &request.resources;
+    let limits = &allocation_envelope(&request.resources, request.child_budget.as_ref())?;
     let max = &profile.max_resources;
     if limits.cpu_millis == 0 || limits.memory_bytes == 0 || limits.pids == 0 {
         return Err(ApiError::new(
@@ -63,11 +63,76 @@ pub fn validate_create(profile: &RuntimeProfile, request: &CreateSandbox) -> Res
         ));
     }
     for required in &request.required_capabilities {
-        require_capability(profile, *required)?;
+        require_feature(profile, request.feature_limit.as_ref(), *required)?;
+    }
+    if request.child_budget.is_some() || request.feature_limit.is_some() {
+        // No production profile advertises this until hierarchy accounting,
+        // enforcement and the actual isolated-session gate are integrated.
+        require_capability(profile, Capability::IsolatedSessions)?;
     }
     require_capability(profile, Capability::NetworkIsolation)?;
     if request.network != NetworkPolicy::default() {
-        require_capability(profile, Capability::NetworkPolicy)?;
+        require_feature(
+            profile,
+            request.feature_limit.as_ref(),
+            Capability::NetworkPolicy,
+        )?;
+    }
+    Ok(())
+}
+
+pub fn allocation_envelope(
+    workload: &ResourceLimits,
+    children: Option<&ResourceLimits>,
+) -> Result<ResourceLimits, ApiError> {
+    let invalid = || {
+        ApiError::new(
+            ErrorCode::InvalidRequest,
+            "workload and child resource limits must be positive",
+        )
+    };
+    if workload.cpu_millis == 0 || workload.memory_bytes == 0 || workload.pids == 0 {
+        return Err(invalid());
+    }
+    let Some(children) = children else {
+        return Ok(workload.clone());
+    };
+    if children.cpu_millis == 0 || children.memory_bytes == 0 || children.pids == 0 {
+        return Err(invalid());
+    }
+    let overflow = || {
+        ApiError::new(
+            ErrorCode::QuotaExceeded,
+            "resource reservation exceeds numeric limits",
+        )
+    };
+    Ok(ResourceLimits {
+        cpu_millis: workload
+            .cpu_millis
+            .checked_add(children.cpu_millis)
+            .ok_or_else(overflow)?,
+        memory_bytes: workload
+            .memory_bytes
+            .checked_add(children.memory_bytes)
+            .ok_or_else(overflow)?,
+        pids: workload
+            .pids
+            .checked_add(children.pids)
+            .ok_or_else(overflow)?,
+    })
+}
+
+pub fn require_feature(
+    profile: &RuntimeProfile,
+    ceiling: Option<&std::collections::BTreeSet<Capability>>,
+    capability: Capability,
+) -> Result<(), ApiError> {
+    require_capability(profile, capability)?;
+    if ceiling.is_some_and(|allowed| !allowed.contains(&capability)) {
+        return Err(ApiError::new(
+            ErrorCode::Forbidden,
+            format!("{capability:?} is outside the sandbox feature ceiling"),
+        ));
     }
     Ok(())
 }

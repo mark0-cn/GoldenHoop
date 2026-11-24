@@ -1,6 +1,6 @@
 # Isolated child sandboxes
 
-This is the implementation contract for the next M2 increment. IsolatedSessions is not implemented or advertised yet. Python code contexts retain separate interpreter state inside one shared source sandbox; an isolated session will use a separate child sandbox and the existing sandbox command/file/context interfaces.
+This is the implementation contract for the next M2 increment. Protocol, validation and schema-5 reservation primitives are implemented; runtime/worker/API/client integration and actual isolation gates remain pending. IsolatedSessions is not advertised. Python code contexts retain separate interpreter state inside one shared source sandbox; an isolated session will use a separate child sandbox and the existing sandbox command/file/context interfaces.
 
 ## Allocation and inheritance
 

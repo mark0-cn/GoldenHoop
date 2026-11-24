@@ -131,6 +131,12 @@ pub struct CreateSandbox {
     pub network: NetworkPolicy,
     #[serde(default)]
     pub metadata: BTreeMap<String, String>,
+    /// Additional resources reserved for direct children and their envelopes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub child_budget: Option<ResourceLimits>,
+    /// An immutable ceiling for callable features; runtime restrictions still apply.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feature_limit: Option<BTreeSet<Capability>>,
 }
 
 impl CreateSandbox {
@@ -143,6 +149,8 @@ impl CreateSandbox {
             required_capabilities: BTreeSet::new(),
             network: NetworkPolicy::default(),
             metadata: BTreeMap::new(),
+            child_budget: None,
+            feature_limit: None,
         }
     }
 }

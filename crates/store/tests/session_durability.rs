@@ -284,7 +284,7 @@ async fn schema_two_migration_and_actual_reopen_preserve_pending_input_and_ident
         let (installation,sandbox,command,artifact,artifact_operation)=setup.unwrap();
         // A consistent schema-2 fixture with existing resources and no session tables.
         let mut connection=SqliteConnection::connect_with(&SqliteConnectOptions::new().filename(&db_path)).await.unwrap();
-        let modifying=sqlx::raw_sql("DROP TABLE code_context_events; DROP TABLE code_context_sources; DROP TABLE code_runs; DROP TABLE code_contexts; DROP TABLE session_controls; DROP TABLE sessions; UPDATE meta SET value='2' WHERE key='schema_version'").execute(&mut connection).await;
+        let modifying=sqlx::raw_sql("DROP TABLE sandbox_scopes;DROP TABLE code_context_events; DROP TABLE code_context_sources; DROP TABLE code_runs; DROP TABLE code_contexts; DROP TABLE session_controls; DROP TABLE sessions; UPDATE meta SET value='2' WHERE key='schema_version'").execute(&mut connection).await;
         connection.close().await.unwrap();
         modifying.unwrap();
         let migrated=Store::open(&db_path).await.unwrap();

@@ -46,6 +46,123 @@ fn request() -> CreateSandbox {
 }
 
 #[test]
+fn absent_child_controls_preserve_existing_create_fingerprints() {
+    let legacy = r#"{"profile":"docker-gvisor","image":"test@sha256:abc","resources":{"cpu_millis":1000,"memory_bytes":1073741824,"pids":256},"ttl_seconds":1800,"required_capabilities":[],"network":{"default_action":"deny","rules":[]},"metadata":{}}"#;
+    let decoded: CreateSandbox = serde_json::from_str(legacy).unwrap();
+    assert_eq!(serde_json::to_string(&decoded).unwrap(), legacy);
+    assert!(decoded.child_budget.is_none() && decoded.feature_limit.is_none());
+    assert_eq!(
+        request_fingerprint(&decoded).unwrap(),
+        request_fingerprint(&request()).unwrap()
+    );
+}
+
+#[test]
+fn child_reservations_require_capability_and_charge_the_complete_envelope() {
+    let mut p = profile();
+    p.max_resources = ResourceLimits {
+        cpu_millis: 4000,
+        memory_bytes: 4 * 1024 * 1024 * 1024,
+        pids: 1024,
+    };
+    let mut r = request();
+    r.child_budget = Some(ResourceLimits::default());
+    assert_eq!(
+        validate_create(&p, &r).unwrap_err().code,
+        ErrorCode::UnsupportedCapability
+    );
+    p.capabilities.insert(Capability::IsolatedSessions);
+    validate_create(&p, &r).unwrap();
+    assert_eq!(
+        allocation_envelope(&r.resources, r.child_budget.as_ref()).unwrap(),
+        ResourceLimits {
+            cpu_millis: 2000,
+            memory_bytes: 2 * 1024 * 1024 * 1024,
+            pids: 512
+        }
+    );
+    r.child_budget.as_mut().unwrap().cpu_millis = 4000;
+    assert_eq!(
+        validate_create(&p, &r).unwrap_err().code,
+        ErrorCode::QuotaExceeded
+    );
+    r.child_budget.as_mut().unwrap().cpu_millis = 0;
+    assert_eq!(
+        validate_create(&p, &r).unwrap_err().code,
+        ErrorCode::InvalidRequest
+    );
+    for (own, child) in [
+        (
+            ResourceLimits {
+                cpu_millis: u32::MAX,
+                memory_bytes: 1,
+                pids: 1,
+            },
+            ResourceLimits {
+                cpu_millis: 1,
+                memory_bytes: 1,
+                pids: 1,
+            },
+        ),
+        (
+            ResourceLimits {
+                cpu_millis: 1,
+                memory_bytes: u64::MAX,
+                pids: 1,
+            },
+            ResourceLimits {
+                cpu_millis: 1,
+                memory_bytes: 1,
+                pids: 1,
+            },
+        ),
+        (
+            ResourceLimits {
+                cpu_millis: 1,
+                memory_bytes: 1,
+                pids: u32::MAX,
+            },
+            ResourceLimits {
+                cpu_millis: 1,
+                memory_bytes: 1,
+                pids: 1,
+            },
+        ),
+    ] {
+        assert_eq!(
+            allocation_envelope(&own, Some(&child)).unwrap_err().code,
+            ErrorCode::QuotaExceeded
+        );
+    }
+}
+
+#[test]
+fn feature_ceiling_does_not_grant_unsupported_features_or_remove_network_isolation() {
+    let mut p = profile();
+    p.capabilities.insert(Capability::IsolatedSessions);
+    let mut r = request();
+    r.feature_limit = Some(BTreeSet::from([Capability::Files]));
+    r.required_capabilities.insert(Capability::Commands);
+    assert_eq!(
+        validate_create(&p, &r).unwrap_err().code,
+        ErrorCode::Forbidden
+    );
+    assert_eq!(
+        require_feature(&p, r.feature_limit.as_ref(), Capability::MemorySnapshot)
+            .unwrap_err()
+            .code,
+        ErrorCode::UnsupportedCapability
+    );
+    r.required_capabilities.clear();
+    validate_create(&p, &r).unwrap();
+    p.capabilities.remove(&Capability::NetworkIsolation);
+    assert_eq!(
+        validate_create(&p, &r).unwrap_err().code,
+        ErrorCode::UnsupportedCapability
+    );
+}
+
+#[test]
 fn no_runtime_fallback_for_unavailable_or_unverified_profiles() {
     for state in [Availability::Unavailable, Availability::Unverified] {
         let mut p = profile();

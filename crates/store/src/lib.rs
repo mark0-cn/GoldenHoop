@@ -2,6 +2,7 @@
 mod artifacts;
 mod contexts;
 mod executions;
+mod isolated;
 mod lifecycle;
 mod sessions;
 
@@ -245,7 +246,7 @@ impl Store {
                 .fetch_one(&mut *tx)
                 .await
                 .map_err(db)?;
-        if !matches!(version.as_str(), "1" | "2" | "3" | "4") {
+        if !matches!(version.as_str(), "1" | "2" | "3" | "4" | "5") {
             return Err(ApiError::new(
                 ErrorCode::UnsupportedCapability,
                 "database schema version is unsupported",
@@ -263,8 +264,14 @@ impl Store {
                 .await
                 .map_err(db)?;
         }
-        if version != "4" {
+        if matches!(version.as_str(), "1" | "2" | "3") {
             sqlx::raw_sql(include_str!("schema-v4.sql"))
+                .execute(&mut *tx)
+                .await
+                .map_err(db)?;
+        }
+        if version != "5" {
+            sqlx::raw_sql(include_str!("schema-v5.sql"))
                 .execute(&mut *tx)
                 .await
                 .map_err(db)?;
