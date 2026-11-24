@@ -1,0 +1,31 @@
+name: Artifact backend contract
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  s3:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked -p goldenhoop-artifacts --example s3_contract
+      - name: Pull the pinned disposable S3 backend
+        run: docker pull rustfs/rustfs@sha256:ee717072290bec9b11abfc0365f8310b00df1cd9b3639943edae47bdef05044a
+      - name: Exercise actual conditional writes, integrity and removal
+        run: python3 -B tests/artifact_contract.py --binary target/debug/examples/s3_contract --output evidence/artifact-s3.json --remove-image
+      - name: Verify no storage test containers remain
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          remaining=$(docker ps -a --filter label=dev.goldenhoop.test=artifact-contract --format '{{.ID}}')
+          test -z "$remaining"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: artifact-s3
+          path: evidence/
