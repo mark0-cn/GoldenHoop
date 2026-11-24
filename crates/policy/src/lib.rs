@@ -8,6 +8,9 @@ pub const MAX_RULES: usize = 256;
 pub const MAX_PORTS_PER_RULE: usize = 256;
 const MAX_TARGET_BYTES: usize = 1024;
 
+mod decision;
+pub use decision::{Decision, DecisionOrigin, Model, Overlays, Packet, Transport};
+
 fn invalid(message: &'static str) -> ApiError {
     ApiError::new(ErrorCode::InvalidRequest, message)
 }
