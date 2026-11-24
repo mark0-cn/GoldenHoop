@@ -1,6 +1,6 @@
 //! Owned Docker resources and an out-of-workload agent bridge.
 use std::collections::{BTreeSet, HashMap};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -59,6 +59,7 @@ pub struct DockerDriver {
     config: DockerConfig,
     profile: Arc<RwLock<RuntimeProfile>>,
     bundle: Arc<Mutex<Option<String>>>,
+    removals: Arc<Mutex<HashMap<Uuid, Weak<Mutex<()>>>>>,
 }
 
 fn backend(error: DockerError) -> ApiError {
@@ -119,6 +120,7 @@ impl DockerDriver {
             config,
             profile: Arc::new(RwLock::new(profile)),
             bundle: Arc::new(Mutex::new(None)),
+            removals: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -881,25 +883,69 @@ impl RuntimeDriver for DockerDriver {
     }
 
     async fn remove(&self, handle: &RuntimeHandle) -> Result<(), ApiError> {
-        if self.owned(handle).await?.is_none() {
-            return Ok(());
+        let lock = {
+            let mut locks = self.removals.lock().await;
+            locks.retain(|_, lock| lock.strong_count() > 0);
+            if let Some(lock) = locks.get(&handle.sandbox_id).and_then(Weak::upgrade) {
+                lock
+            } else {
+                let lock = Arc::new(Mutex::new(()));
+                locks.insert(handle.sandbox_id, Arc::downgrade(&lock));
+                lock
+            }
+        };
+        let _guard = lock.lock().await;
+        let mut canonical = handle.clone();
+        for attempt in 0..4 {
+            let Some(observed) = self.owned(&canonical).await? else {
+                return Ok(());
+            };
+            // Never mutate by a reusable name after checking ownership.
+            canonical.backend_ref = observed
+                .id
+                .ok_or_else(|| unavailable("owned container has no identity"))?;
+            match self
+                .docker
+                .remove_container(
+                    &canonical.backend_ref,
+                    Some(
+                        RemoveContainerOptionsBuilder::default()
+                            .force(true)
+                            .v(true)
+                            .build(),
+                    ),
+                )
+                .await
+            {
+                Ok(()) => {}
+                Err(error) => {
+                    let retry = matches!(
+                        &error,
+                        DockerError::DockerResponseServerError {
+                            status_code: 404 | 409 | 500,
+                            ..
+                        }
+                    );
+                    let error = backend(error);
+                    if !retry {
+                        return Err(error);
+                    }
+                    eprintln!(
+                        "{}",
+                        serde_json::json!({"event":"owned_container_removal_retry","sandbox_id":handle.sandbox_id,"attempt":attempt+1,"code":error.code})
+                    );
+                }
+            }
+            if self.owned(&canonical).await?.is_none() {
+                return Ok(());
+            }
+            if attempt < 3 {
+                tokio::time::sleep(Duration::from_millis(100 * (1 << attempt))).await;
+            }
         }
-        self.docker
-            .remove_container(
-                &handle.backend_ref,
-                Some(
-                    RemoveContainerOptionsBuilder::default()
-                        .force(true)
-                        .v(true)
-                        .build(),
-                ),
-            )
-            .await
-            .map_err(backend)?;
-        if self.owned(handle).await?.is_some() {
-            return Err(unavailable("sandbox cleanup is not confirmed"));
-        }
-        Ok(())
+        Err(unavailable(
+            "sandbox cleanup is not confirmed after bounded removal retries",
+        ))
     }
 
     async fn discover(&self) -> Result<Vec<RuntimeHandle>, ApiError> {

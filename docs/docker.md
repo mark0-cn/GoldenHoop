@@ -18,6 +18,8 @@ Do not expose the Docker socket to untrusted users. The reaper runs in the trust
 
 Bootstrap containers are removed after successful and failed runs. Bundle volumes are useful installation artifacts; `remove_agent_bundle` is an explicit uninstall/test cleanup operation and refuses while owned sandboxes remain. Tests use fresh installation UUIDs and remove their bundle volumes too. Removal is followed by a runtime absence check. Never run a global Docker prune for GoldenHoop cleanup.
 
+Sandbox deletion is serialized per resource within a driver and uses its canonical Docker ID after checking labels. Docker can transiently report a zombie runtime process or concurrent removal during gVisor destruction. The driver makes at most four removal attempts for 404/409/500 responses and confirms actual absence after each attempt. It does not resume a paused guest to delete it and does not treat an error as successful cleanup.
+
 ## Actual contract
 
     docker build --label dev.goldenhoop.build=local-agent -f images/agent/Dockerfile -t goldenhoop-agent:test .
