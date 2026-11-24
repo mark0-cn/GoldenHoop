@@ -44,6 +44,7 @@ fn profile() -> RuntimeProfile {
             Capability::NetworkIsolation,
             Capability::IsolatedSessions,
         ]),
+        code_languages: Default::default(),
         max_resources: ResourceLimits {
             cpu_millis: 16000,
             memory_bytes: 32 * 1024 * 1024 * 1024,

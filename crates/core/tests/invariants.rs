@@ -36,10 +36,64 @@ fn profile() -> RuntimeProfile {
             Capability::Files,
             Capability::NetworkIsolation,
         ]),
+        code_languages: Default::default(),
         max_resources: ResourceLimits::default(),
         max_ttl_seconds: 86_400,
         reason: None,
     }
+}
+
+#[test]
+fn language_names_do_not_grant_unprobed_or_unimplemented_adapters() {
+    assert_eq!(
+        serde_json::to_value(CodeLanguage::ALL).unwrap(),
+        serde_json::json!(["python", "java", "go", "typescript", "bash", "javascript"])
+    );
+    assert_eq!(
+        serde_json::to_string(&CodeContextSpec::default()).unwrap(),
+        r#"{"language":"python","cwd":"/workspace"}"#
+    );
+    let mut observed = profile();
+    assert!(require_code_language(&observed, CodeLanguage::Python).is_err());
+    observed.capabilities.insert(Capability::CodeContexts);
+    assert_eq!(
+        require_code_language(&observed, CodeLanguage::Python)
+            .unwrap_err()
+            .code,
+        ErrorCode::UnsupportedCapability
+    );
+    observed.code_languages.insert(CodeLanguage::Python);
+    require_code_language(&observed, CodeLanguage::Python).unwrap();
+    for language in CodeLanguage::ALL
+        .into_iter()
+        .filter(|language| *language != CodeLanguage::Python)
+    {
+        assert_eq!(
+            require_code_language(&observed, language).unwrap_err().code,
+            ErrorCode::UnsupportedCapability
+        );
+        assert_eq!(
+            validate_code_context(&CodeContextSpec {
+                language,
+                ..Default::default()
+            })
+            .unwrap_err()
+            .code,
+            ErrorCode::UnsupportedCapability
+        );
+    }
+    let mut old = serde_json::to_value(&observed).unwrap();
+    old.as_object_mut().unwrap().remove("code_languages");
+    let unknown: RuntimeProfile = serde_json::from_value(old).unwrap();
+    assert!(unknown.code_languages.is_empty());
+    assert!(require_code_language(&unknown, CodeLanguage::Python).is_err());
+    observed.availability = Availability::Unverified;
+    assert_eq!(
+        require_code_language(&observed, CodeLanguage::Python)
+            .unwrap_err()
+            .code,
+        ErrorCode::BackendUnavailable
+    );
 }
 fn request() -> CreateSandbox {
     serde_json::from_str(r#"{"profile":"docker-gvisor","image":"test@sha256:abc"}"#).unwrap()

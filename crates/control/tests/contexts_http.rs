@@ -54,6 +54,7 @@ async fn offline_replays_close_intent_and_history_remain_available_without_enabl
         isolation: Isolation::Gvisor,
         availability: Availability::Available,
         capabilities: BTreeSet::from([Capability::Commands, Capability::NetworkIsolation]),
+        code_languages: Default::default(),
         max_resources: ResourceLimits::default(),
         max_ttl_seconds: 86400,
         reason: None,

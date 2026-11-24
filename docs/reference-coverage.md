@@ -4,7 +4,7 @@ GoldenHoop keeps the complete M0-M6 target. The independent APIs do not promise 
 
 ## Stateful code languages
 
-The pinned reference [SupportedLanguage declaration](https://github.com/opensandbox-group/OpenSandbox/blob/8af823ed83f71209772d334df73626f90dd72496/sdks/code-interpreter/python/src/code_interpreter/models/code.py#L26) names six languages. Its [example](https://github.com/opensandbox-group/OpenSandbox/blob/8af823ed83f71209772d334df73626f90dd72496/examples/code-interpreter/main.py) uses language-specific contexts. GoldenHoop's current CodeLanguage/API implements Python only. Remaining adapters are part of M2 acceptance and must not be counted as implemented because a command can launch the corresponding interpreter.
+The pinned reference [SupportedLanguage declaration](https://github.com/opensandbox-group/OpenSandbox/blob/8af823ed83f71209772d334df73626f90dd72496/sdks/code-interpreter/python/src/code_interpreter/models/code.py#L26) names six languages. Its [example](https://github.com/opensandbox-group/OpenSandbox/blob/8af823ed83f71209772d334df73626f90dd72496/examples/code-interpreter/main.py) uses language-specific contexts. GoldenHoop's target CodeLanguage enum names all six; native/API execution implements Python only. Fresh runtime profiles require both CodeContexts and an explicitly probed `code_languages` entry. Missing/legacy entries grant no language, and the other five variants are refused before allocation. Remaining adapters are part of M2 acceptance and must not be counted as implemented because a command can launch the corresponding interpreter.
 
 | Language | Current GoldenHoop evidence | Remaining work |
 | --- | --- | --- |

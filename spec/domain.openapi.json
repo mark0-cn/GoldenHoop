@@ -367,7 +367,12 @@
       "CodeLanguage": {
         "type": "string",
         "enum": [
-          "python"
+          "python",
+          "java",
+          "go",
+          "typescript",
+          "bash",
+          "javascript"
         ]
       },
       "CodeRun": {
@@ -542,6 +547,75 @@
         },
         "additionalProperties": false
       },
+      "CreateIsolatedSession": {
+        "type": "object",
+        "properties": {
+          "child_budget": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ResourceLimits"
+              }
+            ]
+          },
+          "feature_limit": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/Capability"
+            },
+            "uniqueItems": true
+          },
+          "image": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "network": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/NetworkPolicy"
+              }
+            ]
+          },
+          "required_capabilities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Capability"
+            },
+            "uniqueItems": true
+          },
+          "resources": {
+            "$ref": "#/components/schemas/ResourceLimits"
+          },
+          "ttl_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
       "CreateSandbox": {
         "type": "object",
         "required": [
@@ -549,6 +623,28 @@
           "image"
         ],
         "properties": {
+          "child_budget": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ResourceLimits",
+                "description": "Additional resources reserved for direct children and their envelopes."
+              }
+            ]
+          },
+          "feature_limit": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/Capability"
+            },
+            "description": "An immutable ceiling for callable features; runtime restrictions still apply.",
+            "uniqueItems": true
+          },
           "image": {
             "type": "string"
           },
@@ -762,6 +858,25 @@
           "symlink",
           "other"
         ]
+      },
+      "IsolatedSessionCreated": {
+        "type": "object",
+        "required": [
+          "sandbox",
+          "scope",
+          "operation"
+        ],
+        "properties": {
+          "operation": {
+            "$ref": "#/components/schemas/Operation"
+          },
+          "sandbox": {
+            "$ref": "#/components/schemas/Sandbox"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/SandboxScope"
+          }
+        }
       },
       "Isolation": {
         "type": "string",
@@ -1029,6 +1144,14 @@
             },
             "uniqueItems": true
           },
+          "code_languages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CodeLanguage"
+            },
+            "description": "Languages established by an actual optional kernel probe, not image metadata.",
+            "uniqueItems": true
+          },
           "id": {
             "type": "string"
           },
@@ -1176,6 +1299,71 @@
               "string",
               "null"
             ],
+            "format": "uuid"
+          }
+        }
+      },
+      "SandboxScope": {
+        "type": "object",
+        "required": [
+          "sandbox_id",
+          "root_id",
+          "depth",
+          "envelope",
+          "allocated_to_children",
+          "observed_at"
+        ],
+        "properties": {
+          "allocated_to_children": {
+            "$ref": "#/components/schemas/ResourceLimits",
+            "description": "Logical allocations held by uncollected children, not measured runtime use."
+          },
+          "child_budget": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ResourceLimits"
+              }
+            ]
+          },
+          "depth": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "envelope": {
+            "$ref": "#/components/schemas/ResourceLimits",
+            "description": "Immutable workload resources plus additional child reservation."
+          },
+          "feature_limit": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/Capability"
+            },
+            "uniqueItems": true
+          },
+          "observed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "parent_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "root_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "sandbox_id": {
+            "type": "string",
             "format": "uuid"
           }
         }

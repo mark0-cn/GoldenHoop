@@ -11,6 +11,7 @@ async fn source(store: &Store) -> Uuid {
         isolation: Isolation::Gvisor,
         availability: Availability::Available,
         capabilities: BTreeSet::from([Capability::Files, Capability::NetworkIsolation]),
+        code_languages: Default::default(),
         max_resources: ResourceLimits::default(),
         max_ttl_seconds: 86400,
         reason: None,

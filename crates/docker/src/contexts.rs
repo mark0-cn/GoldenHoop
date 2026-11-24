@@ -10,11 +10,11 @@ impl DockerDriver {
     /// context reconciliation is configured. No runtime/image fallback is used.
     pub async fn probe_code_contexts(&self, image: &str) -> Result<RuntimeProfile, ApiError> {
         let _probe = self.probes.lock().await;
-        self.profile
-            .write()
-            .await
-            .capabilities
-            .remove(&Capability::CodeContexts);
+        {
+            let mut profile = self.profile.write().await;
+            profile.capabilities.remove(&Capability::CodeContexts);
+            profile.code_languages.clear();
+        }
         let profile = self.profile.read().await.clone();
         if profile.availability != Availability::Available {
             return Err(unavailable(
@@ -82,6 +82,7 @@ impl DockerDriver {
             ));
         }
         current.capabilities.insert(Capability::CodeContexts);
+        current.code_languages.insert(CodeLanguage::Python);
         Ok(current.clone())
     }
 

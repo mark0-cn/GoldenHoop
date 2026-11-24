@@ -75,6 +75,9 @@ pub struct RuntimeProfile {
     pub isolation: Isolation,
     pub availability: Availability,
     pub capabilities: BTreeSet<Capability>,
+    /// Languages established by an actual optional kernel probe, not image metadata.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub code_languages: BTreeSet<crate::CodeLanguage>,
     pub max_resources: ResourceLimits,
     pub max_ttl_seconds: u64,
     pub reason: Option<String>,

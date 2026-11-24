@@ -19,7 +19,8 @@ pub(super) async fn create(
         ));
     }
     let sandbox = app.store.sandbox(id).await?.sandbox;
-    profile(&app, &sandbox.profile, Some(Capability::CodeContexts)).await?;
+    let observed = profile(&app, &sandbox.profile, Some(Capability::CodeContexts)).await?;
+    goldenhoop_core::require_code_language(&observed, spec.language)?;
     Ok((
         StatusCode::ACCEPTED,
         Json(app.store.create_code_context(id, &spec, key).await?),
@@ -87,7 +88,8 @@ pub(super) async fn start(
     }
     let context = app.store.code_context(id).await?.context;
     let sandbox = app.store.sandbox(context.sandbox_id).await?.sandbox;
-    profile(&app, &sandbox.profile, Some(Capability::CodeContexts)).await?;
+    let observed = profile(&app, &sandbox.profile, Some(Capability::CodeContexts)).await?;
+    goldenhoop_core::require_code_language(&observed, context.spec.language)?;
     Ok((
         StatusCode::ACCEPTED,
         Json(app.store.create_code_run(id, &spec, key).await?),

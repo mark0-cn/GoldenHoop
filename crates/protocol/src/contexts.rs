@@ -5,11 +5,30 @@ use uuid::Uuid;
 
 use crate::CleanupState;
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, ToSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum CodeLanguage {
     #[default]
     Python,
+    Java,
+    Go,
+    #[serde(rename = "typescript")]
+    TypeScript,
+    Bash,
+    #[serde(rename = "javascript")]
+    JavaScript,
+}
+impl CodeLanguage {
+    pub const ALL: [Self; 6] = [
+        Self::Python,
+        Self::Java,
+        Self::Go,
+        Self::TypeScript,
+        Self::Bash,
+        Self::JavaScript,
+    ];
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

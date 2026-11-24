@@ -32,6 +32,7 @@ class ContextCases:
         profile = "local-gvisor" if self.args.runtime == "runsc" else "local-runc-dev"
         observed = next(p for p in self.request("GET", "/v1/profiles") if p["id"] == profile)
         assert "code_contexts" in observed["capabilities"], observed
+        assert "python" in observed["code_languages"], observed
         value = self.request("POST", "/v1/sandboxes", {
             "profile": profile, "image": image or self.args.kernel_image,
             "ttl_seconds": ttl, "required_capabilities": ["code_contexts", "artifacts"],
@@ -152,6 +153,10 @@ assert not [child for parent in Path('/tmp').glob('ghctx-*') for child in parent
 
     def code_state_replays_and_actual_service_restarts(self):
         sandbox = self.code_box()
+        for language in ("java", "go", "typescript", "bash", "javascript"):
+            self.reject("POST", f"/v1/sandboxes/{sandbox}/code-contexts", 422, "unsupported_capability",
+                        body={"language": language}, key=str(uuid.uuid4()))
+        assert not self.request("GET", f"/v1/code-contexts?sandbox_id={sandbox}")["items"]
         container = self.container(sandbox)
         context = self.new_code_context(sandbox, key="retained-context")
         record, _ = self.code(context["id"], "import os\nassert 20000<=os.getuid()<20004 and os.getgid()==1000 and os.getgroups()==[]\nassert 'CapEff:\\t0000000000000000' in open('/proc/self/status').read()\ncounter=40")

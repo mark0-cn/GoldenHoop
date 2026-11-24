@@ -260,6 +260,13 @@ class ContextContract(Contract):
         self.observations.append({"context": record})
         self.no_retired_context_processes_or_private_files()
 
+    def unimplemented_language_never_allocates_or_falls_back_to_python(self):
+        for language in ("java", "go", "typescript", "bash", "javascript"):
+            identity = str(uuid.uuid4())
+            self.reject({"method": "code_context_create", "id": identity, "spec": {"language": language}}, ("unsupported_capability",))
+            self.reject({"method": "code_context_get", "id": identity}, ("not_found",))
+        self.no_retired_context_processes_or_private_files()
+
     def run_contexts(self, output, remove_image, missing_kernel=False):
         evidence = {"suite": "agent-code-context-contract", "timestamp": datetime.now(timezone.utc).isoformat(),
                     "runtime": self.runtime, "attempt": self.attempt, "result": "failed", "cleanup": "unknown", "cases": self.results,
@@ -284,6 +291,7 @@ class ContextContract(Contract):
                          "close_during_startup_does_not_publish_late_ready"]
             if missing_kernel:
                 names = ["missing_kernel_does_not_relaunch"]
+            names.insert(0, "unimplemented_language_never_allocates_or_falls_back_to_python")
             for name in names:
                 self.check(name, getattr(self, name))
             evidence["result"] = "passed"

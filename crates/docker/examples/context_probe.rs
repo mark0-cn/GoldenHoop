@@ -15,6 +15,7 @@ async fn contract(
     cases: &mut Vec<Value>,
 ) -> Result<(), ApiError> {
     let base = driver.probe().await;
+    assert!(base.code_languages.is_empty());
     if base.availability != Availability::Available
         || base.capabilities.contains(&Capability::CodeContexts)
     {
@@ -52,10 +53,15 @@ async fn contract(
     let enabled = driver.probe_code_contexts(kernel).await?;
     assert_eq!(enabled.availability, Availability::Available);
     assert!(enabled.capabilities.contains(&Capability::CodeContexts));
+    assert_eq!(
+        enabled.code_languages,
+        [CodeLanguage::Python].into_iter().collect()
+    );
     assert!(driver.discover().await?.is_empty());
     cases.push(json!({"case":"actual_uid_state_replay_output_exception_and_collection","result":"passed","profile":enabled}));
     assert!(driver.probe_code_contexts(agent).await.is_err());
     let withdrawn = driver.profile_snapshot().await;
+    assert!(withdrawn.code_languages.is_empty());
     assert!(!withdrawn.capabilities.contains(&Capability::CodeContexts));
     assert!(withdrawn.capabilities.contains(&Capability::Commands));
     assert!(driver.discover().await?.is_empty());

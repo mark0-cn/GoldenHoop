@@ -133,6 +133,7 @@ impl DockerDriver {
             },
             availability: Availability::Unverified,
             capabilities: BTreeSet::new(),
+            code_languages: Default::default(),
             max_resources: ResourceLimits {
                 cpu_millis: 16_000,
                 memory_bytes: 32 * 1024 * 1024 * 1024,
@@ -869,6 +870,7 @@ impl RuntimeDriver for DockerDriver {
             self.smoke_test().await
         };
         let mut profile = self.profile.write().await;
+        profile.code_languages.clear();
         match result {
             Ok(support) => {
                 profile.availability = Availability::Available;
