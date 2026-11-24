@@ -19,6 +19,6 @@ Language support must be explicit per verified image/profile. Missing dependenci
 
 ## Remaining platform milestones
 
-The isolated-child increment is verified through the full public/client contracts on runc, gVisor and the tested S3-compatible backend. All six native adapters and the complete M2 gates pass at e96da9f. Actual network work is still a mechanism prototype and prerequisite evidence, with no NetworkPolicy or SecretInjection capability advertisement.
+The isolated-child increment is verified through the full public/client contracts on runc, gVisor and the tested S3-compatible backend. All six native adapters and the complete M2 gates pass at e96da9f. The trusted Rust static-address host adapter passes 13 actual groups on each of runc and gVisor at 487e6df. Integrated DNS/packet enforcement and credentials remain incomplete, with no NetworkPolicy or SecretInjection capability advertisement.
 
 M3 still requires actual dynamic egress enforcement, credentials bound to destination/method/path, scoped/revocable API keys and durable redacted audit. Default-deny isolation alone does not establish these features. M4 still requires a real Firecracker/jailer/KVM path and disk/memory snapshot/restore evidence. M5 still requires the Rust Kubernetes/operator/PostgreSQL/placement/pool/batch/volume path and an actual cluster. M6 requires installation/upgrades, benchmarks, the complete capability matrix and a requirement-by-requirement release audit. Unimplemented capabilities and skipped hardware tests remain unverified.

@@ -1,5 +1,6 @@
 //! Trusted host packet-filter adapter. No production capability is published.
 //! The caller must supply a journal-bound allocation over private stdio.
+pub mod dns;
 mod plan;
 pub use plan::{Allocation, Config, LEASE_SECONDS, Plan};
 
