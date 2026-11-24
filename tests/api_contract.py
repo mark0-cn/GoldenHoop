@@ -11,12 +11,14 @@ import sys
 import tempfile
 import time
 import uuid
+import xml.etree.ElementTree as ET
 import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from contextlib import closing
 from pathlib import Path
+from artifact_contract import Contract as ArtifactFixture
 
 
 def docker(*args):
@@ -47,6 +49,7 @@ class Contract:
         self.base = None
         self.installation = None
         self.results = []
+        self.artifact_fixture = None
         self.client = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
     def launch(self, role):
@@ -60,7 +63,15 @@ class Contract:
             command.extend(["--bind", "127.0.0.1:0"])
             environment["GOLDENHOOP_API_TOKEN"] = self.token
         else:
+            environment = {key: value for key, value in environment.items() if not key.startswith("GOLDENHOOP_ARTIFACT_")}
             command.extend(["--agent-image", self.args.image])
+            if self.artifact_fixture:
+                fixture = self.artifact_fixture
+                command.extend(["--artifact-backend", "s3", "--artifact-endpoint", fixture.endpoint, "--artifact-bucket", fixture.bucket])
+                environment["GOLDENHOOP_ARTIFACT_ACCESS_KEY"] = fixture.access
+                environment["GOLDENHOOP_ARTIFACT_SECRET_KEY"] = fixture.secret
+            else:
+                command.extend(["--artifact-backend", "local", "--artifact-root", str(self.root / "artifacts")])
             if self.args.runtime == "runc":
                 command.append("--allow-runc-development")
         process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=log,
@@ -388,6 +399,166 @@ class Contract:
         self.diagnostic_samples.append(removed)
         assert removed["runtime"] is None and removed["sandbox"]["cleanup"] == "complete", removed
 
+    def artifact_capture_retention_restarts_and_confirmed_delete(self):
+        created = self.create(ttl=9)
+        sid = created["sandbox"]["id"]
+        self.wait_operation(created["operation"]["id"])
+        payload = bytes(range(256)) * 8
+        self.request("PUT", f"/v1/sandboxes/{sid}/files", {"path": "result.bin", "data_base64": base64.b64encode(payload).decode()})
+        request = {"path": "result.bin", "name": "报告.bin"}
+        key = str(uuid.uuid4())
+        captured = self.request("POST", f"/v1/sandboxes/{sid}/artifacts", request, key)
+        identity = captured["artifact"]["id"]
+        self.wait_operation(captured["operation"]["id"])
+        record = self.request("GET", f"/v1/artifacts/{identity}")
+        assert record["state"] == "available" and record["sha256"] == hashlib.sha256(payload).hexdigest() and record["size_bytes"] == len(payload), record
+        assert any(value["id"] == identity for value in self.request("GET", f"/v1/artifacts?sandbox_id={sid}")["items"])
+
+        def download():
+            request = urllib.request.Request(self.base + f"/v1/artifacts/{identity}/content", headers={"authorization": "Bearer " + self.token})
+            with self.client.open(request, timeout=25) as response:
+                assert response.headers["content-type"] == "application/octet-stream"
+                assert response.headers["content-disposition"].startswith("attachment; filename*=UTF-8''")
+                assert response.headers["cache-control"] == "no-store"
+                return response.read(16 * 1024 * 1024 + 1)
+
+        assert download() == payload
+        self.request("PUT", f"/v1/sandboxes/{sid}/files", {"path": "result.bin", "data_base64": base64.b64encode(b"changed source").decode()})
+        assert download() == payload
+        missing = self.request("POST", f"/v1/sandboxes/{sid}/artifacts", {"path": "missing.bin"}, str(uuid.uuid4()))
+        self.wait_operation(missing["operation"]["id"], expected="failed")
+        failed = self.request("GET", f"/v1/artifacts/{missing['artifact']['id']}")
+        deadline = time.monotonic() + 20
+        while failed["cleanup"] != "complete":
+            assert time.monotonic() < deadline, failed
+            time.sleep(0.1)
+            failed = self.request("GET", f"/v1/artifacts/{missing['artifact']['id']}")
+        assert failed["state"] == "failed" and failed["cleanup"] == "complete", failed
+        self.reject("POST", f"/v1/sandboxes/{sid}/artifacts", 400, "invalid_request", body={"path": "result.bin", "name": "../escape"}, key=str(uuid.uuid4()))
+        expires = datetime.fromisoformat(created["sandbox"]["expires_at"].replace("Z", "+00:00")).timestamp()
+        self.stop("api")
+        time.sleep(max(0, expires - time.time()))
+        deadline = time.monotonic() + 20
+        while docker("ps", "-a", "--filter", f"label=dev.goldenhoop.sandbox={sid}", "--format", "{{.ID}}"):
+            assert time.monotonic() < deadline, "artifact source runtime expiration did not collect"
+            time.sleep(0.1)
+        self.launch("api")
+        assert download() == payload
+        replay = self.request("POST", f"/v1/sandboxes/{sid}/artifacts", request, key)
+        assert replay["artifact"]["id"] == identity
+        self.stop("worker")
+        self.reject("GET", f"/v1/artifacts/{identity}/content", 503, "backend_unavailable")
+        assert self.request("GET", f"/v1/artifacts/{identity}")["sha256"] == record["sha256"]
+        self.launch("worker")
+        assert download() == payload
+        self.stop("worker")
+        deleting = self.request("DELETE", f"/v1/artifacts/{identity}", key=str(uuid.uuid4()))
+        assert deleting["state"] == "pending"
+        self.reject("GET", f"/v1/artifacts/{identity}/content", 409, "invalid_state")
+        self.launch("worker")
+        self.wait_operation(deleting["id"])
+        deleted = self.request("GET", f"/v1/artifacts/{identity}")
+        assert deleted["state"] == "deleted" and deleted["cleanup"] == "complete", deleted
+        repeated = self.request("DELETE", f"/v1/artifacts/{identity}", key=str(uuid.uuid4()))
+        self.wait_operation(repeated["id"])
+        self.artifact_observations = {"available": record, "failed_capture": failed, "deleted": deleted,
+                                      "source_expired": True, "replayed_same_identity": True, "worker_reconnect_bytes_verified": True}
+
+    def interrupted_upload_never_publishes_changed_source(self, seed_committed_blob=False):
+        fixture = self.artifact_fixture
+        created = self.create(ttl=90)
+        sid = created["sandbox"]["id"]
+        self.wait_operation(created["operation"]["id"])
+        original = b"original-capture"
+        self.request("PUT", f"/v1/sandboxes/{sid}/files", {"path": "recover.bin", "data_base64": base64.b64encode(original).decode()})
+        identity = None
+        try:
+            docker("pause", fixture.container)
+            captured = self.request("POST", f"/v1/sandboxes/{sid}/artifacts", {"path": "recover.bin"}, str(uuid.uuid4()))
+            identity = captured["artifact"]["id"]
+            deadline = time.monotonic() + 10
+            while True:
+                record = self.request("GET", f"/v1/artifacts/{identity}")
+                if record["state"] == "uploading":
+                    break
+                assert time.monotonic() < deadline, record
+                time.sleep(0.05)
+            digest = hashlib.sha256(original).hexdigest()
+            assert record["sha256"] == digest and record["size_bytes"] == len(original), record
+            self.stop("worker")
+            docker("exec", "--user", "1000", self.container(sid), "python3", "-c",
+                   "from pathlib import Path;Path('/workspace/recover.bin').write_bytes(b'changed-after-worker-crash')")
+            docker("unpause", fixture.container)
+            if seed_committed_blob:
+                fixture.admin("PUT", key=f"goldenhoop/{self.installation}/{identity}", data=original)
+            self.launch("worker")
+            deadline = time.monotonic() + 25
+            while True:
+                operation = self.request("GET", f"/v1/operations/{captured['operation']['id']}")
+                terminal = self.request("GET", f"/v1/artifacts/{identity}")
+                if operation["state"] == "succeeded" or operation["state"] == "failed" and terminal["cleanup"] == "complete":
+                    break
+                assert time.monotonic() < deadline, (operation, terminal)
+                time.sleep(0.1)
+            assert terminal["sha256"] == digest, terminal
+            if operation["state"] == "succeeded":
+                request = urllib.request.Request(self.base + f"/v1/artifacts/{identity}/content", headers={"authorization": "Bearer " + self.token})
+                with self.client.open(request, timeout=25) as response:
+                    assert response.read(1024) == original
+                outcome = "existing_blob_recovered"
+            else:
+                assert terminal["state"] == "failed" and terminal["error"]["code"] == "conflict", terminal
+                outcome = "changed_source_refused"
+            self.artifact_recovery = {"outcome": outcome, "prepared": record, "terminal": terminal,
+                                      "actual_worker_kill": True, "actual_backend_pause": True,
+                                      "committed_blob_fault_injected": seed_committed_blob}
+            if seed_committed_blob:
+                assert outcome == "existing_blob_recovered", self.artifact_recovery
+            if not hasattr(self, "artifact_recoveries"):
+                self.artifact_recoveries = []
+            self.artifact_recoveries.append(self.artifact_recovery)
+        finally:
+            if docker("inspect", "--format", "{{.State.Paused}}", fixture.container) == "true":
+                docker("unpause", fixture.container)
+            if "worker" not in self.processes:
+                self.launch("worker")
+            if identity:
+                deletion = self.request("DELETE", f"/v1/artifacts/{identity}", key=str(uuid.uuid4()))
+                self.wait_operation(deletion["id"])
+            deletion = self.request("DELETE", f"/v1/sandboxes/{sid}", key=str(uuid.uuid4()))
+            self.wait_operation(deletion["id"])
+
+    def late_backend_write_is_collected_without_republishing(self):
+        fixture = self.artifact_fixture
+        identity = self.artifact_recovery["terminal"]["id"]
+        before = self.request("GET", f"/v1/artifacts/{identity}")
+        assert before["state"] == "deleted" and before["cleanup"] == "complete"
+        self.stop("worker")
+        key = f"goldenhoop/{self.installation}/{identity}"
+        # Fixture fault injection models a storage write completing after its
+        # worker's deletion acknowledgement; it is not a new public upload.
+        fixture.admin("PUT", key=key, data=b"original-capture")
+        assert fixture.admin("GET", key=key) == b"original-capture"
+        self.reject("GET", f"/v1/artifacts/{identity}/content", 409, "invalid_state")
+        self.launch("worker")
+        deadline = time.monotonic() + 20
+        while True:
+            after = self.request("GET", f"/v1/artifacts/{identity}")
+            if after["observed_at"] != before["observed_at"] and after["cleanup"] == "complete":
+                break
+            assert time.monotonic() < deadline, after
+            time.sleep(0.1)
+        assert after["state"] == "deleted", after
+        try:
+            fixture.admin("GET", key=key)
+        except urllib.error.HTTPError as error:
+            with error:
+                assert error.status == 404
+        else:
+            raise AssertionError("retired artifact object still exists")
+        self.artifact_residue = {"fault_injected_late_write": True, "republishing_refused": True,
+                                  "before": before, "after": after, "backend_absence_confirmed": True}
+
     def pid_pressure_is_bounded_and_cleanup_is_confirmed(self):
         created = self.create(ttl=90, memory=1073741824)
         identity = created["sandbox"]["id"]
@@ -461,6 +632,13 @@ assert not alive,alive
             docker("exec", "--user", "0", container, "python3", "-c", code)
 
     def cleanup(self):
+        try:
+            self.cleanup_resources()
+        finally:
+            for handle in self.log_handles:
+                handle.close()
+
+    def cleanup_resources(self):
         for role in list(self.processes):
             self.stop(role)
         if not self.installation and self.database.exists():
@@ -484,8 +662,6 @@ assert not alive,alive
                 docker("volume", "rm", name)
             assert not docker("ps", "-a", "--filter", f"label=dev.goldenhoop.installation={installation}", "--format", "{{.ID}}")
             assert not docker("volume", "ls", "--filter", f"label=dev.goldenhoop.installation={installation}", "--format", "{{.Name}}")
-        for handle in self.log_handles:
-            handle.close()
 
     def run(self):
         evidence = {"suite": "api-worker-contract", "runtime": self.args.runtime,
@@ -493,6 +669,9 @@ assert not alive,alive
                     "result": "failed", "cleanup": "unknown"}
         failure = None
         try:
+            if self.args.artifact_backend == "s3":
+                self.artifact_fixture = ArtifactFixture(argparse.Namespace(remove_image=self.args.remove_artifact_fixture_image))
+                self.artifact_fixture.start()
             self.launch("api")
             self.launch("worker")
             cases = ("authentication_and_profile_refusal", "lifecycle_commands_files_and_events",
@@ -502,16 +681,27 @@ assert not alive,alive
                          "paused_expiry_continues_while_api_is_down",
                          "pid_pressure_is_bounded_and_cleanup_is_confirmed",
                          "failed_provision_and_repeat_delete_confirm_cleanup",
-                         "diagnostics_use_actual_samples_and_distinguish_absence")
+                         "diagnostics_use_actual_samples_and_distinguish_absence",
+                         "artifact_capture_retention_restarts_and_confirmed_delete")
             for name in (() if self.args.clients_only else cases):
                 self.check(name, getattr(self, name))
             if self.args.rust_client and self.args.cli:
                 self.check("actual_sdk_and_cli_contracts", self.actual_sdk_and_cli_contracts)
+            if self.artifact_fixture:
+                self.check("interrupted_upload_never_publishes_changed_source", self.interrupted_upload_never_publishes_changed_source)
+                self.check("prepared_blob_is_recovered_after_worker_crash", lambda: self.interrupted_upload_never_publishes_changed_source(seed_committed_blob=True))
+                self.check("late_backend_write_is_collected_without_republishing", self.late_backend_write_is_collected_without_republishing)
+                listed = ET.fromstring(self.artifact_fixture.admin("GET", query={"list-type": "2", "max-keys": "100"}))
+                keys = [node.text for node in listed.iter() if node.tag.endswith("}Key") or node.tag == "Key"]
+                assert not keys, keys
+                self.artifact_fixture.admin("DELETE")
+                evidence["remaining_backend_objects"] = keys
             root = Path(__file__).resolve().parents[1]
             sources = [root / "Cargo.toml", root / "Cargo.lock", Path(__file__).resolve()]
             sources.extend((root / "crates").rglob("*.rs"))
             sources.extend((root / "crates").rglob("*.sql"))
             sources.extend((root / "crates").rglob("Cargo.toml"))
+            sources.append(root / "tests" / "artifact_contract.py")
             if self.args.rust_client:
                 sources.extend((root / "sdk").rglob("*.py"))
                 sources.extend((root / "sdk").rglob("pyproject.toml"))
@@ -535,6 +725,18 @@ assert not alive,alive
                 evidence["cleanup_error"] = str(error)
                 failure = failure or error
                 evidence["result"] = "failed"
+            if self.artifact_fixture:
+                try:
+                    self.artifact_fixture.cleanup()
+                    evidence["artifact_fixture"] = {"image_id": self.artifact_fixture.image_id,
+                                                      "image_removed": self.artifact_fixture.image_removed,
+                                                      "fixture_volumes": self.artifact_fixture.volumes,
+                                                      "cleanup": "complete"}
+                except BaseException as error:
+                    evidence["cleanup_error"] = str(error)
+                    evidence["cleanup"] = "unknown"
+                    evidence["result"] = "failed"
+                    failure = failure or error
             evidence["installation_id"] = self.installation
             if failure:
                 evidence["service_logs"] = {p.name: p.read_text(encoding="utf-8", errors="replace")[-20000:] for p in self.logs}
@@ -551,11 +753,21 @@ assert not alive,alive
             evidence["pid_pressure"] = getattr(self, "pid_pressure", None)
             evidence["sdk_results"] = getattr(self, "sdk_results", None)
             evidence["diagnostic_samples"] = getattr(self, "diagnostic_samples", None)
+            evidence["artifact_observations"] = getattr(self, "artifact_observations", None)
+            evidence["artifact_recovery"] = getattr(self, "artifact_recovery", None)
+            evidence["artifact_recoveries"] = getattr(self, "artifact_recoveries", None)
+            evidence["artifact_residue"] = getattr(self, "artifact_residue", None)
+            evidence["artifact_backend"] = self.args.artifact_backend
             rendered = json.dumps(evidence, indent=2)
-            print(rendered, flush=True)
             if self.args.output:
                 Path(self.args.output).parent.mkdir(parents=True, exist_ok=True)
                 Path(self.args.output).write_text(rendered + "\n", encoding="utf-8")
+                print(json.dumps({"result": evidence["result"], "cleanup": evidence["cleanup"],
+                                  "cases": len(evidence["cases"]), "artifact_backend": self.args.artifact_backend,
+                                  "temporary_files_removed": evidence["temporary_files_removed"],
+                                  "evidence": self.args.output, "error": evidence.get("error")}), flush=True)
+            else:
+                print(rendered, flush=True)
         if failure:
             raise failure
 
@@ -570,6 +782,8 @@ if __name__ == "__main__":
     parser.add_argument("--rust-client")
     parser.add_argument("--cli")
     parser.add_argument("--clients-only", action="store_true")
+    parser.add_argument("--artifact-backend", choices=("local", "s3"), default="local")
+    parser.add_argument("--remove-artifact-fixture-image", action="store_true")
     arguments = parser.parse_args()
     if bool(arguments.rust_client) != bool(arguments.cli):
         parser.error("--rust-client and --cli must be supplied together")

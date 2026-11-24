@@ -152,3 +152,29 @@ fn endpoint_credentials_and_remote_plaintext_are_rejected() {
         assert!(Client::new(url, TOKEN).is_err());
     }
 }
+
+#[tokio::test]
+async fn artifact_download_rejects_bytes_that_do_not_match_immutable_metadata() {
+    let id = Uuid::new_v4();
+    let sandbox = Uuid::new_v4();
+    let metadata = json!({"id":id,"sandbox_id":sandbox,"name":"artifact.bin","source_path":"artifact.bin",
+        "state":"available","desired_state":"available","cleanup":"pending","sha256":"0".repeat(64),
+        "size_bytes":3,"created_at":"2026-01-01T00:00:00Z","observed_at":null,"error":null});
+    let router = Router::new()
+        .route(
+            &format!("/v1/artifacts/{id}"),
+            get(move || {
+                let metadata = metadata.clone();
+                async move { axum::Json(metadata) }
+            }),
+        )
+        .route(
+            &format!("/v1/artifacts/{id}/content"),
+            get(|| async { ([("content-type", "application/octet-stream")], "abc") }),
+        );
+    let (client, _server) = server(router).await;
+    assert!(matches!(
+        client.artifact_bytes(id).await,
+        Err(Error::Protocol(_))
+    ));
+}

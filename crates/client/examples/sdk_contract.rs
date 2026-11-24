@@ -5,7 +5,7 @@ use futures_util::{FutureExt, StreamExt};
 use goldenhoop_client::*;
 use uuid::Uuid;
 
-async fn exercise(client: &Client, id: Uuid) -> Result<()> {
+async fn exercise(client: &Client, id: Uuid) -> Result<Uuid> {
     assert!(
         client
             .diagnostics(id)
@@ -132,7 +132,16 @@ async fn exercise(client: &Client, id: Uuid) -> Result<()> {
     assert!(
         matches!(client.read_file(id,"rust.bin",100).await,Err(Error::Api(error)) if error.code==ErrorCode::NotFound)
     );
-    Ok(())
+    let artifact = client
+        .capture_artifact(
+            id,
+            &CreateArtifact {
+                path: "once".into(),
+                name: "rust-sdk.bin".into(),
+            },
+        )
+        .await?;
+    Ok(artifact.id)
 }
 
 #[tokio::main]
@@ -163,14 +172,42 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     lease.close().await?;
     assert_eq!(client.sandbox(id).await?.cleanup, CleanupState::Complete);
     assert!(client.diagnostics(id).await?.runtime.is_none());
-    match result {
+    let artifact_id = match result {
         Ok(result) => result??,
+        Err(panic) => std::panic::resume_unwind(panic),
+    };
+    let verification = std::panic::AssertUnwindSafe(async {
+        assert_eq!(client.artifact_bytes(artifact_id).await?, b"1");
+        assert!(
+            client
+                .list_artifacts(Some(id), None, 100)
+                .await?
+                .items
+                .iter()
+                .any(|artifact| artifact.id == artifact_id)
+        );
+        Ok::<_, Error>(())
+    })
+    .catch_unwind()
+    .await;
+    let deleted = client
+        .delete_artifact(artifact_id, &Uuid::new_v4().to_string())
+        .await?;
+    client
+        .wait_operation(deleted.id, Duration::from_secs(60))
+        .await?;
+    assert_eq!(
+        client.artifact(artifact_id).await?.cleanup,
+        CleanupState::Complete
+    );
+    match verification {
+        Ok(result) => result?,
         Err(panic) => std::panic::resume_unwind(panic),
     }
     println!(
         "{}",
         serde_json::json!({"client":"rust","result":"passed","sandbox_id":id,"cleanup":"complete",
-        "cases":["profiles","lease","binary_files","traversal_refusal","literal_argv","nonzero_binary_output","idempotency","timeout","cancel","sse_resume","pause_resume","confirmed_cleanup"]})
+        "cases":["profiles","lease","binary_files","traversal_refusal","literal_argv","nonzero_binary_output","idempotency","timeout","cancel","sse_resume","pause_resume","confirmed_cleanup","retained_artifact_and_confirmed_delete"]})
     );
     Ok(())
 }

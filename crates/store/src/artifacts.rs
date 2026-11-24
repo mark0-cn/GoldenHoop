@@ -66,6 +66,37 @@ async fn finish(
 }
 
 impl Store {
+    pub async fn bind_artifact_backend(&self, binding: &str) -> Result<(), ApiError> {
+        if binding.len() != 64
+            || !binding
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(ApiError::new(
+                ErrorCode::InvalidRequest,
+                "invalid artifact namespace identity",
+            ));
+        }
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+        sqlx::query("INSERT OR IGNORE INTO meta(key,value) VALUES('artifact_backend',?)")
+            .bind(binding)
+            .execute(&mut *tx)
+            .await
+            .map_err(db)?;
+        let current: String =
+            sqlx::query_scalar("SELECT value FROM meta WHERE key='artifact_backend'")
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(db)?;
+        if current != binding {
+            return Err(ApiError::new(
+                ErrorCode::Conflict,
+                "artifact storage namespace changed; explicit migration is required",
+            ));
+        }
+        tx.commit().await.map_err(db)?;
+        Ok(())
+    }
     pub async fn artifact(&self, id: Uuid) -> Result<StoredArtifact, ApiError> {
         let value = sqlx::query("SELECT * FROM artifacts WHERE id=?")
             .bind(id.to_string())
@@ -166,8 +197,31 @@ impl Store {
     }
 
     pub async fn artifact_work(&self) -> Result<Vec<StoredArtifact>, ApiError> {
-        sqlx::query("SELECT * FROM artifacts WHERE state IN('pending','uploading','deleting') OR(state='failed' AND cleanup!='complete') ORDER BY id LIMIT 256")
+        sqlx::query("SELECT * FROM artifacts WHERE state IN('pending','uploading','deleting') OR(state IN('failed','deleted') AND cleanup!='complete') ORDER BY id LIMIT 256")
             .fetch_all(&self.pool).await.map_err(db)?.iter().map(row).collect()
+    }
+    /// A late backend write reopens cleanup, never the deleted business resource.
+    pub async fn note_artifact_residue(&self, id: Uuid) -> Result<(), ApiError> {
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+        let mut stored = load(&mut tx, id).await?;
+        if !matches!(
+            stored.artifact.state,
+            ArtifactState::Deleted | ArtifactState::Failed
+        ) {
+            return Err(ApiError::new(
+                ErrorCode::InvalidState,
+                "live artifact is not cleanup residue",
+            ));
+        }
+        stored.artifact.cleanup = CleanupState::Unknown;
+        stored.artifact.observed_at = Some(Utc::now());
+        stored.artifact.error = Some(ApiError::new(
+            ErrorCode::BackendUnavailable,
+            "late backend object observed after artifact cleanup",
+        ));
+        save(&mut tx, &stored.artifact).await?;
+        tx.commit().await.map_err(db)?;
+        Ok(())
     }
     pub async fn list_artifacts(
         &self,
@@ -296,6 +350,9 @@ impl Store {
         } else {
             ArtifactState::Deleting
         };
+        if complete {
+            stored.artifact.error = None;
+        }
         finish(
             &mut tx,
             id,
@@ -395,7 +452,11 @@ impl Store {
         stored.artifact.state = actual;
         stored.artifact.cleanup = cleanup;
         stored.artifact.observed_at = Some(Utc::now());
-        stored.artifact.error = error.clone();
+        stored.artifact.error = if actual == ArtifactState::Deleted {
+            None
+        } else {
+            error.clone()
+        };
         save(&mut tx, &stored.artifact).await?;
         match actual {
             ArtifactState::Available => {

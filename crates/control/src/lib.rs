@@ -15,3 +15,9 @@ pub struct InternalFileCall {
 pub struct InternalSandboxCall {
     pub sandbox_id: uuid::Uuid,
 }
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InternalArtifactCall {
+    pub artifact_id: uuid::Uuid,
+}

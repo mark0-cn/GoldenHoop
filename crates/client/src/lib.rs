@@ -1,4 +1,5 @@
 //! Cross-platform client. Waiting and observing never imply cancellation.
+mod artifacts;
 mod events;
 pub use events::{EventStream, RunOutput};
 
@@ -26,6 +27,7 @@ pub enum Error {
     Timeout(Uuid),
     UncertainRequest(String),
     Observation(Uuid, Box<Error>),
+    Artifact(Uuid, Box<Error>),
     Cleanup(Uuid, Box<Error>, Box<Error>),
 }
 impl std::fmt::Display for Error {
@@ -43,6 +45,7 @@ impl std::fmt::Display for Error {
                 "request outcome is unknown; retry the same request with idempotency key {key}"
             ),
             Self::Observation(id, error) => write!(f, "execution {id} observation failed: {error}"),
+            Self::Artifact(id, error) => write!(f, "artifact {id} operation failed: {error}"),
             Self::Cleanup(id, original, error) => write!(
                 f,
                 "sandbox {id} cleanup is unconfirmed after {original}: {error}"

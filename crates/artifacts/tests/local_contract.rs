@@ -10,10 +10,12 @@ async fn local_restart_races_integrity_isolation_and_confirmed_deletion() {
     let installation = Uuid::new_v4();
     let store = BlobStore::local(&root, installation).unwrap();
     store.probe().await.unwrap();
+    assert!(store.ids().await.unwrap().is_empty());
     let id = Uuid::new_v4();
     let data = b"\x00\xff\x80GoldenHoop\n";
     let (first, second) = tokio::join!(store.put(id, data), store.put(id, data));
     let reference = first.unwrap();
+    assert_eq!(store.ids().await.unwrap(), vec![id]);
     assert_eq!(reference, second.unwrap());
     assert_eq!(
         store.put(id, b"different").await.unwrap_err().code,
@@ -23,6 +25,7 @@ async fn local_restart_races_integrity_isolation_and_confirmed_deletion() {
     let reopened = BlobStore::local(&root, installation).unwrap();
     assert_eq!(reopened.read(&reference).await.unwrap(), data);
     let stranger = BlobStore::local(&root, Uuid::new_v4()).unwrap();
+    assert!(stranger.ids().await.unwrap().is_empty());
     assert_eq!(
         stranger.read(&reference).await.unwrap_err().code,
         ErrorCode::NotFound

@@ -3,8 +3,9 @@ use std::{convert::Infallible, sync::Arc, time::Duration};
 use axum::{
     Json, Router,
     extract::{DefaultBodyLimit, State},
-    http::{HeaderMap, StatusCode},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     middleware,
+    response::Response,
     response::sse::{Event, KeepAlive, Sse},
     routing::{get, post, put},
 };
@@ -15,7 +16,8 @@ use serde::Deserialize;
 use tower::limit::ConcurrencyLimitLayer;
 use uuid::Uuid;
 
-use crate::{InternalFileCall, InternalSandboxCall, http::*};
+use crate::{InternalArtifactCall, InternalFileCall, InternalSandboxCall, http::*};
+use base64::{Engine, engine::general_purpose::STANDARD};
 
 struct App {
     store: Store,
@@ -59,6 +61,10 @@ pub fn router(store: Store, token: &str) -> Result<Router, ApiError> {
             put(write_file).get(read_file).delete(remove_file),
         )
         .route("/v1/sandboxes/{id}/directories", get(list_files))
+        .route("/v1/sandboxes/{id}/artifacts", post(create_artifact))
+        .route("/v1/artifacts", get(list_artifacts))
+        .route("/v1/artifacts/{id}", get(artifact).delete(delete_artifact))
+        .route("/v1/artifacts/{id}/content", get(artifact_content))
         .fallback(not_found)
         .layer(DefaultBodyLimit::max(24 * 1024 * 1024))
         .layer(ConcurrencyLimitLayer::new(64))
@@ -430,6 +436,132 @@ async fn worker_call<T: serde::de::DeserializeOwned>(
             "invalid private worker reply",
         )
     })
+}
+
+async fn create_artifact(
+    State(app): State<AppState>,
+    ApiPath(id): ApiPath<Uuid>,
+    headers: HeaderMap,
+    ApiJson(request): ApiJson<CreateArtifact>,
+) -> Result<(StatusCode, Json<ArtifactCreated>), HttpError> {
+    let key = idempotency_key(&headers)?;
+    goldenhoop_core::validate_artifact(&request)?;
+    if let Some(existing) = app
+        .store
+        .idempotent_resource(
+            &format!("sandboxes:{id}:artifacts:create"),
+            key,
+            &fingerprint(&request)?,
+        )
+        .await?
+    {
+        return Ok((
+            StatusCode::ACCEPTED,
+            Json(app.store.artifact_created(existing).await?),
+        ));
+    }
+    let sandbox = app.store.sandbox(id).await?.sandbox;
+    profile(&app, &sandbox.profile, Some(Capability::Artifacts)).await?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(app.store.create_artifact(id, &request, key).await?),
+    ))
+}
+async fn artifact(
+    State(app): State<AppState>,
+    ApiPath(id): ApiPath<Uuid>,
+) -> Result<Json<Artifact>, HttpError> {
+    Ok(Json(app.store.artifact(id).await?.artifact))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ArtifactQuery {
+    sandbox_id: Option<Uuid>,
+    after: Option<Uuid>,
+    limit: Option<u32>,
+}
+async fn list_artifacts(
+    State(app): State<AppState>,
+    ApiQuery(query): ApiQuery<ArtifactQuery>,
+) -> Result<Json<ArtifactPage>, HttpError> {
+    Ok(Json(
+        app.store
+            .list_artifacts(query.sandbox_id, query.after, query.limit.unwrap_or(100))
+            .await?,
+    ))
+}
+async fn delete_artifact(
+    State(app): State<AppState>,
+    ApiPath(id): ApiPath<Uuid>,
+    headers: HeaderMap,
+) -> Result<(StatusCode, Json<Operation>), HttpError> {
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(
+            app.store
+                .delete_artifact(id, idempotency_key(&headers)?)
+                .await?,
+        ),
+    ))
+}
+async fn artifact_content(
+    State(app): State<AppState>,
+    ApiPath(id): ApiPath<Uuid>,
+) -> Result<Response, HttpError> {
+    let artifact = app.store.artifact(id).await?.artifact;
+    if artifact.state != ArtifactState::Available
+        || artifact.desired_state != ArtifactDesiredState::Available
+    {
+        return Err(
+            ApiError::new(ErrorCode::InvalidState, "artifact content is not available").into(),
+        );
+    }
+    let content: FileData = worker_call(
+        &app,
+        "internal/artifact-content",
+        &InternalArtifactCall { artifact_id: id },
+    )
+    .await?;
+    let bytes = STANDARD.decode(content.data_base64).map_err(|_| {
+        ApiError::new(
+            ErrorCode::BackendUnavailable,
+            "invalid artifact content encoding",
+        )
+    })?;
+    if bytes.len() > goldenhoop_artifacts::MAX_BLOB_BYTES
+        || artifact.size_bytes != Some(bytes.len() as u64)
+        || artifact.sha256.as_deref() != Some(&fingerprint_bytes(&bytes))
+    {
+        return Err(ApiError::new(
+            ErrorCode::Conflict,
+            "artifact content integrity check failed",
+        )
+        .into());
+    }
+    let mut response = Response::new(axum::body::Body::from(bytes));
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/octet-stream"),
+    );
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    let name = artifact
+        .name
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("%{byte:02X}"))
+        .collect::<String>();
+    response.headers_mut().insert(
+        header::CONTENT_DISPOSITION,
+        HeaderValue::from_str(&format!("attachment; filename*=UTF-8''{name}"))
+            .map_err(|_| ApiError::new(ErrorCode::Internal, "invalid artifact display name"))?,
+    );
+    Ok(response)
+}
+fn fingerprint_bytes(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(bytes))
 }
 async fn write_file(
     State(app): State<AppState>,

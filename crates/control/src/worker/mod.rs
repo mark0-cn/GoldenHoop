@@ -1,3 +1,4 @@
+mod artifacts;
 mod executions;
 mod lifecycle;
 
@@ -35,6 +36,8 @@ pub struct Worker {
     locks: Mutex<HashMap<Uuid, Weak<Mutex<()>>>>,
     concurrency: Arc<Semaphore>,
     cancellations: Mutex<HashMap<Uuid, Instant>>,
+    artifacts: goldenhoop_artifacts::BlobStore,
+    artifact_concurrency: Arc<Semaphore>,
 }
 
 impl Worker {
@@ -43,7 +46,15 @@ impl Worker {
         agent_image: String,
         allow_runc_development: bool,
         endpoint: String,
+        artifacts: goldenhoop_artifacts::BlobStore,
     ) -> Result<Arc<Self>, ApiError> {
+        if artifacts.installation_id() != store.installation_id() {
+            return Err(ApiError::new(
+                ErrorCode::InvalidRequest,
+                "artifact storage installation identity mismatch",
+            ));
+        }
+        store.bind_artifact_backend(artifacts.binding()).await?;
         let mut drivers = HashMap::new();
         let mut profiles = Vec::new();
         for profile in [DockerProfile::Gvisor, DockerProfile::RuncDevelopment] {
@@ -58,6 +69,22 @@ impl Worker {
             );
             profiles.push(driver.probe().await);
             drivers.insert(profile.id().into(), driver);
+        }
+        let artifact_support = match artifacts.probe().await {
+            Ok(()) => true,
+            Err(error) => {
+                report("artifact_storage_probe_failed", &error);
+                false
+            }
+        };
+        if artifact_support {
+            for profile in &mut profiles {
+                if profile.availability == Availability::Available
+                    && profile.capabilities.contains(&Capability::Files)
+                {
+                    profile.capabilities.insert(Capability::Artifacts);
+                }
+            }
         }
         let registration = WorkerRegistration {
             id: Uuid::new_v4(),
@@ -74,6 +101,8 @@ impl Worker {
             locks: Mutex::new(HashMap::new()),
             concurrency: Arc::new(Semaphore::new(4)),
             cancellations: Mutex::new(HashMap::new()),
+            artifacts,
+            artifact_concurrency: Arc::new(Semaphore::new(2)),
         }))
     }
 
@@ -82,6 +111,7 @@ impl Worker {
         Ok(Router::new()
             .route("/internal/files", post(files))
             .route("/internal/diagnostics", post(diagnostics))
+            .route("/internal/artifact-content", post(artifacts::content))
             .fallback(not_found)
             .layer(DefaultBodyLimit::max(24 * 1024 * 1024))
             .layer(ConcurrencyLimitLayer::new(16))
@@ -103,6 +133,7 @@ impl Worker {
     pub async fn run(self: Arc<Self>, mut shutdown: watch::Receiver<bool>) {
         let mut tasks = JoinSet::new();
         let mut offset = 0_usize;
+        let mut artifact_offset = 0_usize;
         loop {
             if *shutdown.borrow() {
                 break;
@@ -141,6 +172,35 @@ impl Worker {
                 if result.is_err() {
                     eprintln!("{{\"event\":\"reconciliation_task_failed\"}}");
                 }
+            }
+            match self.store.artifact_work().await {
+                Ok(mut work) => {
+                    if !work.is_empty() {
+                        let start = artifact_offset % work.len();
+                        work.rotate_left(start);
+                        artifact_offset = artifact_offset.wrapping_add(2);
+                    }
+                    for stored in work {
+                        let Ok(permit) = self.artifact_concurrency.clone().try_acquire_owned()
+                        else {
+                            break;
+                        };
+                        let id = stored.artifact.id;
+                        let Ok(guard) = self.lock(id).await.try_lock_owned() else {
+                            continue;
+                        };
+                        let worker = self.clone();
+                        tasks.spawn(async move {
+                            let _permit = permit;
+                            let _guard = guard;
+                            if let Err(error) = worker.reconcile_artifact(id).await {
+                                worker.artifact_error(id, &error).await;
+                                report("artifact_reconciliation_failed", &error);
+                            }
+                        });
+                    }
+                }
+                Err(error) => report("artifact_work_scan_failed", &error),
             }
             tokio::select! {result = shutdown.changed()=>{if result.is_err(){break;}},_ = tokio::time::sleep(Duration::from_millis(200))=>{}}
         }

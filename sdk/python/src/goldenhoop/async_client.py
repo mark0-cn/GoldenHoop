@@ -15,6 +15,7 @@ from ._protocol import (
     TransportError, UncertainRequest, WaitTimeout, binary, body,
     check_created, check_record, decode_json, endpoint, identity, key_headers,
 )
+from ._protocol import ArtifactError, CreateArtifact, check_artifact_bytes, check_artifact_created
 
 
 class AsyncClient:
@@ -33,8 +34,8 @@ class AsyncClient:
     async def __aexit__(self, *args):
         await self.close()
 
-    async def _read(self, response: httpx.Response) -> bytes:
-        maximum = MAX_BODY if 200 <= response.status_code < 300 else 64 * 1024
+    async def _read(self, response: httpx.Response, maximum: int = MAX_BODY) -> bytes:
+        maximum = maximum if 200 <= response.status_code < 300 else 64 * 1024
         data = bytearray()
         async for chunk in response.aiter_bytes():
             data.extend(chunk)
@@ -211,6 +212,74 @@ class AsyncClient:
 
     def lease(self, request: CreateSandbox | Json) -> AsyncSandboxLease:
         return AsyncSandboxLease(self, request)
+
+    async def create_artifact(self, sandbox_id: str, request: CreateArtifact | Json, key: str) -> Json:
+        sid, request = identity(sandbox_id), body(request)
+        return check_artifact_created(await self._request("POST", f"v1/sandboxes/{sid}/artifacts", request, key=key), request, sid)
+
+    async def artifact(self, artifact_id: str) -> Json:
+        aid = identity(artifact_id)
+        return check_record(await self._request("GET", f"v1/artifacts/{aid}"), aid)
+
+    async def list_artifacts(self, sandbox_id: str | None = None, after: str | None = None, limit: int = 100) -> Json:
+        params = {"limit": limit}
+        if sandbox_id is not None:
+            params["sandbox_id"] = identity(sandbox_id)
+        if after is not None:
+            params["after"] = identity(after)
+        return await self._request("GET", "v1/artifacts", params=params)
+
+    async def delete_artifact(self, artifact_id: str, key: str) -> Json:
+        aid = identity(artifact_id)
+        return check_record(await self._request("DELETE", f"v1/artifacts/{aid}", key=key), aid, "resource_id")
+
+    async def artifact_bytes(self, artifact_id: str) -> bytes:
+        aid = identity(artifact_id)
+        metadata = await self.artifact(aid)
+        if metadata.get("state") != "available" or metadata.get("desired_state") != "available":
+            raise ApiError(409, {"code": "invalid_state", "message": "artifact content is not available"})
+        async def fetch():
+            try:
+                request = self._http.build_request("GET", f"v1/artifacts/{aid}/content")
+                async with aclosing(await self._http.send(request, stream=True)) as response:
+                    raw = await self._read(response, maximum=MAX_FILE)
+                    if response.status_code != 200:
+                        decode_json(response.status_code, raw)
+                    if not response.headers.get("content-type", "").startswith("application/octet-stream"):
+                        raise ProtocolError("expected binary artifact content")
+                return check_artifact_bytes(metadata, raw)
+            except httpx.RequestError:
+                raise TransportError() from None
+        try:
+            return await asyncio.wait_for(fetch(), 30)
+        except TimeoutError:
+            raise TransportError() from None
+
+    async def capture_artifact(self, sandbox_id: str, request: CreateArtifact | Json, key: str | None = None) -> Json:
+        key = key if key is not None else str(uuid4())
+        try:
+            created = await self.create_artifact(sandbox_id, request, key)
+        except asyncio.CancelledError as error:
+            error.add_note(f"artifact acceptance may be uncertain; retry the same request with idempotency key {key}")
+            raise
+        except TransportError:
+            raise UncertainRequest(key) from None
+        except ApiError as error:
+            if error.code == "backend_unavailable":
+                raise UncertainRequest(key) from error
+            raise
+        aid = created["artifact"]["id"]
+        try:
+            await self.wait_operation(created["operation"]["id"])
+            artifact = await self.artifact(aid)
+            if artifact.get("state") != "available":
+                raise ProtocolError("artifact is not available after capture")
+            return artifact
+        except asyncio.CancelledError as error:
+            error.add_note(f"artifact {aid} was not deleted; use explicit deletion to cancel retention")
+            raise
+        except Error as error:
+            raise ArtifactError(aid, error) from error
 
 
 class AsyncSandboxLease:

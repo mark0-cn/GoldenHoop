@@ -11,7 +11,7 @@ from pathlib import Path, PurePosixPath
 from uuid import uuid4
 
 import httpx
-from goldenhoop import ApiError, AsyncClient, Client, Command, CreateSandbox, WaitTimeout
+from goldenhoop import ApiError, AsyncClient, Client, Command, CreateSandbox, CreateArtifact, WaitTimeout
 
 ENDPOINT = os.environ["GOLDENHOOP_ENDPOINT"]
 TOKEN = os.environ["GOLDENHOOP_API_TOKEN"]
@@ -62,9 +62,16 @@ def sync_contract():
             assert events and events[0]["sequence"] == cursor + 1 and events[-1]["kind"] == "completed"
             for action in (client.pause, client.resume):
                 client.wait_operation(action(sid, str(uuid4()))["id"])
+            artifact = client.capture_artifact(sid, CreateArtifact("python.bin", "python-sdk.bin"))
+            assert any(item["id"] == artifact["id"] for item in client.list_artifacts(sid)["items"])
             client.remove_file(sid, "python.bin")
         assert client.sandbox(sid)["cleanup"] == "complete"
         assert client.diagnostics(sid)["runtime"] is None
+        try:
+            assert client.artifact_bytes(artifact["id"]) == BINARY
+        finally:
+            client.wait_operation(client.delete_artifact(artifact["id"], str(uuid4()))["id"])
+        assert client.artifact(artifact["id"])["cleanup"] == "complete"
         # Exceptions in caller code must also receive confirmed context cleanup.
         failed_id = None
         try:
@@ -98,8 +105,15 @@ async def async_contract():
             execution = await client.start(sid, Command(["sleep", "30"]), str(uuid4()))
             await client.cancel(execution["id"])
             assert (await client.wait_execution(execution["id"]))["state"] == "cancelled"
+            artifact = await client.capture_artifact(sid, CreateArtifact("async.bin", "async-sdk.bin"))
+            assert any(item["id"] == artifact["id"] for item in (await client.list_artifacts(sid))["items"])
         assert (await client.sandbox(sid))["cleanup"] == "complete"
         assert (await client.diagnostics(sid))["runtime"] is None
+        try:
+            assert await client.artifact_bytes(artifact["id"]) == BINARY
+        finally:
+            await client.wait_operation((await client.delete_artifact(artifact["id"], str(uuid4())))["id"])
+        assert (await client.artifact(artifact["id"]))["cleanup"] == "complete"
         # Cancellation of the lease's owner still runs explicit cleanup.
         created = asyncio.Event()
         cancellation_id = None
@@ -147,6 +161,16 @@ def cli_contract(binary):
             assert destination.read_bytes() == BINARY
             invoke("file-get", sid, "cli.bin", str(destination), expected=125)
             assert destination.read_bytes() == BINARY
+            artifact = json.loads(invoke("artifact-capture", sid, "cli.bin", "--name", "cli-artifact.bin"))
+            artifact_path = directory / "artifact.bin"
+            try:
+                invoke("artifact-download", artifact["id"], str(artifact_path))
+                assert artifact_path.read_bytes() == BINARY
+                assert json.loads(invoke("artifact-get", artifact["id"]))["state"] == "available"
+                assert any(item["id"] == artifact["id"] for item in json.loads(invoke("artifact-list", "--sandbox", sid))["items"])
+            finally:
+                deleted = json.loads(invoke("artifact-delete", artifact["id"]))
+                assert deleted["state"] == "deleted" and deleted["cleanup"] == "complete"
             invoke("file-remove", sid, "cli.bin")
         assert not directory.exists()
         invoke("pause", sid)

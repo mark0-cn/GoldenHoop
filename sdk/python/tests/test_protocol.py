@@ -58,6 +58,18 @@ class ProtocolTests(unittest.TestCase):
                 client.run(sid, Command(["true"]))
             self.assertEqual(failure.exception.execution_id, eid)
 
+    def test_artifact_download_refuses_digest_mismatch(self):
+        aid = str(uuid4())
+        def handler(request):
+            if request.url.path.endswith("/content"):
+                return httpx.Response(200, content=b"abc", headers={"content-type": "application/octet-stream"})
+            return httpx.Response(200, json={"id": aid, "state": "available", "desired_state": "available", "size_bytes": 3, "sha256": "0" * 64})
+        with Client("http://127.0.0.1", TOKEN) as client:
+            client._http.close()
+            client._http = httpx.Client(base_url="http://127.0.0.1/", transport=httpx.MockTransport(handler))
+            with self.assertRaises(ProtocolError):
+                client.artifact_bytes(aid)
+
     def test_sync_partial_eof_reconnects_without_duplicate_output(self):
         sid, eid = str(uuid4()), str(uuid4())
         seen = []

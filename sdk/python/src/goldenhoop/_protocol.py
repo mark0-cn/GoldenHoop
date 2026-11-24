@@ -5,6 +5,7 @@ import base64
 import binascii
 import ipaddress
 import json
+import hashlib
 from dataclasses import asdict, dataclass, field
 from typing import Any
 from urllib.parse import urlsplit
@@ -55,6 +56,12 @@ class ObservationError(Error):
         super().__init__(f"execution {execution_id} observation failed: {error}")
 
 
+class ArtifactError(Error):
+    def __init__(self, artifact_id: str, error: Error):
+        self.artifact_id, self.error = artifact_id, error
+        super().__init__(f"artifact {artifact_id} operation failed: {error}")
+
+
 class CleanupError(Error):
     def __init__(self, sandbox_id: str, original: BaseException | None, error: BaseException):
         self.sandbox_id, self.original, self.error = sandbox_id, original, error
@@ -82,14 +89,38 @@ class Command:
 
 
 @dataclass(frozen=True)
+class CreateArtifact:
+    path: str
+    name: str = "artifact.bin"
+
+
+@dataclass(frozen=True)
 class RunOutput:
     execution: Json
     stdout: bytes
     stderr: bytes
 
 
-def body(value: CreateSandbox | Command | Json) -> Json:
-    return asdict(value) if isinstance(value, (CreateSandbox, Command)) else dict(value)
+def body(value: CreateSandbox | Command | CreateArtifact | Json) -> Json:
+    return asdict(value) if isinstance(value, (CreateSandbox, Command, CreateArtifact)) else dict(value)
+
+
+def check_artifact_created(value: Any, request: Json, sid: str) -> Json:
+    try:
+        artifact = value["artifact"]
+        identity(artifact["id"])
+        if (artifact["sandbox_id"] != sid or artifact["name"] != request.get("name", "artifact.bin")
+                or artifact["source_path"] != request["path"] or value["operation"]["resource_id"] != artifact["id"]):
+            raise ProtocolError("artifact create response identity mismatch")
+    except (KeyError, TypeError):
+        raise ProtocolError("invalid artifact create response") from None
+    return value
+
+
+def check_artifact_bytes(metadata: Json, raw: bytes) -> bytes:
+    if len(raw) > MAX_FILE or metadata.get("size_bytes") != len(raw) or metadata.get("sha256") != hashlib.sha256(raw).hexdigest():
+        raise ProtocolError("artifact content integrity check failed")
+    return raw
 
 
 def identity(value: str) -> str:

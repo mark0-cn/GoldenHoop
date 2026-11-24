@@ -33,6 +33,8 @@ pub struct S3Config {
 pub struct BlobStore {
     backend: Arc<dyn ObjectStore>,
     installation: Uuid,
+    binding: String,
+    probe_scope: bool,
 }
 
 #[derive(Debug)]
@@ -101,7 +103,15 @@ impl BlobStore {
             .map_err(backend)?
             .with_fsync(true)
             .with_automatic_cleanup(true);
-        Self::new(Arc::new(backend), installation)
+        let canonical = root.canonicalize().map_err(|_| unavailable())?;
+        let mut digest = Sha256::new();
+        digest.update(b"local\0");
+        digest.update(canonical.as_os_str().as_encoded_bytes());
+        Self::new(
+            Arc::new(backend),
+            installation,
+            format!("{:x}", digest.finalize()),
+        )
     }
 
     /// S3-compatible path-style endpoint with conditional writes; never falls back locally.
@@ -138,6 +148,7 @@ impl BlobStore {
                 "explicit artifact bucket, region and credentials are required",
             ));
         }
+        let binding=format!("{:x}",Sha256::digest(serde_json::to_vec(&serde_json::json!({"kind":"s3","endpoint":endpoint.as_str().trim_end_matches('/'),"bucket":config.bucket,"region":config.region})).map_err(|_|invalid("invalid artifact namespace"))?));
         let options = object_store::ClientOptions::new()
             .with_timeout(Duration::from_secs(20))
             .with_connect_timeout(Duration::from_secs(5));
@@ -166,23 +177,85 @@ impl BlobStore {
         if let Some(token) = config.session_token {
             builder = builder.with_token(token);
         }
-        Self::new(Arc::new(builder.build().map_err(backend)?), installation)
+        Self::new(
+            Arc::new(builder.build().map_err(backend)?),
+            installation,
+            binding,
+        )
     }
 
-    fn new(backend: Arc<dyn ObjectStore>, installation: Uuid) -> Result<Self, ApiError> {
+    fn new(
+        backend: Arc<dyn ObjectStore>,
+        installation: Uuid,
+        binding: String,
+    ) -> Result<Self, ApiError> {
         if installation.is_nil() {
             return Err(invalid("installation UUID must not be nil"));
         }
         Ok(Self {
             backend,
             installation,
+            binding,
+            probe_scope: false,
         })
+    }
+    /// Namespace identity excludes credentials, so key rotation does not move data.
+    pub fn binding(&self) -> &str {
+        &self.binding
+    }
+    pub fn installation_id(&self) -> Uuid {
+        self.installation
     }
     fn path(&self, id: Uuid) -> Result<Path, ApiError> {
         if id.is_nil() {
             return Err(invalid("blob UUID must not be nil"));
         }
-        Ok(Path::from(format!("goldenhoop/{}/{id}", self.installation)))
+        Ok(if self.probe_scope {
+            Path::from(format!("goldenhoop/{}/probes/{id}", self.installation))
+        } else {
+            Path::from(format!("goldenhoop/{}/{id}", self.installation))
+        })
+    }
+    /// Bounded listing of canonical IDs in this store's own namespace.
+    pub async fn ids(&self) -> Result<Vec<Uuid>, ApiError> {
+        let prefix = Path::from(if self.probe_scope {
+            format!("goldenhoop/{}/probes", self.installation)
+        } else {
+            format!("goldenhoop/{}", self.installation)
+        });
+        let list = async {
+            let mut objects = self.backend.list(Some(&prefix));
+            let mut ids = Vec::new();
+            for _ in 0..1024 {
+                let Some(object) = objects.next().await else {
+                    break;
+                };
+                let object = object.map_err(backend)?;
+                let key = object.location.to_string();
+                if let Some(id) = key
+                    .rsplit('/')
+                    .next()
+                    .and_then(|value| value.parse::<Uuid>().ok())
+                    && !id.is_nil()
+                    && self.path(id)? == object.location
+                {
+                    ids.push(id);
+                }
+            }
+            Ok(ids)
+        };
+        tokio::time::timeout(DEADLINE, list)
+            .await
+            .map_err(|_| unavailable())?
+    }
+    /// Controller maintenance only; call when this installation has no active probe.
+    pub async fn clear_probe_residue(&self) -> Result<(), ApiError> {
+        let mut probe = self.clone();
+        probe.probe_scope = true;
+        for id in probe.ids().await? {
+            probe.delete(id).await?;
+        }
+        Ok(())
     }
     fn validate(reference: &BlobRef) -> Result<(), ApiError> {
         if reference.size_bytes > MAX_BLOB_BYTES as u64
@@ -296,16 +369,21 @@ impl BlobStore {
 
     /// Actual read/write/delete probe; cleanup follows both success and failure.
     pub async fn probe(&self) -> Result<(), ApiError> {
+        let mut probe = self.clone();
+        probe.probe_scope = true;
         let id = Uuid::new_v4();
         let result = async {
-            let reference = self.put(id, b"GoldenHoop artifact probe\x00\xff").await?;
-            if self.read(&reference).await? != b"GoldenHoop artifact probe\x00\xff" {
+            let reference = probe.put(id, b"GoldenHoop artifact probe\x00\xff").await?;
+            if probe.read(&reference).await? != b"GoldenHoop artifact probe\x00\xff" {
                 return Err(corrupt());
+            }
+            if !probe.ids().await?.contains(&id) {
+                return Err(unavailable());
             }
             Ok(())
         }
         .await;
-        if self.delete(id).await.is_err() {
+        if probe.delete(id).await.is_err() {
             return Err(ApiError::new(
                 ErrorCode::BackendUnavailable,
                 format!("artifact probe cleanup is unconfirmed for blob {id}"),

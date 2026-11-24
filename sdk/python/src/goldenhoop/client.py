@@ -15,6 +15,7 @@ from ._protocol import (
     TransportError, UncertainRequest, WaitTimeout, binary, body,
     check_created, check_record, decode_json, endpoint, identity, key_headers,
 )
+from ._protocol import ArtifactError, CreateArtifact, check_artifact_bytes, check_artifact_created
 
 
 class Client:
@@ -33,8 +34,8 @@ class Client:
     def __exit__(self, *args):
         self.close()
 
-    def _read(self, response: httpx.Response, timeout: float = 30) -> bytes:
-        maximum = MAX_BODY if 200 <= response.status_code < 300 else 64 * 1024
+    def _read(self, response: httpx.Response, timeout: float = 30, maximum: int = MAX_BODY) -> bytes:
+        maximum = maximum if 200 <= response.status_code < 300 else 64 * 1024
         deadline = time.monotonic() + timeout
         data = bytearray()
         for chunk in response.iter_bytes():
@@ -219,6 +220,63 @@ class Client:
 
     def lease(self, request: CreateSandbox | Json) -> SandboxLease:
         return SandboxLease(self, request)
+
+    def create_artifact(self, sandbox_id: str, request: CreateArtifact | Json, key: str) -> Json:
+        sid, request = identity(sandbox_id), body(request)
+        return check_artifact_created(self._request("POST", f"v1/sandboxes/{sid}/artifacts", request, key=key), request, sid)
+
+    def artifact(self, artifact_id: str) -> Json:
+        aid = identity(artifact_id)
+        return check_record(self._request("GET", f"v1/artifacts/{aid}"), aid)
+
+    def list_artifacts(self, sandbox_id: str | None = None, after: str | None = None, limit: int = 100) -> Json:
+        params = {"limit": limit}
+        if sandbox_id is not None:
+            params["sandbox_id"] = identity(sandbox_id)
+        if after is not None:
+            params["after"] = identity(after)
+        return self._request("GET", "v1/artifacts", params=params)
+
+    def delete_artifact(self, artifact_id: str, key: str) -> Json:
+        aid = identity(artifact_id)
+        return check_record(self._request("DELETE", f"v1/artifacts/{aid}", key=key), aid, "resource_id")
+
+    def artifact_bytes(self, artifact_id: str) -> bytes:
+        aid = identity(artifact_id)
+        metadata = self.artifact(aid)
+        if metadata.get("state") != "available" or metadata.get("desired_state") != "available":
+            raise ApiError(409, {"code": "invalid_state", "message": "artifact content is not available"})
+        try:
+            request = self._http.build_request("GET", f"v1/artifacts/{aid}/content")
+            with closing(self._http.send(request, stream=True)) as response:
+                raw = self._read(response, maximum=MAX_FILE)
+                if response.status_code != 200:
+                    decode_json(response.status_code, raw)
+                if not response.headers.get("content-type", "").startswith("application/octet-stream"):
+                    raise ProtocolError("expected binary artifact content")
+        except httpx.RequestError:
+            raise TransportError() from None
+        return check_artifact_bytes(metadata, raw)
+
+    def capture_artifact(self, sandbox_id: str, request: CreateArtifact | Json, key: str | None = None) -> Json:
+        key = key if key is not None else str(uuid4())
+        try:
+            created = self.create_artifact(sandbox_id, request, key)
+        except TransportError:
+            raise UncertainRequest(key) from None
+        except ApiError as error:
+            if error.code == "backend_unavailable":
+                raise UncertainRequest(key) from error
+            raise
+        aid = created["artifact"]["id"]
+        try:
+            self.wait_operation(created["operation"]["id"])
+            artifact = self.artifact(aid)
+            if artifact.get("state") != "available":
+                raise ProtocolError("artifact is not available after capture")
+            return artifact
+        except Error as error:
+            raise ArtifactError(aid, error) from error
 
 
 class SandboxLease:

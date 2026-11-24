@@ -42,14 +42,14 @@ class Contract:
         self.volumes = []
         self.image_removed = None
 
-    def admin(self, method, key="", query=None):
+    def admin(self, method, key="", query=None, data=b""):
         """Fixture-only SigV4 admin: create/list/delete this fresh bucket."""
         parsed = urllib.parse.urlsplit(self.endpoint)
         path = "/" + self.bucket + ("/" + urllib.parse.quote(key, safe="/") if key else "")
         query = urllib.parse.urlencode(sorted((query or {}).items()), quote_via=urllib.parse.quote)
         now = datetime.now(timezone.utc)
         date, stamp = now.strftime("%Y%m%d"), now.strftime("%Y%m%dT%H%M%SZ")
-        payload = hashlib.sha256(b"").hexdigest()
+        payload = hashlib.sha256(data).hexdigest()
         canonical_headers = f"host:{parsed.netloc}\nx-amz-content-sha256:{payload}\nx-amz-date:{stamp}\n"
         signed_headers = "host;x-amz-content-sha256;x-amz-date"
         canonical = "\n".join((method, path, query, canonical_headers, signed_headers, payload))
@@ -62,7 +62,7 @@ class Contract:
         headers = {"x-amz-date": stamp, "x-amz-content-sha256": payload,
                    "authorization": f"AWS4-HMAC-SHA256 Credential={self.access}/{scope}, SignedHeaders={signed_headers}, Signature={signature}"}
         request = urllib.request.Request(self.endpoint + path + ("?" + query if query else ""),
-                                         method=method, headers=headers, data=b"" if method == "PUT" else None)
+                                         method=method, headers=headers, data=data if method == "PUT" else None)
         with self.client.open(request, timeout=20) as response:
             return response.read(1024 * 1024)
 

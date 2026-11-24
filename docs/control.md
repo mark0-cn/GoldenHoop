@@ -7,8 +7,9 @@ flowchart LR
     Client[Rust / Python / CLI] --> API[Authenticated API]
     API --> DB[(SQLite intent and events)]
     Worker[Runtime worker] <--> DB
-    API -->|Private file requests| Worker
+    API -->|Private file / artifact / diagnostics requests| Worker
     Worker --> Runtime[Docker / gVisor]
+    Worker --> Storage[Private local / S3 artifact store]
     Expiry[Worker expiration loop] --> Runtime
     Runtime --> Agent[Trusted static agent]
     Agent --> Workload[UID 1000 workload]
@@ -52,10 +53,16 @@ All requests require `Authorization: Bearer <token>`. JSON DTO schemas are in sp
 | GET | /v1/sandboxes/{id}/files?path=...&max_bytes=... | Bounded base64 file content |
 | DELETE | /v1/sandboxes/{id}/files?path=... | Remove a workspace file |
 | GET | /v1/sandboxes/{id}/directories?path=... | Workspace directory entries |
+| POST | /v1/sandboxes/{id}/artifacts | 202 retained artifact and capture operation |
+| GET | /v1/artifacts?sandbox_id=UUID&after=UUID&limit=100 | Retained artifact metadata page |
+| GET / DELETE | /v1/artifacts/{id} | Metadata / 202 deletion operation |
+| GET | /v1/artifacts/{id}/content | Integrity-checked binary download |
 
 Typed errors distinguish invalid input, authentication, forbidden access, conflict/state, unsupported capabilities, quotas and unavailable backends. Public errors do not expose raw runtime payloads. Input decoding failures use the same error envelope.
 
 Diagnostics use a separately authenticated private worker route; they never forward a workload-supplied RPC method. See [sampling and missing-data semantics](diagnostics.md).
+
+Retained artifacts use a separate UUID-only private content route. Capture reads an authorized workspace file and prepares immutable length/digest before uploading. The storage credentials remain in the worker. Source expiration does not delete captured output; explicit artifact deletion is required. Configure the private local root or explicit S3 backend on the worker; see [configuration, recovery and cleanup](artifacts.md). Artifact create/delete requests also require Idempotency-Key.
 
 ## Execution and recovery
 
@@ -71,4 +78,4 @@ Worker heartbeat freshness is ten seconds. New operations requiring runtime supp
 
     python -B tests/api_contract.py --binary target/debug/goldenhoopd --runtime runc --work-dir .test-work --output evidence/api-runc.json
 
-The suite launches separate services with a fresh installation and private random credentials. It exercises refusal, create/commands/files/events, stream resume, failures, timeout, cancellation, idempotency, real worker crashes, API restarts, paused expiration without the API, PID exhaustion, failed provisioning and repeated deletion. It removes its labeled containers and volumes, stops its service processes, closes database/log handles and verifies temporary-directory removal. Failed cleanup is a failed test, and retains a failure record rather than claiming a pass.
+The suite launches separate services with a fresh installation and private random credentials. It exercises refusal, create/commands/files/events, stream resume, failures, timeout, cancellation, idempotency, real worker crashes, API restarts, paused expiration without the API, PID exhaustion, failed provisioning, diagnostics, retained artifacts and repeated deletion. Supplying the Rust client and CLI binaries also exercises four actual clients. The S3 option adds actual backend interruption and explicit committed/late-write fault injection. It removes its labeled containers and volumes, stops service processes, closes database/log handles and verifies temporary-directory removal. Failed cleanup is a failed test and retains a failure record rather than claiming a pass.

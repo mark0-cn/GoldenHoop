@@ -114,6 +114,34 @@ enum Command {
         sandbox: Uuid,
         path: String,
     },
+    ArtifactCapture {
+        sandbox: Uuid,
+        path: String,
+        #[arg(long, default_value = "artifact.bin")]
+        name: String,
+        #[arg(long)]
+        idempotency_key: Option<String>,
+    },
+    ArtifactGet {
+        id: Uuid,
+    },
+    ArtifactList {
+        #[arg(long)]
+        sandbox: Option<Uuid>,
+        #[arg(long)]
+        after: Option<Uuid>,
+        #[arg(long, default_value_t = 100)]
+        limit: u32,
+    },
+    ArtifactDownload {
+        id: Uuid,
+        local: PathBuf,
+    },
+    ArtifactDelete {
+        id: Uuid,
+        #[arg(long)]
+        idempotency_key: Option<String>,
+    },
 }
 
 type CliResult<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -276,6 +304,65 @@ async fn run(args: Args) -> CliResult<u8> {
                 .map_err(|error| error.error)?;
         }
         Command::FileRemove { sandbox, path } => client.remove_file(sandbox, &path).await?,
+        Command::ArtifactCapture {
+            sandbox,
+            path,
+            name,
+            idempotency_key,
+        } => {
+            let key = key(idempotency_key);
+            eprintln!("idempotency_key={key}");
+            let created = client
+                .create_artifact(sandbox, &CreateArtifact { path, name }, &key)
+                .await?;
+            eprintln!(
+                "artifact_id={} operation_id={}",
+                created.artifact.id, created.operation.id
+            );
+            client
+                .wait_operation(created.operation.id, Duration::from_secs(60))
+                .await?;
+            let artifact = client.artifact(created.artifact.id).await?;
+            if artifact.state != ArtifactState::Available {
+                return Err(Error::Protocol("artifact is not available after capture").into());
+            }
+            print_json(&artifact)?;
+        }
+        Command::ArtifactGet { id } => print_json(&client.artifact(id).await?)?,
+        Command::ArtifactList {
+            sandbox,
+            after,
+            limit,
+        } => print_json(&client.list_artifacts(sandbox, after, limit).await?)?,
+        Command::ArtifactDownload { id, local } => {
+            let bytes = client.artifact_bytes(id).await?;
+            let parent = local
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .unwrap_or_else(|| std::path::Path::new("."));
+            let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+            temporary.write_all(&bytes)?;
+            temporary.as_file().sync_all()?;
+            temporary
+                .persist_noclobber(local)
+                .map_err(|error| error.error)?;
+        }
+        Command::ArtifactDelete {
+            id,
+            idempotency_key,
+        } => {
+            let operation = client.delete_artifact(id, &key(idempotency_key)).await?;
+            client
+                .wait_operation(operation.id, Duration::from_secs(60))
+                .await?;
+            let artifact = client.artifact(id).await?;
+            if artifact.state != ArtifactState::Deleted
+                || artifact.cleanup != CleanupState::Complete
+            {
+                return Err(Error::Protocol("artifact cleanup is not confirmed").into());
+            }
+            print_json(&artifact)?;
+        }
     }
     Ok(0)
 }

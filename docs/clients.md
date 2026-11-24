@@ -54,6 +54,9 @@ goldenhoop file-get <sandbox-uuid> remote.bin downloaded.bin
 goldenhoop pause <sandbox-uuid>
 goldenhoop resume <sandbox-uuid>
 goldenhoop diagnostics <sandbox-uuid>
+goldenhoop artifact-capture <sandbox-uuid> result.bin --name result.bin
+goldenhoop artifact-download <artifact-uuid> downloaded.bin
+goldenhoop artifact-delete <artifact-uuid>
 goldenhoop delete <sandbox-uuid>
 ```
 
@@ -65,6 +68,12 @@ goldenhoop delete <sandbox-uuid>
 
 Waiting, a client deadline, observer disconnect and cancellation of an observation coroutine do not cancel a remote execution. Use the explicit cancel endpoint. An observation error carries the execution ID so it can be inspected or cancelled. A transport failure during create/start may leave an accepted request whose response was lost: convenience methods report `UncertainRequest` with the original idempotency key. Replay the same request with that key; a new key can create duplicate work. Low-level keyed methods accept caller-managed keys and bounded transport retries preserve them.
 
+## Retained artifacts
+
+Rust and Python sync/async clients expose create_artifact, artifact, list_artifacts, capture_artifact, artifact_bytes and delete_artifact. CreateArtifact takes a workspace path and optional display name. Capture waits for availability; downloads verify size and SHA-256 and return bytes. A retained artifact survives closing its source sandbox lease and requires explicit deletion. Wait for the delete operation and verify state=deleted with cleanup=complete.
+
+Capture observation failures preserve the artifact ID (`Error::Artifact` in Rust and ArtifactError in Python). Uncertain acceptance preserves the idempotency key; Python async cancellation records the available recovery ID/key in the exception notes. Cancelling observation does not delete retained output. Metadata remains readable while the worker is down, but content requests fail explicitly. CLI capture/delete prints recovery IDs before waiting, and downloads refuse to overwrite local files. See [artifact routes, limits and recovery](artifacts.md).
+
 ## Actual validation
 
 The API harness can launch both services, the Rust SDK example, the Python sync/async SDK and the Rust CLI against a fresh installation:
@@ -75,4 +84,4 @@ cargo build -p goldenhoop-client --example sdk_contract
 python -B tests/api_contract.py --binary target/debug/goldenhoopd --rust-client target/debug/examples/sdk_contract --cli target/debug/goldenhoop --runtime runc --work-dir .test-work --output evidence/clients.json
 ```
 
-Use `runsc` only on a real gVisor host. `--clients-only` isolates client debugging and is not a complete API contract pass. The harness confirms removal of its labeled containers, volumes, service processes and temporary directory on failure as well as success. Protocol regression tests separately exercise premature EOF, partial-frame reconnect, sequence validation and deadline handling; these do not establish a runtime isolation boundary.
+Use `runsc` only on a real gVisor host. `--clients-only` isolates client debugging and is not a complete API contract pass. All four clients capture output, close the source sandbox, verify retained bytes and explicitly delete the artifact. The harness confirms removal of its labeled containers, volumes, service processes and temporary directory on failure as well as success. Protocol regressions separately exercise premature EOF, partial-frame reconnect, sequence validation, deadline handling and artifact digest mismatch; these do not establish a runtime isolation boundary.

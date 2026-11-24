@@ -51,6 +51,16 @@ where
 #[tokio::test]
 async fn immutable_metadata_atomic_completion_delete_race_and_no_resurrection() {
     checked(|store| async move {
+        store.bind_artifact_backend(&"a".repeat(64)).await.unwrap();
+        store.bind_artifact_backend(&"a".repeat(64)).await.unwrap();
+        assert_eq!(
+            store
+                .bind_artifact_backend(&"b".repeat(64))
+                .await
+                .unwrap_err()
+                .code,
+            ErrorCode::Conflict
+        );
         let sandbox = source(&store).await;
         let request = CreateArtifact::new("result.bin");
         let (first, repeated) = tokio::join!(
@@ -118,6 +128,19 @@ async fn immutable_metadata_atomic_completion_delete_race_and_no_resurrection() 
                 .observe_artifact(id, ArtifactState::Available, CleanupState::Pending, None)
                 .await
                 .is_err()
+        );
+        store.note_artifact_residue(id).await.unwrap();
+        let residue = store.artifact(id).await.unwrap().artifact;
+        assert_eq!(residue.state, ArtifactState::Deleted);
+        assert_eq!(residue.cleanup, CleanupState::Unknown);
+        assert_eq!(store.artifact_work().await.unwrap().len(), 1);
+        store
+            .observe_artifact(id, ArtifactState::Deleted, CleanupState::Complete, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            store.operation(deletion.id).await.unwrap().state,
+            OperationState::Succeeded
         );
         assert_eq!(
             store
