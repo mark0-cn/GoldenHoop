@@ -227,7 +227,12 @@ impl DockerDriver {
                             | CodeContextState::Failed
                             | CodeContextState::Unknown
                     ) {
-                        return Err(unavailable("kernel context probe failed"));
+                        return Err(unavailable(&format!(
+                            "kernel context probe failed: state={:?}, cleanup={:?}, reason={}",
+                            record.state,
+                            record.cleanup,
+                            record.reason.as_deref().unwrap_or("not reported")
+                        )));
                     }
                 }
                 _ => {
