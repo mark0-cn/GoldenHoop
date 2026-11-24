@@ -333,7 +333,7 @@ class Contract:
         assert self.request("GET", f"/v1/sandboxes/{self.primary}")["cleanup"] == "complete"
         assert not docker("ps", "-a", "--filter", f"label=dev.goldenhoop.sandbox={self.primary}", "--format", "{{.ID}}")
 
-    def pid_limit_cannot_prevent_cancel_cleanup(self):
+    def pid_pressure_is_bounded_and_cleanup_is_confirmed(self):
         created = self.create(ttl=90, memory=1073741824)
         identity = created["sandbox"]["id"]
         self.wait_operation(created["operation"]["id"])
@@ -342,6 +342,7 @@ class Contract:
         assert config["PidsLimit"] == 128 and config["Memory"] == 1073741824
         self.pid_pressure = {"sandbox_id": identity, "memory_bytes": config["Memory"],
                              "pids_cgroup_limit": config["PidsLimit"]}
+        started = datetime.now(timezone.utc).isoformat()
         original = self.primary
         try:
             self.primary = identity
@@ -359,10 +360,12 @@ time.sleep(30)
         finally:
             self.primary = original
         time.sleep(1)
-        observed = json.loads(docker("inspect", container))[0]
-        self.pid_pressure["before_cancel_state"] = observed["State"]
+        # The worker may have observed a runtime crash and already removed it.
+        remaining = docker("ps", "-a", "--filter", f"id={container}", "--format", "{{.ID}}")
+        observed = json.loads(docker("inspect", container))[0] if remaining else None
+        self.pid_pressure["before_cancel_state"] = observed["State"] if observed else "absent"
         self.pid_pressure["before_cancel_execution"] = self.request("GET", f"/v1/executions/{command['id']}")
-        if observed["State"]["Running"]:
+        if observed and observed["State"]["Running"]:
             self.pid_pressure["before_cancel_stats"] = json.loads(docker("stats", "--no-stream", "--format", "{{json .}}", container))
         if self.args.runtime == "runc":
             assert int(self.pid_pressure["before_cancel_stats"]["PIDs"]) >= 120, self.pid_pressure
@@ -371,7 +374,20 @@ time.sleep(30)
         self.pid_pressure["terminal_execution"] = terminal
         record = self.request("GET", f"/v1/sandboxes/{identity}")
         self.pid_pressure["terminal_sandbox"] = record
-        assert terminal["state"] == "cancelled", self.pid_pressure
+        events = docker("events", "--since", started, "--until", datetime.now(timezone.utc).isoformat(),
+                        "--filter", f"container={container}", "--format", "{{json .}}")
+        self.pid_pressure["runtime_events"] = [event for line in events.splitlines()
+                                               if (event := json.loads(line)).get("Action") in ("oom", "die", "kill", "destroy")]
+        if terminal["state"] == "failed":
+            # A runtime crash under its host task quota is a failure, never a
+            # successful command cancellation. Require observed exit + removal.
+            self.pid_pressure["outcome"] = "runtime_failed_and_removed"
+            assert "runtime exited" in (record.get("reason") or ""), self.pid_pressure
+            assert any(event.get("Action") == "die" for event in self.pid_pressure["runtime_events"]), self.pid_pressure
+            assert record["state"] == "failed" and record["cleanup"] == "complete", self.pid_pressure
+        else:
+            self.pid_pressure["outcome"] = "cancelled_with_confirmed_cleanup"
+            assert terminal["state"] == "cancelled", self.pid_pressure
         if record["state"] in ("terminated", "failed"):
             assert record["cleanup"] == "complete"
             assert not docker("ps", "-a", "--filter", f"id={container}", "--format", "{{.ID}}")
@@ -429,7 +445,7 @@ assert not alive,alive
                          "worker_restart_retains_runtime_and_executes_once",
                          "api_restart_keeps_results_and_private_worker_route_is_restricted",
                          "paused_expiry_continues_while_api_is_down",
-                         "pid_limit_cannot_prevent_cancel_cleanup",
+                         "pid_pressure_is_bounded_and_cleanup_is_confirmed",
                          "failed_provision_and_repeat_delete_confirm_cleanup"):
                 self.check(name, getattr(self, name))
             root = Path(__file__).resolve().parents[1]
