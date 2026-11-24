@@ -10,6 +10,8 @@ Every owned resource carries an installation UUID, profile and role. Sandboxes a
 
 CPU, RAM and PIDs are bounded. The agent requires at least 64 MiB and 16 PIDs. Workspace storage is a 128 MiB tmpfs at this stage; temporary files have a separate 32 MiB tmpfs. The root filesystem is read-only. The supervisor has only the six capabilities documented in agent.md; workload processes have no effective capabilities.
 
+Resource budgets apply to the whole runtime cgroup, including supervisor/runtime overhead. `pids` is a host task budget, not a promise of that many guest processes. gVisor represents guest tasks with goroutines and, depending on its platform, additional host threads/address-space stubs; see its [resource model](https://gvisor.dev/docs/architecture_guide/resources/). Runtime-specific overhead can exhaust a host task budget before a guest reaches the same process count. An observed unexpected runtime exit records its exit code and Docker OOM flag before removal; an absent flag is not evidence of an OOM.
+
 ## Expiration and cleanup
 
 Run `goldenhoop-reaper --installation-id <uuid>` as an independent host service alongside the control service. It scans both local profiles and removes expired containers even when paused or when the API is unavailable. It also collects expired bootstrap containers. The scan interval defaults to one second; enforcement is subject to host/daemon availability and scan delay. A daemon error is reported as unconfirmed cleanup, never as successful removal.

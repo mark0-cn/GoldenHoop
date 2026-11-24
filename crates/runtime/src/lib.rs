@@ -27,6 +27,7 @@ pub enum ObservedState {
 pub struct RuntimeObservation {
     pub state: ObservedState,
     pub exit_code: Option<i64>,
+    pub oom_killed: Option<bool>,
     pub observed_at: DateTime<Utc>,
 }
 

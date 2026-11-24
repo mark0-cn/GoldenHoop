@@ -128,10 +128,10 @@ class Contract:
             time.sleep(0.1)
         raise AssertionError(f"operation did not finish: {identity}")
 
-    def create(self, ttl=120, image=None):
+    def create(self, ttl=120, image=None, memory=268435456):
         body = {"profile": "local-gvisor" if self.args.runtime == "runsc" else "local-runc-dev",
                 "image": image or self.args.image, "ttl_seconds": ttl,
-                "resources": {"cpu_millis": 1000, "memory_bytes": 268435456, "pids": 128}}
+                "resources": {"cpu_millis": 1000, "memory_bytes": memory, "pids": 128}}
         key = str(uuid.uuid4())
         created = self.request("POST", "/v1/sandboxes", body, key)
         again = self.request("POST", "/v1/sandboxes", body, key)
@@ -334,12 +334,14 @@ class Contract:
         assert not docker("ps", "-a", "--filter", f"label=dev.goldenhoop.sandbox={self.primary}", "--format", "{{.ID}}")
 
     def pid_limit_cannot_prevent_cancel_cleanup(self):
-        created = self.create(ttl=60)
+        created = self.create(ttl=90, memory=1073741824)
         identity = created["sandbox"]["id"]
         self.wait_operation(created["operation"]["id"])
         container = self.container(identity)
         config = json.loads(docker("inspect", container))[0]["HostConfig"]
-        assert config["PidsLimit"] == 128 and config["Memory"] == 268435456
+        assert config["PidsLimit"] == 128 and config["Memory"] == 1073741824
+        self.pid_pressure = {"sandbox_id": identity, "memory_bytes": config["Memory"],
+                             "pids_cgroup_limit": config["PidsLimit"]}
         original = self.primary
         try:
             self.primary = identity
@@ -357,11 +359,19 @@ time.sleep(30)
         finally:
             self.primary = original
         time.sleep(1)
+        observed = json.loads(docker("inspect", container))[0]
+        self.pid_pressure["before_cancel_state"] = observed["State"]
+        self.pid_pressure["before_cancel_execution"] = self.request("GET", f"/v1/executions/{command['id']}")
+        if observed["State"]["Running"]:
+            self.pid_pressure["before_cancel_stats"] = json.loads(docker("stats", "--no-stream", "--format", "{{json .}}", container))
         if self.args.runtime == "runc":
-            assert int(docker("stats", "--no-stream", "--format", "{{.PIDs}}", container)) >= 120
+            assert int(self.pid_pressure["before_cancel_stats"]["PIDs"]) >= 120, self.pid_pressure
         self.request("POST", f"/v1/executions/{command['id']}/cancel")
-        assert self.wait_execution(command["id"], limit=40)["state"] == "cancelled"
+        terminal = self.wait_execution(command["id"], limit=40)
+        self.pid_pressure["terminal_execution"] = terminal
         record = self.request("GET", f"/v1/sandboxes/{identity}")
+        self.pid_pressure["terminal_sandbox"] = record
+        assert terminal["state"] == "cancelled", self.pid_pressure
         if record["state"] in ("terminated", "failed"):
             assert record["cleanup"] == "complete"
             assert not docker("ps", "-a", "--filter", f"id={container}", "--format", "{{.ID}}")
@@ -457,6 +467,7 @@ assert not alive,alive
                 evidence["result"] = "failed"
                 failure = failure or error
             evidence["expiry_cleanup_seconds"] = getattr(self, "expiry_cleanup_seconds", None)
+            evidence["pid_pressure"] = getattr(self, "pid_pressure", None)
             rendered = json.dumps(evidence, indent=2)
             print(rendered, flush=True)
             if self.args.output:

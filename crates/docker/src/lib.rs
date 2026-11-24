@@ -854,6 +854,7 @@ impl RuntimeDriver for DockerDriver {
             return Ok(RuntimeObservation {
                 state: ObservedState::Missing,
                 exit_code: None,
+                oom_killed: None,
                 observed_at: Utc::now(),
             });
         };
@@ -878,6 +879,7 @@ impl RuntimeDriver for DockerDriver {
         Ok(RuntimeObservation {
             state,
             exit_code: value.exit_code,
+            oom_killed: value.oom_killed,
             observed_at: Utc::now(),
         })
     }

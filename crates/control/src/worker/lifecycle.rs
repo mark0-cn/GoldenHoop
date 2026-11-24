@@ -74,13 +74,15 @@ impl Worker {
                 return Ok(());
             }
             None | Some(ObservedState::Missing | ObservedState::Exited) => {
+                let reason = match &observation {
+                    Some(observation) if observation.state == ObservedState::Exited => format!(
+                        "runtime exited before a terminal result was collected; exit_code={:?}, oom_killed={:?}",
+                        observation.exit_code, observation.oom_killed
+                    ),
+                    _ => "runtime disappeared before a terminal result was collected".into(),
+                };
                 return self
-                    .stop(
-                        stored,
-                        driver,
-                        "runtime exited or disappeared before a terminal result was collected",
-                        ExecutionState::Failed,
-                    )
+                    .stop(stored, driver, &reason, ExecutionState::Failed)
                     .await;
             }
             Some(ObservedState::Starting) if !stored.ever_running => {
