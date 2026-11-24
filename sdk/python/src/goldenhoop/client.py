@@ -70,6 +70,14 @@ class Client:
         sid = identity(sandbox_id)
         return check_record(self._request("GET", f"v1/sandboxes/{sid}"), sid)
 
+    def diagnostics(self, sandbox_id: str) -> Json:
+        sid = identity(sandbox_id)
+        value = self._request("GET", f"v1/sandboxes/{sid}/diagnostics")
+        check_record(value.get("sandbox"), sid)
+        if value.get("runtime") is not None:
+            check_record(value["runtime"], sid, "sandbox_id")
+        return value
+
     def list(self, after: str | None = None, limit: int = 100) -> Json:
         params = {"limit": limit}
         if after is not None:

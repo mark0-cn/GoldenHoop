@@ -12,4 +12,4 @@ Worker metadata contains a private loopback endpoint and authentication token. I
 
 The durability suite covers concurrent idempotency, failed transaction rollback, resource charging until confirmed cleanup, desired-state races, absolute expiration, completion/cursor atomicity, terminal immutability, cancellation preservation, stale heartbeat refusal and actual SQLite close/reopen. Temporary database files are removed after the suite, including assertion failure paths.
 
-The public API and worker reconciliation loop now use these primitives; see control.md. CLI and SDK integration is still in progress.
+The public API, worker reconciliation loop, CLI and SDKs now use these primitives; see control.md and clients.md.

@@ -18,7 +18,7 @@ Hard task pressure can also terminate the gVisor runtime itself. In the 128-task
 
 Run `goldenhoop-reaper --installation-id <uuid>` as an independent host service alongside the control service. It scans both local profiles and removes expired containers even when paused or when the API is unavailable. It also collects expired bootstrap containers. The scan interval defaults to one second; enforcement is subject to host/daemon availability and scan delay. A daemon error is reported as unconfirmed cleanup, never as successful removal.
 
-Do not expose the Docker socket to untrusted users. The reaper runs in the trusted worker boundary and needs Docker management access. Deployment service units and the persistent API integration are still in progress.
+Do not expose the Docker socket to untrusted users. The reaper runs in the trusted worker boundary and needs Docker management access. The API/worker integration is implemented; deployment service units remain part of M6.
 
 Bootstrap containers are removed after successful and failed runs. Bundle volumes are useful installation artifacts; `remove_agent_bundle` is an explicit uninstall/test cleanup operation and refuses while owned sandboxes remain. Tests use fresh installation UUIDs and remove their bundle volumes too. Removal is followed by a runtime absence check. Never run a global Docker prune for GoldenHoop cleanup.
 

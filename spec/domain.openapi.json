@@ -479,6 +479,105 @@
         },
         "additionalProperties": false
       },
+      "ResourceUsage": {
+        "type": "object",
+        "description": "Host cgroup accounting, including runtime/supervisor overhead.",
+        "required": [
+          "sampled_at"
+        ],
+        "properties": {
+          "cpu_time_ns": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "host_tasks": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "memory_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "sampled_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "RuntimeDiagnostics": {
+        "type": "object",
+        "required": [
+          "sandbox_id",
+          "observed_at"
+        ],
+        "properties": {
+          "exit_code": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "observed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "oom_killed": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "paused": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "running": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "sandbox_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "usage": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ResourceUsage"
+              }
+            ]
+          },
+          "usage_error": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ApiError"
+              }
+            ]
+          }
+        }
+      },
       "RuntimeProfile": {
         "type": "object",
         "required": [
@@ -603,6 +702,28 @@
         "properties": {
           "operation": {
             "$ref": "#/components/schemas/Operation"
+          },
+          "sandbox": {
+            "$ref": "#/components/schemas/Sandbox"
+          }
+        }
+      },
+      "SandboxDiagnostics": {
+        "type": "object",
+        "required": [
+          "sandbox"
+        ],
+        "properties": {
+          "runtime": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RuntimeDiagnostics",
+                "description": "None means the worker confirmed no owned runtime exists, not a zero sample."
+              }
+            ]
           },
           "sandbox": {
             "$ref": "#/components/schemas/Sandbox"

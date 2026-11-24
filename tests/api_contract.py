@@ -274,6 +274,7 @@ class Contract:
         self.stop("worker")
         time.sleep(11)
         self.reject("GET", "/v1/profiles", 503, "backend_unavailable")
+        self.reject("GET", f"/v1/sandboxes/{self.primary}/diagnostics", 503, "backend_unavailable")
         self.launch("worker")
         assert self.container(self.primary) == container
         assert docker("inspect", "--format", "{{.State.StartedAt}}", container) == started
@@ -350,6 +351,42 @@ class Contract:
                                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             assert result.returncode == 0, (command, result.stdout, result.stderr)
             self.sdk_results.append(json.loads(result.stdout))
+
+    def diagnostics_use_actual_samples_and_distinguish_absence(self):
+        created = self.create(ttl=90, memory=1073741824)
+        sid = created["sandbox"]["id"]
+        self.wait_operation(created["operation"]["id"])
+        self.diagnostic_samples = []
+        original = self.primary
+        try:
+            self.primary = sid
+            before = self.request("GET", f"/v1/sandboxes/{sid}/diagnostics")
+            self.diagnostic_samples.append(before)
+            runtime = before["runtime"]
+            assert runtime["running"] is True and runtime["exit_code"] is None and runtime["usage_error"] is None, before
+            assert runtime["usage"]["memory_bytes"] > 0 and runtime["usage"]["host_tasks"] > 0, before
+            command = self.execute(["python3", "-c", "import time;data=bytearray(b'x'*(32*1024*1024));print('allocated',flush=True);end=time.monotonic()+15\nwhile time.monotonic()<end: pass"], timeout=20)
+            assert self.output(self.events(command["id"], first_output=True)) == b"allocated\n"
+            busy = self.request("GET", f"/v1/sandboxes/{sid}/diagnostics")
+            self.diagnostic_samples.append(busy)
+            assert busy["runtime"]["usage"]["cpu_time_ns"] > runtime["usage"]["cpu_time_ns"], busy
+            assert busy["runtime"]["usage"]["memory_bytes"] - runtime["usage"]["memory_bytes"] >= 16 * 1024 * 1024, self.diagnostic_samples
+            pause = self.request("POST", f"/v1/sandboxes/{sid}/pause", key=str(uuid.uuid4()))
+            self.wait_operation(pause["id"])
+            paused = self.request("GET", f"/v1/sandboxes/{sid}/diagnostics")
+            self.diagnostic_samples.append(paused)
+            assert paused["runtime"]["paused"] is True and paused["runtime"]["usage"] is None, paused
+            resume = self.request("POST", f"/v1/sandboxes/{sid}/resume", key=str(uuid.uuid4()))
+            self.wait_operation(resume["id"])
+            self.request("POST", f"/v1/executions/{command['id']}/cancel")
+            assert self.wait_execution(command["id"])["state"] == "cancelled"
+        finally:
+            self.primary = original
+            operation = self.request("DELETE", f"/v1/sandboxes/{sid}", key=str(uuid.uuid4()))
+            self.wait_operation(operation["id"])
+        removed = self.request("GET", f"/v1/sandboxes/{sid}/diagnostics")
+        self.diagnostic_samples.append(removed)
+        assert removed["runtime"] is None and removed["sandbox"]["cleanup"] == "complete", removed
 
     def pid_pressure_is_bounded_and_cleanup_is_confirmed(self):
         created = self.create(ttl=90, memory=1073741824)
@@ -464,7 +501,8 @@ assert not alive,alive
                          "api_restart_keeps_results_and_private_worker_route_is_restricted",
                          "paused_expiry_continues_while_api_is_down",
                          "pid_pressure_is_bounded_and_cleanup_is_confirmed",
-                         "failed_provision_and_repeat_delete_confirm_cleanup")
+                         "failed_provision_and_repeat_delete_confirm_cleanup",
+                         "diagnostics_use_actual_samples_and_distinguish_absence")
             for name in (() if self.args.clients_only else cases):
                 self.check(name, getattr(self, name))
             if self.args.rust_client and self.args.cli:
@@ -512,6 +550,7 @@ assert not alive,alive
             evidence["expiry_cleanup_seconds"] = getattr(self, "expiry_cleanup_seconds", None)
             evidence["pid_pressure"] = getattr(self, "pid_pressure", None)
             evidence["sdk_results"] = getattr(self, "sdk_results", None)
+            evidence["diagnostic_samples"] = getattr(self, "diagnostic_samples", None)
             rendered = json.dumps(evidence, indent=2)
             print(rendered, flush=True)
             if self.args.output:

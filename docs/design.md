@@ -52,4 +52,4 @@ Warm pools allocate clean instances and destroy or rebuild used allocations. Bro
 
 ## Defaults
 
-1 CPU, 1 GiB memory, 256 processes, 30-minute TTL. The administrator may set profile-specific defaults/limits. API binds loopback by default; remote exposure requires TLS. API keys are scoped and revocable. Apache-2.0 license.
+1 CPU, 1 GiB memory, a 256 PID/task budget, 30-minute TTL. Accounting is profile-specific; Docker/gVisor budgets include runtime/supervisor overhead and bound host tasks rather than promising a guest process count (see docker.md). The administrator may set profile-specific defaults/limits. API binds loopback by default; remote exposure requires TLS. API keys are scoped and revocable. Apache-2.0 license.

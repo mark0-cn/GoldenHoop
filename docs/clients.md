@@ -53,6 +53,7 @@ goldenhoop file-put <sandbox-uuid> local.bin remote.bin
 goldenhoop file-get <sandbox-uuid> remote.bin downloaded.bin
 goldenhoop pause <sandbox-uuid>
 goldenhoop resume <sandbox-uuid>
+goldenhoop diagnostics <sandbox-uuid>
 goldenhoop delete <sandbox-uuid>
 ```
 

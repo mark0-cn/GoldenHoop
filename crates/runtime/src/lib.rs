@@ -46,6 +46,13 @@ pub trait RuntimeDriver: Send + Sync {
     /// Recover only resources bearing this installation's ownership label.
     async fn discover(&self) -> Result<Vec<RuntimeHandle>, ApiError>;
 
+    async fn diagnostics(&self, _handle: &RuntimeHandle) -> Result<RuntimeDiagnostics, ApiError> {
+        Err(ApiError::new(
+            ErrorCode::UnsupportedCapability,
+            "runtime diagnostics are not implemented by this driver",
+        ))
+    }
+
     async fn pause(&self, _handle: &RuntimeHandle) -> Result<(), ApiError> {
         Err(ApiError::new(
             ErrorCode::UnsupportedCapability,

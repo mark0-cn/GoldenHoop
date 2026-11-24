@@ -221,6 +221,34 @@ pub struct FileData {
     pub data_base64: String,
 }
 
+/// Host cgroup accounting, including runtime/supervisor overhead.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ResourceUsage {
+    pub sampled_at: DateTime<Utc>,
+    pub cpu_time_ns: Option<u64>,
+    pub memory_bytes: Option<u64>,
+    pub host_tasks: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RuntimeDiagnostics {
+    pub sandbox_id: Uuid,
+    pub observed_at: DateTime<Utc>,
+    pub running: Option<bool>,
+    pub paused: Option<bool>,
+    pub exit_code: Option<i64>,
+    pub oom_killed: Option<bool>,
+    pub usage: Option<ResourceUsage>,
+    pub usage_error: Option<crate::ApiError>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SandboxDiagnostics {
+    pub sandbox: Sandbox,
+    /// None means the worker confirmed no owned runtime exists, not a zero sample.
+    pub runtime: Option<RuntimeDiagnostics>,
+}
+
 fn default_cwd() -> String {
     "/workspace".into()
 }

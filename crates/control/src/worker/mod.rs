@@ -26,7 +26,7 @@ use tokio::{
 use tower::limit::ConcurrencyLimitLayer;
 use uuid::Uuid;
 
-use crate::{InternalFileCall, http::*};
+use crate::{InternalFileCall, InternalSandboxCall, http::*};
 
 pub struct Worker {
     store: Store,
@@ -81,6 +81,7 @@ impl Worker {
         let auth = BearerAuth::new(&self.registration.token)?;
         Ok(Router::new()
             .route("/internal/files", post(files))
+            .route("/internal/diagnostics", post(diagnostics))
             .fallback(not_found)
             .layer(DefaultBodyLimit::max(24 * 1024 * 1024))
             .layer(ConcurrencyLimitLayer::new(16))
@@ -226,6 +227,45 @@ impl Worker {
 
 fn report(event: &str, error: &ApiError) {
     eprintln!("{}", serde_json::json!({"event":event,"error":error}));
+}
+
+async fn diagnostics(
+    State(worker): State<Arc<Worker>>,
+    ApiJson(call): ApiJson<InternalSandboxCall>,
+) -> Result<Json<SandboxDiagnostics>, HttpError> {
+    let _guard = worker.lock(call.sandbox_id).await.lock_owned().await;
+    let stored = worker.store.sandbox(call.sandbox_id).await?;
+    let profile = worker
+        .registration
+        .profiles
+        .iter()
+        .find(|profile| profile.id == stored.sandbox.profile)
+        .ok_or_else(|| {
+            ApiError::new(
+                ErrorCode::UnsupportedCapability,
+                "sandbox profile is unavailable",
+            )
+        })?;
+    require_capability(profile, Capability::Diagnostics)?;
+    let driver = worker.drivers.get(&stored.sandbox.profile).ok_or_else(|| {
+        ApiError::new(
+            ErrorCode::BackendUnavailable,
+            "worker has no driver for this profile",
+        )
+    })?;
+    let runtime = if let Some(handle) = worker.recovered_handle(&stored, driver).await? {
+        match driver.diagnostics(&handle).await {
+            Ok(sample) => Some(sample),
+            Err(error) if error.code == ErrorCode::NotFound => None,
+            Err(error) => return Err(error.into()),
+        }
+    } else {
+        None
+    };
+    Ok(Json(SandboxDiagnostics {
+        sandbox: stored.sandbox,
+        runtime,
+    }))
 }
 
 async fn files(

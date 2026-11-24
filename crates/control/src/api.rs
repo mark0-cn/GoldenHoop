@@ -15,7 +15,7 @@ use serde::Deserialize;
 use tower::limit::ConcurrencyLimitLayer;
 use uuid::Uuid;
 
-use crate::{InternalFileCall, http::*};
+use crate::{InternalFileCall, InternalSandboxCall, http::*};
 
 struct App {
     store: Store,
@@ -48,6 +48,7 @@ pub fn router(store: Store, token: &str) -> Result<Router, ApiError> {
         .route("/v1/sandboxes/{id}", get(inspect).delete(terminate))
         .route("/v1/sandboxes/{id}/pause", post(pause))
         .route("/v1/sandboxes/{id}/resume", post(resume))
+        .route("/v1/sandboxes/{id}/diagnostics", get(diagnostics))
         .route("/v1/sandboxes/{id}/commands", post(command))
         .route("/v1/executions/{id}", get(execution))
         .route("/v1/executions/{id}/cancel", post(cancel))
@@ -327,6 +328,48 @@ async fn file_call(
     sandbox_id: Uuid,
     request: AgentRequest,
 ) -> Result<AgentResponse, ApiError> {
+    worker_call(
+        app,
+        "internal/files",
+        &InternalFileCall {
+            sandbox_id,
+            request,
+        },
+    )
+    .await
+}
+
+async fn diagnostics(
+    State(app): State<AppState>,
+    ApiPath(id): ApiPath<Uuid>,
+) -> Result<Json<SandboxDiagnostics>, HttpError> {
+    app.store.sandbox(id).await?;
+    let sample: SandboxDiagnostics = worker_call(
+        &app,
+        "internal/diagnostics",
+        &InternalSandboxCall { sandbox_id: id },
+    )
+    .await?;
+    if sample.sandbox.id != id
+        || sample
+            .runtime
+            .as_ref()
+            .is_some_and(|runtime| runtime.sandbox_id != id)
+    {
+        return Err(ApiError::new(
+            ErrorCode::BackendUnavailable,
+            "runtime diagnostics identity mismatch",
+        )
+        .into());
+    }
+    Ok(Json(sample))
+}
+
+async fn worker_call<T: serde::de::DeserializeOwned>(
+    app: &App,
+    route: &str,
+    request: &(impl serde::Serialize + Sync),
+) -> Result<T, ApiError> {
     let worker = app.store.worker().await?;
     let endpoint = reqwest::Url::parse(&worker.endpoint).map_err(|_| {
         ApiError::new(
@@ -352,14 +395,11 @@ async fn file_call(
         .worker_client
         .post(
             endpoint
-                .join("internal/files")
+                .join(route)
                 .map_err(|_| ApiError::new(ErrorCode::Internal, "invalid internal route"))?,
         )
         .bearer_auth(&worker.token)
-        .json(&InternalFileCall {
-            sandbox_id,
-            request,
-        })
+        .json(request)
         .send()
         .await
         .map_err(|_| {

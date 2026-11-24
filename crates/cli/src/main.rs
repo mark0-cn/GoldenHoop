@@ -51,6 +51,9 @@ enum Command {
     Get {
         id: Uuid,
     },
+    Diagnostics {
+        id: Uuid,
+    },
     Delete {
         id: Uuid,
         #[arg(long)]
@@ -161,6 +164,7 @@ async fn run(args: Args) -> CliResult<u8> {
             print_json(&created)?;
         }
         Command::Get { id } => print_json(&client.sandbox(id).await?)?,
+        Command::Diagnostics { id } => print_json(&client.diagnostics(id).await?)?,
         Command::List { after, limit } => print_json(&client.list(after, limit).await?)?,
         Command::Delete {
             id,

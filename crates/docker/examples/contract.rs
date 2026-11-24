@@ -165,6 +165,9 @@ async fn contract(
         );
     }
     assert_eq!(driver.inspect(&handle).await?.state, ObservedState::Running);
+    let diagnostics = driver.diagnostics(&handle).await?;
+    assert_eq!(diagnostics.running, Some(true));
+    assert!(diagnostics.usage.as_ref().unwrap().memory_bytes.unwrap() > 0);
     assert_eq!(
         driver.create(&record, &request).await?.backend_ref,
         handle.backend_ref
@@ -223,9 +226,16 @@ async fn contract(
         stranger.remove(&handle).await.unwrap_err().code,
         ErrorCode::Forbidden
     );
+    assert_eq!(
+        stranger.diagnostics(&handle).await.unwrap_err().code,
+        ErrorCode::Forbidden
+    );
     assert_eq!(driver.inspect(&handle).await?.state, ObservedState::Running);
     eprintln!("contract phase: pause, create retry and resume");
     driver.pause(&handle).await?;
+    let paused = driver.diagnostics(&handle).await?;
+    assert_eq!(paused.paused, Some(true));
+    assert!(paused.usage.is_none());
     assert_eq!(
         driver.create(&record, &request).await?.backend_ref,
         handle.backend_ref
@@ -263,7 +273,7 @@ async fn contract(
     );
     Ok(
         serde_json::json!({"suite":"docker-driver-contract", "profile":profile,"result":"passed",
-        "cases":["explicit_runc_opt_in","actual_runtime_smoke","static_agent_in_foreign_image","image_healthcheck_disabled","image_environment_cleared","literal_execution_and_terminal_events","binary_files","idempotent_create","worker_restart_discovery","ownership_refusal","pause_resume","create_conflict","confirmed_repeat_delete","paused_absolute_expiry"]}),
+        "cases":["explicit_runc_opt_in","actual_runtime_smoke","static_agent_in_foreign_image","image_healthcheck_disabled","image_environment_cleared","literal_execution_and_terminal_events","binary_files","idempotent_create","worker_restart_discovery","ownership_refusal","pause_resume","create_conflict","confirmed_repeat_delete","paused_absolute_expiry","actual_runtime_metrics_and_ownership"]}),
     )
 }
 

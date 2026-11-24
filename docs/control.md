@@ -42,6 +42,7 @@ All requests require `Authorization: Bearer <token>`. JSON DTO schemas are in sp
 | GET | /v1/sandboxes?after=UUID&limit=100 | Stable UUID-ordered page, limit 1-1000 |
 | GET / DELETE | /v1/sandboxes/{id} | Sandbox / 202 termination operation |
 | POST | /v1/sandboxes/{id}/pause or /resume | 202 operation |
+| GET | /v1/sandboxes/{id}/diagnostics | Durable state, actual runtime flags and optional cgroup usage |
 | POST | /v1/sandboxes/{id}/commands | 202 execution, literal argv |
 | GET | /v1/executions/{id} | Current durable execution result |
 | POST | /v1/executions/{id}/cancel | Persisted cancellation intent |
@@ -53,6 +54,8 @@ All requests require `Authorization: Bearer <token>`. JSON DTO schemas are in sp
 | GET | /v1/sandboxes/{id}/directories?path=... | Workspace directory entries |
 
 Typed errors distinguish invalid input, authentication, forbidden access, conflict/state, unsupported capabilities, quotas and unavailable backends. Public errors do not expose raw runtime payloads. Input decoding failures use the same error envelope.
+
+Diagnostics use a separately authenticated private worker route; they never forward a workload-supplied RPC method. See [sampling and missing-data semantics](diagnostics.md).
 
 ## Execution and recovery
 

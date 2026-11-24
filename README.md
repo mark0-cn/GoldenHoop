@@ -4,7 +4,7 @@ A Rust agent sandbox platform with explicit runtime capabilities, independent AP
 
 ## Project status
 
-**M0 is implemented; M1 is in progress. The agent, Docker driver and independent API/worker pass actual runc/gVisor contracts. Rust/Python SDKs and the Rust CLI pass the local API loop; their gVisor CI gate is next.**
+**M0-M1 are implemented and verified; M2 is in progress. The agent, driver, API/worker, Rust/Python SDKs and Rust CLI pass actual runc/gVisor contracts. Live runtime diagnostics are implemented and locally tested; their expanded gVisor gate is next.**
 
 The full target includes local containers, Firecracker microVMs, and Kubernetes; command and file execution; terminals and code contexts; network policy and credential brokering; snapshots, templates, warm pools, batches, and diagnostics.
 
@@ -25,6 +25,7 @@ Runtime support is declared per profile and checked against the host. Missing is
 - [Local Docker driver and expiration worker](docs/docker.md)
 - [Run the authenticated API and runtime worker](docs/control.md)
 - [Rust/Python SDKs and client CLI](docs/clients.md)
+- [Runtime diagnostics](docs/diagnostics.md)
 - [中文说明](README.zh-CN.md)
 
 ## License

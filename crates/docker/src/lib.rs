@@ -620,7 +620,7 @@ impl DockerDriver {
         .map_err(|_| unavailable("agent bridge timed out"))?
     }
 
-    async fn smoke_test(&self) -> Result<(), ApiError> {
+    async fn smoke_test(&self) -> Result<bool, ApiError> {
         let info = self.docker.info().await.map_err(backend)?;
         if info.os_type.as_deref() != Some("linux")
             || !matches!(info.architecture.as_deref(), Some("x86_64" | "amd64"))
@@ -676,11 +676,13 @@ impl DockerDriver {
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
             if !completed { return Err(unavailable("runtime command smoke test did not finish")); }
+            let diagnostic_support = self.diagnostics(&handle).await.ok().and_then(|sample|sample.usage)
+                .is_some_and(|usage| usage.cpu_time_ns.is_some() && usage.memory_bytes.is_some() && usage.host_tasks.is_some());
             self.docker.pause_container(&handle.backend_ref).await.map_err(backend)?;
             if self.inspect(&handle).await?.state != ObservedState::Paused { return Err(unavailable("runtime pause was not observed")); }
             self.docker.unpause_container(&handle.backend_ref).await.map_err(backend)?;
             self.bridge(&handle, &AgentRequest::Ping).await?;
-            Ok(())
+            Ok(diagnostic_support)
         }.await;
         self.remove(&handle).await?;
         outcome
@@ -807,7 +809,7 @@ impl RuntimeDriver for DockerDriver {
         };
         let mut profile = self.profile.write().await;
         match result {
-            Ok(()) => {
+            Ok(diagnostic_support) => {
                 profile.availability = Availability::Available;
                 profile.capabilities = [
                     Capability::Commands,
@@ -817,6 +819,9 @@ impl RuntimeDriver for DockerDriver {
                 ]
                 .into_iter()
                 .collect();
+                if diagnostic_support {
+                    profile.capabilities.insert(Capability::Diagnostics);
+                }
                 profile.reason = None;
             }
             Err(error) => {
@@ -882,6 +887,81 @@ impl RuntimeDriver for DockerDriver {
             oom_killed: value.oom_killed,
             observed_at: Utc::now(),
         })
+    }
+
+    async fn diagnostics(&self, handle: &RuntimeHandle) -> Result<RuntimeDiagnostics, ApiError> {
+        let observed = self
+            .owned(handle)
+            .await?
+            .ok_or_else(|| ApiError::new(ErrorCode::NotFound, "owned runtime is absent"))?;
+        let canonical = observed
+            .id
+            .ok_or_else(|| unavailable("runtime identity is absent"))?;
+        let state = observed.state.unwrap_or_default();
+        let mut sample = RuntimeDiagnostics {
+            sandbox_id: handle.sandbox_id,
+            observed_at: Utc::now(),
+            running: state.running,
+            paused: state.paused,
+            exit_code: if matches!(
+                state.status,
+                Some(ContainerStateStatusEnum::EXITED | ContainerStateStatusEnum::DEAD)
+            ) {
+                state.exit_code
+            } else {
+                None
+            },
+            oom_killed: state.oom_killed,
+            usage: None,
+            usage_error: None,
+        };
+        if state.running != Some(true) || state.paused == Some(true) {
+            return Ok(sample);
+        }
+        let fetch = async {
+            let mut stats = self.docker.stats(
+                &canonical,
+                Some(
+                    StatsOptionsBuilder::default()
+                        .stream(false)
+                        .one_shot(true)
+                        .build(),
+                ),
+            );
+            let stats = stats
+                .next()
+                .await
+                .ok_or_else(|| unavailable("runtime metrics stream ended without a sample"))?
+                .map_err(backend)?;
+            if stats.id.as_deref() != Some(canonical.as_str()) {
+                return Err(unavailable("runtime metrics identity mismatch"));
+            }
+            let sampled_at = stats
+                .read
+                .as_ref()
+                .and_then(|value| chrono::DateTime::parse_from_rfc3339(&value.to_string()).ok())
+                .filter(|time| time.timestamp() > 0)
+                .ok_or_else(|| unavailable("runtime metrics timestamp is absent"))?
+                .with_timezone(&Utc);
+            Ok(ResourceUsage {
+                sampled_at,
+                cpu_time_ns: stats
+                    .cpu_stats
+                    .and_then(|cpu| cpu.cpu_usage)
+                    .and_then(|usage| usage.total_usage),
+                memory_bytes: stats.memory_stats.and_then(|memory| memory.usage),
+                host_tasks: stats.pids_stats.and_then(|pids| pids.current),
+            })
+        };
+        match tokio::time::timeout(Duration::from_secs(5), fetch).await {
+            Ok(Ok(usage)) => sample.usage = Some(usage),
+            Ok(Err(error)) => sample.usage_error = Some(error),
+            Err(_) => {
+                sample.usage_error =
+                    Some(unavailable("runtime metrics request exceeded its deadline"))
+            }
+        }
+        Ok(sample)
     }
 
     async fn remove(&self, handle: &RuntimeHandle) -> Result<(), ApiError> {

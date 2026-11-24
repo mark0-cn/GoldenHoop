@@ -9,3 +9,9 @@ pub struct InternalFileCall {
     pub sandbox_id: uuid::Uuid,
     pub request: goldenhoop_protocol::AgentRequest,
 }
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InternalSandboxCall {
+    pub sandbox_id: uuid::Uuid,
+}

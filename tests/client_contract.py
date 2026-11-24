@@ -24,6 +24,7 @@ def sync_contract():
         assert any(p["id"] == REQUEST.profile and p["availability"] == "available" for p in client.profiles())
         with client.lease(REQUEST) as sandbox:
             sid = sandbox.id
+            assert client.diagnostics(sid)["runtime"]["usage"]["memory_bytes"] > 0
             assert any(v["id"] == sid for v in client.list()["items"])
             client.write_file(sid, "python.bin", BINARY)
             assert client.read_file(sid, "python.bin") == BINARY
@@ -63,6 +64,7 @@ def sync_contract():
                 client.wait_operation(action(sid, str(uuid4()))["id"])
             client.remove_file(sid, "python.bin")
         assert client.sandbox(sid)["cleanup"] == "complete"
+        assert client.diagnostics(sid)["runtime"] is None
         # Exceptions in caller code must also receive confirmed context cleanup.
         failed_id = None
         try:
@@ -79,6 +81,7 @@ async def async_contract():
     async with AsyncClient(ENDPOINT, TOKEN) as client:
         async with client.lease(REQUEST) as sandbox:
             sid = sandbox.id
+            assert (await client.diagnostics(sid))["runtime"]["usage"]["memory_bytes"] > 0
             await client.write_file(sid, "async.bin", BINARY)
             assert await client.read_file(sid, "async.bin") == BINARY
             result = await client.run(sid, Command(["printf", "%s", "async literal"]))
@@ -96,6 +99,7 @@ async def async_contract():
             await client.cancel(execution["id"])
             assert (await client.wait_execution(execution["id"]))["state"] == "cancelled"
         assert (await client.sandbox(sid))["cleanup"] == "complete"
+        assert (await client.diagnostics(sid))["runtime"] is None
         # Cancellation of the lease's owner still runs explicit cleanup.
         created = asyncio.Event()
         cancellation_id = None
@@ -127,6 +131,7 @@ def cli_contract(binary):
     sid = created["sandbox"]["id"]
     try:
         assert json.loads(invoke("get", sid))["state"] == "running"
+        assert json.loads(invoke("diagnostics", sid))["runtime"]["usage"]["memory_bytes"] > 0
         assert invoke("exec", sid, "--", "printf", "%s", "$HOME; echo literal") == b"$HOME; echo literal"
         result = json.loads(invoke("exec", sid, "--json", "--", "python3", "-c", "import os;os.write(1,b'\\x00\\xff');raise SystemExit(23)", expected=23))
         assert base64.b64decode(result["stdout_base64"]) == b"\x00\xff"

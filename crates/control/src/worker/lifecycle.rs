@@ -1,7 +1,7 @@
 use super::*;
 
 impl Worker {
-    async fn recovered_handle(
+    pub(super) async fn recovered_handle(
         &self,
         stored: &StoredSandbox,
         driver: &DockerDriver,

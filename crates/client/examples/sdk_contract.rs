@@ -8,6 +8,15 @@ use uuid::Uuid;
 async fn exercise(client: &Client, id: Uuid) -> Result<()> {
     assert!(
         client
+            .diagnostics(id)
+            .await?
+            .runtime
+            .unwrap()
+            .usage
+            .is_some()
+    );
+    assert!(
+        client
             .list(None, 100)
             .await?
             .items
@@ -153,6 +162,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     lease.close().await?;
     lease.close().await?;
     assert_eq!(client.sandbox(id).await?.cleanup, CleanupState::Complete);
+    assert!(client.diagnostics(id).await?.runtime.is_none());
     match result {
         Ok(result) => result??,
         Err(panic) => std::panic::resume_unwind(panic),

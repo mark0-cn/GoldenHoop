@@ -208,6 +208,18 @@ impl Client {
         }
         Ok(value)
     }
+    pub async fn diagnostics(&self, id: Uuid) -> Result<SandboxDiagnostics> {
+        let value: SandboxDiagnostics = self.get(&format!("v1/sandboxes/{id}/diagnostics")).await?;
+        if value.sandbox.id != id
+            || value
+                .runtime
+                .as_ref()
+                .is_some_and(|runtime| runtime.sandbox_id != id)
+        {
+            return Err(Error::Protocol("diagnostics identity mismatch"));
+        }
+        Ok(value)
+    }
     pub async fn list(&self, after: Option<Uuid>, limit: u32) -> Result<SandboxPage> {
         let mut path = format!("v1/sandboxes?limit={limit}");
         if let Some(id) = after {
