@@ -7,6 +7,7 @@ import os
 import secrets
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import time
 import uuid
@@ -333,6 +334,23 @@ class Contract:
         assert self.request("GET", f"/v1/sandboxes/{self.primary}")["cleanup"] == "complete"
         assert not docker("ps", "-a", "--filter", f"label=dev.goldenhoop.sandbox={self.primary}", "--format", "{{.ID}}")
 
+    def actual_sdk_and_cli_contracts(self):
+        root = Path(__file__).resolve().parents[1]
+        environment = dict(os.environ)
+        environment.update({"GOLDENHOOP_ENDPOINT": self.base, "GOLDENHOOP_API_TOKEN": self.token,
+                            "GOLDENHOOP_TEST_PROFILE": "local-gvisor" if self.args.runtime == "runsc" else "local-runc-dev",
+                            "GOLDENHOOP_TEST_IMAGE": self.args.image,
+                            "GOLDENHOOP_TEST_DIRECTORY": str(self.root),
+                            "PYTHONPATH": str(root / "sdk" / "python" / "src")})
+        self.sdk_results = []
+        for command in ([str(Path(self.args.rust_client).resolve())],
+                        [sys.executable, "-B", str(root / "tests" / "client_contract.py"), "--cli", str(Path(self.args.cli).resolve())]):
+            result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8",
+                                    env=environment, timeout=180,
+                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            assert result.returncode == 0, (command, result.stdout, result.stderr)
+            self.sdk_results.append(json.loads(result.stdout))
+
     def pid_pressure_is_bounded_and_cleanup_is_confirmed(self):
         created = self.create(ttl=90, memory=1073741824)
         identity = created["sandbox"]["id"]
@@ -440,19 +458,28 @@ assert not alive,alive
         try:
             self.launch("api")
             self.launch("worker")
-            for name in ("authentication_and_profile_refusal", "lifecycle_commands_files_and_events",
+            cases = ("authentication_and_profile_refusal", "lifecycle_commands_files_and_events",
                          "observer_disconnect_and_resume", "command_failure_timeout_cancel_and_idempotency",
                          "worker_restart_retains_runtime_and_executes_once",
                          "api_restart_keeps_results_and_private_worker_route_is_restricted",
                          "paused_expiry_continues_while_api_is_down",
                          "pid_pressure_is_bounded_and_cleanup_is_confirmed",
-                         "failed_provision_and_repeat_delete_confirm_cleanup"):
+                         "failed_provision_and_repeat_delete_confirm_cleanup")
+            for name in (() if self.args.clients_only else cases):
                 self.check(name, getattr(self, name))
+            if self.args.rust_client and self.args.cli:
+                self.check("actual_sdk_and_cli_contracts", self.actual_sdk_and_cli_contracts)
             root = Path(__file__).resolve().parents[1]
             sources = [root / "Cargo.toml", root / "Cargo.lock", Path(__file__).resolve()]
             sources.extend((root / "crates").rglob("*.rs"))
             sources.extend((root / "crates").rglob("*.sql"))
             sources.extend((root / "crates").rglob("Cargo.toml"))
+            if self.args.rust_client:
+                sources.extend((root / "sdk").rglob("*.py"))
+                sources.extend((root / "sdk").rglob("pyproject.toml"))
+                sources.append(root / "tests" / "client_contract.py")
+                evidence["client_binary_sha256"] = {name: hashlib.sha256(Path(path).read_bytes()).hexdigest()
+                                                     for name, path in (("rust", self.args.rust_client), ("cli", self.args.cli))}
             evidence["source_files_sha256"] = {p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(sources)}
             with Path(self.args.binary).open("rb") as binary:
                 evidence["binary_sha256"] = hashlib.file_digest(binary, "sha256").hexdigest()
@@ -484,6 +511,7 @@ assert not alive,alive
                 failure = failure or error
             evidence["expiry_cleanup_seconds"] = getattr(self, "expiry_cleanup_seconds", None)
             evidence["pid_pressure"] = getattr(self, "pid_pressure", None)
+            evidence["sdk_results"] = getattr(self, "sdk_results", None)
             rendered = json.dumps(evidence, indent=2)
             print(rendered, flush=True)
             if self.args.output:
@@ -500,4 +528,12 @@ if __name__ == "__main__":
     parser.add_argument("--runtime", choices=("runc", "runsc"), default="runc")
     parser.add_argument("--work-dir", default=".test-work")
     parser.add_argument("--output")
-    Contract(parser.parse_args()).run()
+    parser.add_argument("--rust-client")
+    parser.add_argument("--cli")
+    parser.add_argument("--clients-only", action="store_true")
+    arguments = parser.parse_args()
+    if bool(arguments.rust_client) != bool(arguments.cli):
+        parser.error("--rust-client and --cli must be supplied together")
+    if arguments.clients_only and not arguments.rust_client:
+        parser.error("--clients-only requires --rust-client and --cli")
+    Contract(arguments).run()

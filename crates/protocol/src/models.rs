@@ -133,6 +133,20 @@ pub struct CreateSandbox {
     pub metadata: BTreeMap<String, String>,
 }
 
+impl CreateSandbox {
+    pub fn new(profile: impl Into<String>, image: impl Into<String>) -> Self {
+        Self {
+            profile: profile.into(),
+            image: image.into(),
+            resources: ResourceLimits::default(),
+            ttl_seconds: default_ttl(),
+            required_capabilities: BTreeSet::new(),
+            network: NetworkPolicy::default(),
+            metadata: BTreeMap::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SandboxState {
@@ -229,6 +243,18 @@ pub struct CommandSpec {
     pub timeout_seconds: u64,
     #[serde(default = "default_output_limit")]
     pub max_output_bytes: u64,
+}
+
+impl CommandSpec {
+    pub fn new(argv: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        Self {
+            argv: argv.into_iter().map(Into::into).collect(),
+            cwd: default_cwd(),
+            env: BTreeMap::new(),
+            timeout_seconds: default_command_timeout(),
+            max_output_bytes: default_output_limit(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]

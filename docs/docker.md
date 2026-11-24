@@ -12,6 +12,8 @@ CPU, RAM and PIDs are bounded. The agent requires at least 64 MiB and 16 PIDs. W
 
 Resource budgets apply to the whole runtime cgroup, including supervisor/runtime overhead. `pids` is a host task budget, not a promise of that many guest processes. gVisor represents guest tasks with goroutines and, depending on its platform, additional host threads/address-space stubs; see its [resource model](https://gvisor.dev/docs/architecture_guide/resources/). Runtime-specific overhead can exhaust a host task budget before a guest reaches the same process count. An observed unexpected runtime exit records its exit code and Docker OOM flag before removal; an absent flag is not evidence of an OOM.
 
+Hard task pressure can also terminate the gVisor runtime itself. In the 128-task/1-GiB [actual CI case](evidence/ci-45333147552/agent-runsc/api-runsc.json), Docker recorded exit code 2 with OOMKilled=false. The worker reported execution failure and confirmed whole-sandbox removal. This is a resource-exhaustion failure, not graceful guest fork refusal or successful command cancellation. Do not size a task budget as if it excluded runtime overhead.
+
 ## Expiration and cleanup
 
 Run `goldenhoop-reaper --installation-id <uuid>` as an independent host service alongside the control service. It scans both local profiles and removes expired containers even when paused or when the API is unavailable. It also collects expired bootstrap containers. The scan interval defaults to one second; enforcement is subject to host/daemon availability and scan delay. A daemon error is reported as unconfirmed cleanup, never as successful removal.
