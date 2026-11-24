@@ -1,6 +1,6 @@
 # Interactive sessions
 
-The agent, durable metadata, public REST, reconnectable WebSocket, worker and Rust SDK have passed actual runc/gVisor CI. Python sync/async SDK and CLI session bindings now also pass the local 16-case API/client suite; their expanded CI is pending. Code contexts and isolated child sandboxes remain in progress. This does not mark M2 complete.
+The agent, durable metadata, public REST, reconnectable WebSocket, worker, Rust SDK, Python sync/async SDK and CLI have passed actual runc/gVisor CI. The expanded S3-compatible API/client suite also passes on Linux. Code contexts and isolated child sandboxes remain in progress. This does not mark M2 complete.
 
 SessionSpec describes an actual long-lived process with literal argv and an optional terminal size. A pipe shell such as /bin/sh retains its own variables and working directory across input writes. Its lifetime shares the normal command executor: one active command/session holds the workload identity, and subsequent commands wait. File RPCs remain independent. Multiple concurrent processes requiring separate cleanup boundaries belong to isolated child sandboxes, a later M2 increment.
 

@@ -16,4 +16,4 @@
 
 制品保留、下载、恢复与清理语义见 [制品说明](docs/artifacts.md)。
 
-持久 shell、真实 PTY、终端重连与输入确认见 [会话说明](docs/sessions.md)。公开接口与 Rust SDK 已通过实际 runc/gVisor CI；Python 同步/异步 SDK 和 CLI 的会话功能已通过本地实测，扩展 CI 待验证。
+持久 shell、真实 PTY、终端重连与输入确认见 [会话说明](docs/sessions.md)。公开接口、Rust SDK、Python 同步/异步 SDK 和 CLI 已通过实际 runc/gVisor 与 S3 兼容后端 CI。代码上下文与隔离子沙箱仍在实现中，见 [代码上下文计划](docs/code-contexts.md)。
