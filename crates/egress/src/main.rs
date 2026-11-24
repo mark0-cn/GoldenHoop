@@ -1,8 +1,8 @@
 #[cfg(target_os = "linux")]
 mod server {
-    use goldenhoop_egress::{Allocation, Config, Manager, Observation};
+    use goldenhoop_egress::{Allocation, Config, Manager, Observation, Resolution};
     use goldenhoop_protocol::{ApiError, ErrorCode};
-    use serde::Deserialize;
+    use serde::{Deserialize, Serialize};
     use serde_json::json;
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
@@ -33,15 +33,35 @@ mod server {
             expected_revision: u64,
         },
         Inspect,
+        EnableDns {
+            expected_revision: u64,
+            upstream: std::net::SocketAddr,
+            remaining_seconds: u16,
+        },
+        Resolve {
+            wire: Vec<u8>,
+            #[serde(default)]
+            tcp: bool,
+        },
+        DnsSource {
+            name: String,
+            #[serde(default)]
+            aaaa: bool,
+        },
         Remove {
             expected_revision: u64,
         },
     }
 
-    async fn execute(
-        manager: &mut Option<Manager>,
-        request: Request,
-    ) -> Result<Observation, ApiError> {
+    #[derive(Serialize)]
+    #[serde(untagged)]
+    enum Reply {
+        State(Observation),
+        Dns(Resolution),
+        Source(serde_json::Value),
+    }
+
+    async fn execute(manager: &mut Option<Manager>, request: Request) -> Result<Reply, ApiError> {
         if let Request::Open { allocation } = request {
             if manager.is_some() {
                 return Err(ApiError::new(
@@ -52,12 +72,27 @@ mod server {
             let opened = Manager::new(allocation)?;
             let observed = opened.inspect().await?;
             *manager = Some(opened);
-            return Ok(observed);
+            return Ok(Reply::State(observed));
         }
         let manager = manager.as_mut().ok_or_else(|| {
             ApiError::new(ErrorCode::InvalidState, "open a trusted allocation first")
         })?;
         match request {
+            Request::Resolve { wire, tcp } => {
+                return manager.resolve(&wire, tcp).await.map(Reply::Dns);
+            }
+            Request::DnsSource { name, aaaa } => {
+                return manager.dns_source(&name, aaaa).await.map(Reply::Source);
+            }
+            Request::EnableDns {
+                expected_revision,
+                upstream,
+                remaining_seconds,
+            } => {
+                manager
+                    .enable_dns(expected_revision, upstream, remaining_seconds)
+                    .await
+            }
             Request::Install => manager.install().await,
             Request::Apply {
                 expected_revision,
@@ -71,6 +106,7 @@ mod server {
             Request::Remove { expected_revision } => manager.remove(expected_revision).await,
             Request::Open { .. } => unreachable!("handled above"),
         }
+        .map(Reply::State)
     }
 
     pub async fn run() -> Result<(), Box<dyn std::error::Error>> {

@@ -187,3 +187,64 @@ fn transport_shape_is_validated_and_empty_operator_cap_means_no_floor() {
         A::Allow
     );
 }
+
+#[test]
+fn authenticated_name_sources_respect_address_denies_operator_authority_and_tcp_floor() {
+    let p = model(
+        A::Deny,
+        vec![
+            rule("good.test", &[], A::Allow),
+            rule("192.0.2.0/24", &[], A::Deny),
+        ],
+    );
+    let allowed = packet("198.51.100.1", Transport::Tcp, Some(443));
+    assert_eq!(p.address_candidate(&allowed).action, A::Deny);
+    assert_eq!(
+        p.leased_address_candidate(&allowed, DecisionOrigin::UserAgreement)
+            .unwrap()
+            .action,
+        A::Allow
+    );
+    assert_eq!(
+        p.leased_address_candidate(
+            &packet("192.0.2.1", Transport::Tcp, Some(443)),
+            DecisionOrigin::UserAgreement
+        )
+        .unwrap()
+        .action,
+        A::Deny
+    );
+    assert!(
+        p.leased_address_candidate(&allowed, DecisionOrigin::DenyAlways(0))
+            .is_err()
+    );
+    let overlay = Overlays::compile(
+        &[rule("127.0.0.0/8", &[], A::Deny)],
+        &[rule("good.test", &[], A::Allow)],
+        Some(&[443]),
+    )
+    .unwrap();
+    let p = Model::new(
+        vec![policy(A::Deny, vec![rule("*", &[], A::Deny)])],
+        overlay,
+    )
+    .unwrap();
+    let origin = p.dns_candidate(&Domain::parse("good.test").unwrap()).origin;
+    assert_eq!(origin, DecisionOrigin::AllowAlways(0));
+    assert_eq!(
+        p.leased_address_candidate(&allowed, origin).unwrap().action,
+        A::Allow
+    );
+    assert_eq!(
+        p.leased_address_candidate(&packet("127.0.0.1", Transport::Tcp, Some(443)), origin)
+            .unwrap()
+            .origin,
+        DecisionOrigin::DenyAlways(0)
+    );
+    assert_eq!(
+        p.leased_address_candidate(&packet("198.51.100.1", Transport::Tcp, Some(80)), origin)
+            .unwrap()
+            .origin,
+        DecisionOrigin::PortFloor
+    );
+}

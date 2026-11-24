@@ -1,4 +1,4 @@
-use crate::error;
+use crate::{dns::SetNames, error};
 use goldenhoop_policy::{Destination, Overlays, Policy, Rule};
 use goldenhoop_protocol::{ApiError, ErrorCode, NetworkAction, NetworkPolicy, NetworkRule};
 use serde::{Deserialize, Serialize};
@@ -67,6 +67,28 @@ pub struct Config {
     pub tcp_cap: Option<Vec<u16>>,
 }
 
+impl Config {
+    pub fn model(&self) -> Result<goldenhoop_policy::Model, ApiError> {
+        if self.policies.is_empty() || self.policies.len() > 5 {
+            return Err(error(
+                ErrorCode::InvalidRequest,
+                "egress requires one to five policy levels",
+            ));
+        }
+        goldenhoop_policy::Model::new(
+            self.policies
+                .iter()
+                .map(Policy::compile)
+                .collect::<Result<Vec<_>, _>>()?,
+            Overlays::compile(
+                &self.deny_always,
+                &self.allow_always,
+                self.tcp_cap.as_deref(),
+            )?,
+        )
+    }
+}
+
 pub struct Plan {
     pub(crate) allocation: Allocation,
     pub(crate) revision: u64,
@@ -91,47 +113,111 @@ impl Plan {
         revision: u64,
         config: &Config,
     ) -> Result<Self, ApiError> {
+        Self::compile_mode(allocation, revision, config, None)
+    }
+
+    /// Explicit trusted DNS mode; callers must provide the concrete installer.
+    pub fn compile_with_dns(
+        allocation: Allocation,
+        revision: u64,
+        config: &Config,
+    ) -> Result<Self, ApiError> {
+        Self::compile_mode(allocation, revision, config, Some(SetNames::bootstrap()))
+    }
+
+    fn compile_mode(
+        allocation: Allocation,
+        revision: u64,
+        config: &Config,
+        dns: Option<SetNames>,
+    ) -> Result<Self, ApiError> {
         allocation.validate()?;
-        if config.policies.is_empty() || config.policies.len() > 5 {
-            return Err(error(
-                ErrorCode::InvalidRequest,
-                "egress requires one to five policy levels",
-            ));
-        }
-        // Validate operator authority before rendering any command.
-        Overlays::compile(
-            &config.deny_always,
-            &config.allow_always,
-            config.tcp_cap.as_deref(),
-        )?;
-        let policies = config
-            .policies
-            .iter()
-            .map(Policy::compile)
-            .collect::<Result<Vec<_>, _>>()?;
-        let compile_overlay = |rules: &[NetworkRule]| {
-            Policy::compile(&NetworkPolicy {
-                default_action: NetworkAction::Deny,
-                rules: rules.to_vec(),
-            })
-        };
-        let deny = compile_overlay(&config.deny_always)?;
-        let allow = compile_overlay(&config.allow_always)?;
+        config.model()?;
         let mut p = Self {
             allocation,
             revision,
             batch: String::new(),
         };
         p.base();
+        if let Some(names) = &dns {
+            p.batch.push_str(&names.declarations(&p.allocation)?);
+        }
         p.line("add chain", "decision");
         p.line("add rule", "guard iifname @live jump decision");
         p.line("add rule", "guard counter drop");
-        if let Some(ports) = config.tcp_cap.as_ref().filter(|v| !v.is_empty()) {
+        p.decisions(config, dns.as_ref(), true)?;
+        p.line(
+            "add element",
+            &format!(
+                "live {{ \"{}\" timeout {LEASE_SECONDS}s }}",
+                p.allocation.bridge
+            ),
+        );
+        p.bounded()?;
+        Ok(p)
+    }
+
+    /// Swap chain references in one batch. Existing timed elements and the
+    /// trusted controller's live set are never recreated or renewed here.
+    pub fn activate_dns(
+        allocation: Allocation,
+        revision: u64,
+        config: &Config,
+        old: &SetNames,
+        new: &SetNames,
+    ) -> Result<Self, ApiError> {
+        allocation.validate()?;
+        config.model()?;
+        let token = new
+            .token()
+            .filter(|token| Some(*token) != old.token())
+            .ok_or_else(|| error(ErrorCode::InvalidRequest, "invalid DNS activation token"))?;
+        let mut p = Self {
+            allocation,
+            revision,
+            batch: String::new(),
+        };
+        p.line("flush chain", "decision");
+        for level in 0..config.policies.len() {
+            p.line("flush chain", &format!("level_{level}"));
+        }
+        p.decisions(config, Some(new), false)?;
+        if let Some(previous) = old.token() {
+            p.line("delete chain", &format!("dns_txn_{}", previous.simple()));
+        }
+        p.line("add chain", &format!("dns_txn_{}", token.simple()));
+        for (name, _, _) in old.entries() {
+            p.line("delete set", name);
+        }
+        p.bounded()?;
+        Ok(p)
+    }
+
+    fn decisions(
+        &mut self,
+        config: &Config,
+        dns: Option<&SetNames>,
+        create: bool,
+    ) -> Result<(), ApiError> {
+        let policies = config
+            .policies
+            .iter()
+            .map(Policy::compile)
+            .collect::<Result<Vec<_>, _>>()?;
+        let overlay = |rules: &[NetworkRule]| {
+            Policy::compile(&NetworkPolicy {
+                default_action: NetworkAction::Deny,
+                rules: rules.to_vec(),
+            })
+        };
+        let deny = overlay(&config.deny_always)?;
+        let allow = overlay(&config.allow_always)?;
+        if let Some(ports) = config.tcp_cap.as_ref().filter(|p| !p.is_empty()) {
             let ports = ports
                 .iter()
                 .copied()
                 .collect::<std::collections::BTreeSet<_>>();
-            p.line(
+            self.line(
                 "add rule",
                 &format!(
                     "decision meta l4proto tcp tcp dport != {{ {} }} counter drop",
@@ -140,49 +226,75 @@ impl Plan {
             );
         }
         for rule in deny.rules() {
-            p.rule("decision", rule, "drop")?;
+            self.rule("decision", rule, "drop", dns.is_some())?;
         }
         for rule in allow.rules() {
-            p.rule("decision", rule, "accept")?;
+            self.rule("decision", rule, "accept", dns.is_some())?;
+        }
+        if let Some(names) = dns {
+            self.line(
+                "add rule",
+                &format!("decision ip daddr @{} counter accept", names.operator_v4()),
+            );
+            self.line(
+                "add rule",
+                &format!("decision ip6 daddr @{} counter accept", names.operator_v6()),
+            );
         }
         for (level, policy) in policies.iter().enumerate() {
             let chain = format!("level_{level}");
-            p.line("add chain", &chain);
-            p.line("add rule", &format!("decision jump {chain}"));
+            if create {
+                self.line("add chain", &chain);
+            }
+            self.line("add rule", &format!("decision jump {chain}"));
             for rule in policy
                 .rules()
                 .iter()
                 .filter(|r| r.action() == NetworkAction::Deny)
             {
-                p.rule(&chain, rule, "drop")?;
+                self.rule(&chain, rule, "drop", dns.is_some())?;
+            }
+            if let Some(names) = dns {
+                self.line(
+                    "add rule",
+                    &format!("{chain} ip daddr @{} counter return", names.user_v4()),
+                );
+                self.line(
+                    "add rule",
+                    &format!("{chain} ip6 daddr @{} counter return", names.user_v6()),
+                );
             }
             for rule in policy
                 .rules()
                 .iter()
                 .filter(|r| r.action() == NetworkAction::Allow)
             {
-                p.rule(&chain, rule, "return")?;
+                self.rule(&chain, rule, "return", dns.is_some())?;
             }
-            let verdict = if policy.default_action() == NetworkAction::Deny {
-                "drop"
-            } else {
-                "return"
-            };
-            p.line("add rule", &format!("{chain} counter {verdict}"));
+            self.line(
+                "add rule",
+                &format!(
+                    "{chain} counter {}",
+                    if policy.default_action() == NetworkAction::Deny {
+                        "drop"
+                    } else {
+                        "return"
+                    }
+                ),
+            );
         }
-        p.line("add rule", "decision counter accept");
-        let bridge = p.allocation.bridge.clone();
-        p.line(
-            "add element",
-            &format!("live {{ \"{bridge}\" timeout {LEASE_SECONDS}s }}"),
-        );
-        if p.batch.len() > MAX_BATCH {
+        self.line("add rule", "decision counter accept");
+        Ok(())
+    }
+
+    fn bounded(&self) -> Result<(), ApiError> {
+        if self.batch.len() > MAX_BATCH {
             return Err(error(
                 ErrorCode::QuotaExceeded,
                 "compiled egress policy exceeds batch limit",
             ));
         }
-        Ok(p)
+        Ok(())
     }
 
     fn base(&mut self) {
@@ -223,7 +335,13 @@ impl Plan {
         ));
     }
 
-    fn rule(&mut self, chain: &str, rule: &Rule, verdict: &str) -> Result<(), ApiError> {
+    fn rule(
+        &mut self,
+        chain: &str,
+        rule: &Rule,
+        verdict: &str,
+        names_enabled: bool,
+    ) -> Result<(), ApiError> {
         let target = match rule.destination() {
             Destination::Any => String::new(),
             Destination::Address(ip) => {
@@ -234,6 +352,9 @@ impl Plan {
                 if net.addr().is_ipv4() { "ip" } else { "ip6" }
             ),
             Destination::Domain(_) | Destination::Subdomains(_) => {
+                if names_enabled {
+                    return Ok(());
+                }
                 return Err(error(
                     ErrorCode::UnsupportedCapability,
                     "host adapter requires static address targets until DNS lease integration",

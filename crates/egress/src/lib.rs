@@ -7,7 +7,7 @@ pub use plan::{Allocation, Config, LEASE_SECONDS, Plan};
 #[cfg(target_os = "linux")]
 mod manager;
 #[cfg(target_os = "linux")]
-pub use manager::{Manager, Observation};
+pub use manager::{Manager, Observation, Resolution};
 
 use goldenhoop_protocol::{ApiError, ErrorCode};
 

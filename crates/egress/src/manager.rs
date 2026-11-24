@@ -13,7 +13,7 @@ use std::{
     },
     path::Path,
     process::Stdio,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -22,6 +22,8 @@ use tokio::{
 
 const NFT: &str = "/usr/sbin/nft";
 const MAX_OUTPUT: u64 = 4 * 1024 * 1024;
+mod resolver;
+pub use resolver::Resolution;
 
 #[derive(Debug, Serialize)]
 pub struct Observation {
@@ -37,6 +39,8 @@ pub struct Manager {
     revision: Option<u64>,
     uncertain: bool,
     can_renew: bool,
+    lease_until: Option<Instant>,
+    dns: Option<resolver::DnsState>,
     // Abstract Unix names share the host network namespace, including across
     // containers with distinct /run mounts. Dropping the process releases it.
     _lock: UnixDatagram,
@@ -91,6 +95,8 @@ impl Manager {
             revision: None,
             uncertain: false,
             can_renew: false,
+            lease_until: None,
+            dns: None,
             _lock: lock,
         })
     }
@@ -221,6 +227,7 @@ impl Manager {
     }
 
     pub async fn apply(&mut self, expected: u64, config: &Config) -> Result<Observation, ApiError> {
+        self.check_lifetime()?;
         if self.uncertain || self.revision != Some(expected) {
             return Err(error(
                 ErrorCode::InvalidState,
@@ -230,9 +237,21 @@ impl Manager {
         let next = expected
             .checked_add(1)
             .ok_or_else(|| error(ErrorCode::Conflict, "egress revision exhausted"))?;
-        let plan = Plan::compile(self.allocation.clone(), next, config)?;
+        let model = self.dns.as_ref().map(|_| config.model()).transpose()?;
+        let plan = if self.dns.is_some() {
+            Plan::compile_with_dns(self.allocation.clone(), next, config)?
+        } else {
+            Plan::compile(self.allocation.clone(), next, config)?
+        };
         self.expected(expected).await?;
-        self.commit(plan, true, true).await
+        let observed = self.commit(plan, true, true).await?;
+        if let Some(dns) = &mut self.dns {
+            dns.model = model;
+            dns.config = Some(config.clone());
+            dns.book = Some(crate::dns::LeaseBook::new(next, dns.deadline));
+            dns.active = crate::dns::SetNames::bootstrap();
+        }
+        Ok(observed)
     }
 
     /// Recovery always replaces an owned policy with quarantine before any
@@ -242,12 +261,17 @@ impl Manager {
             .checked_add(1)
             .ok_or_else(|| error(ErrorCode::Conflict, "egress revision exhausted"))?;
         self.expected(expected).await?;
-        self.commit(
-            Plan::quarantine(self.allocation.clone(), next)?,
-            true,
-            false,
-        )
-        .await
+        let observed = self
+            .commit(
+                Plan::quarantine(self.allocation.clone(), next)?,
+                true,
+                false,
+            )
+            .await?;
+        if let Some(dns) = &mut self.dns {
+            dns.invalidate(next);
+        }
+        Ok(observed)
     }
 
     async fn commit(
@@ -263,6 +287,8 @@ impl Manager {
         batch.push_str(&plan.batch);
         self.uncertain = true;
         self.can_renew = false;
+        self.lease_until = None;
+        let started = Instant::now();
         nft(&["--file", "-"], Some(batch.as_bytes())).await?;
         let observed = self.inspect().await?;
         if observed.revision != Some(plan.revision) {
@@ -274,6 +300,8 @@ impl Manager {
         self.revision = Some(plan.revision);
         self.uncertain = false;
         self.can_renew = can_renew;
+        self.lease_until = can_renew
+            .then_some(started + Duration::from_millis(u64::from(LEASE_SECONDS) * 1000 - 11));
         Ok(Observation {
             uncertain: false,
             ..observed
@@ -281,6 +309,7 @@ impl Manager {
     }
 
     pub async fn renew(&mut self, expected: u64) -> Result<Observation, ApiError> {
+        self.check_lifetime()?;
         if self.uncertain || !self.can_renew || self.revision != Some(expected) {
             return Err(error(
                 ErrorCode::InvalidState,
@@ -296,6 +325,8 @@ impl Manager {
         );
         self.uncertain = true;
         self.can_renew = false;
+        self.lease_until = None;
+        let started = Instant::now();
         nft(&["--file", "-"], Some(batch.as_bytes())).await?;
         let observed = self.inspect().await?;
         if observed.revision != Some(expected) {
@@ -306,6 +337,8 @@ impl Manager {
         }
         self.uncertain = false;
         self.can_renew = true;
+        self.lease_until =
+            Some(started + Duration::from_millis(u64::from(LEASE_SECONDS) * 1000 - 11));
         Ok(Observation {
             uncertain: false,
             ..observed
@@ -348,6 +381,8 @@ impl Manager {
         self.revision = None;
         self.uncertain = false;
         self.can_renew = false;
+        self.lease_until = None;
+        self.dns = None;
         Ok(Observation {
             uncertain: false,
             ..observed

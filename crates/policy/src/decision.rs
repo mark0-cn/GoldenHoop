@@ -140,7 +140,7 @@ impl Model {
     }
 
     pub fn dns_candidate(&self, name: &Domain) -> Decision {
-        self.decide(|rule| rule.matches_name(name))
+        self.decide(|rule| rule.matches_name(name), None)
     }
 
     pub fn address_candidate(&self, packet: &Packet) -> Decision {
@@ -156,10 +156,32 @@ impl Model {
                 origin: DecisionOrigin::PortFloor,
             };
         }
-        self.decide(|rule| rule.matches_address(packet))
+        self.decide(|rule| rule.matches_address(packet), None)
     }
 
-    fn decide(&self, matches: impl Fn(&Rule) -> bool) -> Decision {
+    /// Combine a separately authenticated name-source grant with static IP
+    /// denies. This is still a candidate; the kernel installer confirms I/O.
+    pub fn leased_address_candidate(
+        &self,
+        packet: &Packet,
+        source: DecisionOrigin,
+    ) -> Result<Decision, ApiError> {
+        if !matches!(
+            source,
+            DecisionOrigin::UserAgreement | DecisionOrigin::AllowAlways(_)
+        ) {
+            return Err(invalid("DNS source has no grant authority"));
+        }
+        if self.address_candidate(packet).origin == DecisionOrigin::PortFloor {
+            return Ok(Decision {
+                action: NetworkAction::Deny,
+                origin: DecisionOrigin::PortFloor,
+            });
+        }
+        Ok(self.decide(|rule| rule.matches_address(packet), Some(source)))
+    }
+
+    fn decide(&self, matches: impl Fn(&Rule) -> bool, source: Option<DecisionOrigin>) -> Decision {
         if let Some(index) = self.overlays.deny.iter().position(&matches) {
             return Decision {
                 action: NetworkAction::Deny,
@@ -172,8 +194,14 @@ impl Model {
                 origin: DecisionOrigin::AllowAlways(index),
             };
         }
+        if let Some(origin @ DecisionOrigin::AllowAlways(_)) = source {
+            return Decision {
+                action: NetworkAction::Allow,
+                origin,
+            };
+        }
         for (level, policy) in self.policies.iter().enumerate() {
-            let mut allowed = false;
+            let mut allowed = source == Some(DecisionOrigin::UserAgreement);
             for (index, rule) in policy
                 .rules
                 .iter()
