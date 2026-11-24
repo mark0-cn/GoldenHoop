@@ -33,6 +33,9 @@ mod server {
             expected_revision: u64,
         },
         Inspect,
+        EnableEthernet {
+            expected_revision: u64,
+        },
         ListenDns {
             expected_revision: u64,
         },
@@ -78,7 +81,7 @@ mod server {
                     "controller already has an allocation",
                 ));
             }
-            let opened = Manager::new(allocation)?;
+            let opened = Manager::new(allocation).await?;
             let observed = opened.inspect().await?;
             *manager = Some(opened);
             return Ok(Reply::State(observed));
@@ -87,6 +90,9 @@ mod server {
             ApiError::new(ErrorCode::InvalidState, "open a trusted allocation first")
         })?;
         match request {
+            Request::EnableEthernet { expected_revision } => {
+                manager.enable_ethernet(expected_revision).await
+            }
             Request::ListenDns { expected_revision } => {
                 if frontend.is_some() {
                     return Err(ApiError::new(

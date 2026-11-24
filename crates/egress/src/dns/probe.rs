@@ -4,7 +4,7 @@ use crate::{Allocation, Manager, manager::nft};
 use serde_json::{Value, json};
 
 pub async fn probe_staged_sets(allocation: Allocation) -> Result<Value, ApiError> {
-    let manager = Manager::new(allocation.clone())?;
+    let manager = Manager::new(allocation.clone()).await?;
     let observed = manager.inspect().await?;
     if !observed.installed || observed.revision != Some(0) {
         return Err(error(

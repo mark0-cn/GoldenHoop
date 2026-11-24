@@ -121,7 +121,7 @@ class Contract:
         assert host["ReadonlyRootfs"] and host["Memory"] == host["MemorySwap"] == expected_memory
         assert host["NanoCpus"] == (1000000000 if guest else 250000000) and host["PidsLimit"] == (256 if guest else 32)
         assert {cap.removeprefix("CAP_") for cap in host["CapDrop"]} == {"ALL"}
-        assert {cap.removeprefix("CAP_") for cap in (host["CapAdd"] or [])} == ({"NET_ADMIN"} if role == "helper" else set())
+        assert {cap.removeprefix("CAP_") for cap in (host["CapAdd"] or [])} == self.allowed_capabilities(role)
         assert any("no-new-privileges" in item for item in host["SecurityOpt"])
         assert host["Runtime"] == (self.args.runtime if guest else "runc")
         self.evidence["resources"].append({"role": role, "container_id": identity,
@@ -133,6 +133,9 @@ class Contract:
 
     def validate_mounts(self, role, mounts):
         assert all(mount["Type"] == "tmpfs" for mount in mounts), mounts
+
+    def allowed_capabilities(self, role):
+        return {"NET_ADMIN"} if role == "helper" else set()
 
     def ensure_helper(self):
         result = docker("inspect", self.helper_name, check=False)

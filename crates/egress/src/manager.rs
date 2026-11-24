@@ -1,4 +1,4 @@
-use crate::{Allocation, Config, LEASE_SECONDS, Plan, error};
+use crate::{Allocation, Config, EthernetPlan, LEASE_SECONDS, Plan, error};
 use goldenhoop_protocol::{ApiError, ErrorCode};
 use serde::Serialize;
 use serde_json::Value;
@@ -32,6 +32,8 @@ pub struct Observation {
     pub uncertain: bool,
     pub table_sha256: Option<String>,
     pub maximum_lease_seconds: u32,
+    pub ethernet_guarded: bool,
+    pub ethernet_sha256: Option<String>,
 }
 
 pub struct Manager {
@@ -41,13 +43,14 @@ pub struct Manager {
     can_renew: bool,
     lease_until: Option<Instant>,
     dns: Option<resolver::DnsState>,
+    ethernet_required: bool,
     // Abstract Unix names share the host network namespace, including across
     // containers with distinct /run mounts. Dropping the process releases it.
     _lock: UnixDatagram,
 }
 
 impl Manager {
-    pub fn new(allocation: Allocation) -> Result<Self, ApiError> {
+    pub async fn new(allocation: Allocation) -> Result<Self, ApiError> {
         allocation.validate()?;
         let status = std::fs::read_to_string("/proc/self/status").map_err(|_| {
             error(
@@ -90,15 +93,20 @@ impl Manager {
                 "allocation already has a packet-filter controller",
             )
         })?;
-        Ok(Self {
+        let mut manager = Self {
             allocation,
             revision: None,
             uncertain: false,
             can_renew: false,
             lease_until: None,
             dns: None,
+            ethernet_required: false,
             _lock: lock,
-        })
+        };
+        // Reconcile the immutable floor on attachment. A restart cannot forget
+        // an existing owned guard and silently continue without it later.
+        manager.ethernet_required = manager.ethernet().await?.is_some();
+        Ok(manager)
     }
 
     fn check_bridge(&self) -> Result<(), ApiError> {
@@ -192,10 +200,11 @@ impl Manager {
 
     pub async fn inspect(&self) -> Result<Observation, ApiError> {
         let table = self.table().await?;
+        let ethernet = self.ethernet().await?;
         Ok(Observation {
             installed: table.is_some(),
             revision: table.as_ref().map(|(r, _)| *r),
-            uncertain: self.uncertain,
+            uncertain: self.uncertain || (self.ethernet_required && ethernet.is_none()),
             table_sha256: table.map(|(_, v)| {
                 format!(
                     "{:x}",
@@ -203,6 +212,74 @@ impl Manager {
                 )
             }),
             maximum_lease_seconds: LEASE_SECONDS,
+            ethernet_guarded: ethernet.is_some(),
+            ethernet_sha256: ethernet.map(|v| {
+                format!(
+                    "{:x}",
+                    Sha256::digest(serde_json::to_vec(&v).expect("JSON value"))
+                )
+            }),
+        })
+    }
+
+    async fn ethernet(&self) -> Result<Option<Value>, ApiError> {
+        let table = self.allocation.ethernet_table();
+        let inventory: Value =
+            serde_json::from_slice(&nft(&["--json", "list", "tables"], None).await?)
+                .map_err(|_| error(ErrorCode::BackendUnavailable, "invalid nft table inventory"))?;
+        let entries = inventory["nftables"]
+            .as_array()
+            .ok_or_else(|| error(ErrorCode::BackendUnavailable, "missing nft table inventory"))?;
+        if !entries
+            .iter()
+            .any(|e| e["table"]["family"] == "bridge" && e["table"]["name"] == table)
+        {
+            return Ok(None);
+        }
+        let observed: Value = serde_json::from_slice(
+            &nft(&["--json", "list", "table", "bridge", &table], None).await?,
+        )
+        .map_err(|_| {
+            error(
+                ErrorCode::BackendUnavailable,
+                "invalid Ethernet guard observation",
+            )
+        })?;
+        EthernetPlan::verify(&self.allocation, &observed)?;
+        Ok(Some(observed))
+    }
+
+    /// Install the immutable route-only floor before workload publication. A
+    /// missing bridge-family kernel feature is a hard failure, never fallback.
+    pub async fn enable_ethernet(&mut self, expected: u64) -> Result<Observation, ApiError> {
+        if self.uncertain || self.can_renew || self.revision != Some(expected) {
+            return Err(error(
+                ErrorCode::InvalidState,
+                "enable Ethernet only after known quarantine",
+            ));
+        }
+        self.expected(expected).await?;
+        if self.ethernet().await?.is_some() {
+            return Err(error(ErrorCode::Conflict, "Ethernet guard already exists"));
+        }
+        let plan = EthernetPlan::new(&self.allocation)?;
+        self.ethernet_required = true;
+        self.uncertain = true;
+        self.can_renew = false;
+        self.lease_until = None;
+        nft(&["--file", "-"], Some(plan.script().as_bytes())).await?;
+        let observed = self.inspect().await?;
+        self.check_bridge()?;
+        if !observed.ethernet_guarded || observed.revision != Some(expected) {
+            return Err(error(
+                ErrorCode::BackendUnavailable,
+                "Ethernet guard installation is unconfirmed",
+            ));
+        }
+        self.uncertain = false;
+        Ok(Observation {
+            uncertain: false,
+            ..observed
         })
     }
 
@@ -222,6 +299,12 @@ impl Manager {
         self.check_bridge()?;
         if self.table().await?.map(|(r, _)| r) != Some(expected) {
             return Err(error(ErrorCode::Conflict, "egress policy revision differs"));
+        }
+        if self.ethernet_required && self.ethernet().await?.is_none() {
+            return Err(error(
+                ErrorCode::Conflict,
+                "required Ethernet guard is unavailable",
+            ));
         }
         Ok(())
     }
@@ -300,7 +383,9 @@ impl Manager {
         let started = Instant::now();
         nft(&["--file", "-"], Some(batch.as_bytes())).await?;
         let observed = self.inspect().await?;
-        if observed.revision != Some(plan.revision) {
+        if observed.revision != Some(plan.revision)
+            || (self.ethernet_required && !observed.ethernet_guarded)
+        {
             return Err(error(
                 ErrorCode::BackendUnavailable,
                 "kernel did not confirm policy revision",
@@ -338,7 +423,9 @@ impl Manager {
         let started = Instant::now();
         nft(&["--file", "-"], Some(batch.as_bytes())).await?;
         let observed = self.inspect().await?;
-        if observed.revision != Some(expected) {
+        if observed.revision != Some(expected)
+            || (self.ethernet_required && !observed.ethernet_guarded)
+        {
             return Err(error(
                 ErrorCode::BackendUnavailable,
                 "kernel did not confirm lease revision",
@@ -372,16 +459,29 @@ impl Manager {
                 "collect the bridge before removing its filter",
             ));
         }
+        let mut batch = String::new();
         if let Some((revision, _)) = self.table().await? {
             if revision != expected {
                 return Err(error(ErrorCode::Conflict, "egress policy revision differs"));
             }
+            batch.push_str(&format!("delete table inet {}\n", self.allocation.table()));
+        }
+        if self.ethernet().await?.is_some() {
+            batch.push_str(&format!(
+                "delete table bridge {}\n",
+                self.allocation.ethernet_table()
+            ));
+        }
+        if !batch.is_empty() {
             self.uncertain = true;
             self.can_renew = false;
-            nft(&["delete", "table", "inet", &self.allocation.table()], None).await?;
+            self.lease_until = None;
+            nft(&["--file", "-"], Some(batch.as_bytes())).await?;
         }
+        // Absence is expected only after the actual collection transaction.
+        self.ethernet_required = false;
         let observed = self.inspect().await?;
-        if observed.installed {
+        if observed.installed || observed.ethernet_guarded {
             return Err(error(
                 ErrorCode::BackendUnavailable,
                 "egress collection is unconfirmed",

@@ -41,7 +41,7 @@ class Controller:
         self.reader.start()
         self.drainer.start()
 
-    def request(self, operation, error=False, **fields):
+    def request(self, operation, error=False, allow_uncertain=False, **fields):
         self.sequence += 1
         self.process.stdin.write(json.dumps({"id": self.sequence, "command": {"operation": operation, **fields}}) + "\n")
         self.process.stdin.flush()
@@ -52,7 +52,7 @@ class Controller:
         if error:
             assert "error" in reply, reply
         else:
-            assert "result" in reply and not reply["result"]["uncertain"], reply
+            assert "result" in reply and (allow_uncertain or not reply["result"]["uncertain"]), reply
         return reply
 
     def close(self):
