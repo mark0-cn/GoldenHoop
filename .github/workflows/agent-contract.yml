@@ -34,6 +34,17 @@ jobs:
         run: docker build --label dev.goldenhoop.build=ci-agent -f images/agent/Dockerfile -t goldenhoop-agent:test .
       - name: Exercise the actual runtime
         run: python3 -B tests/agent_contract.py --runtime ${{ matrix.runtime }} --output evidence/agent-${{ matrix.runtime }}.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Exercise the Rust Docker driver and worker recovery
+        env:
+          GOLDENHOOP_TEST_RUNTIME: ${{ matrix.runtime }}
+          GOLDENHOOP_EVIDENCE: evidence/driver-${{ matrix.runtime }}.json
+          GOLDENHOOP_WORKLOAD_IMAGE: goldenhoop-image-policy:test
+        run: |
+          docker pull debian:bookworm-slim
+          docker build -f tests/fixtures/image-policy.Dockerfile -t goldenhoop-image-policy:test .
+          cargo run --locked --quiet -p goldenhoop-docker --example contract
       - name: Verify no test containers remain
         if: always()
         shell: bash
@@ -41,6 +52,15 @@ jobs:
           set -euo pipefail
           remaining=$(docker ps -a --filter label=dev.goldenhoop.test=agent-contract --format '{{.ID}}')
           test -z "$remaining"
+          remaining=$(docker ps -a --filter label=dev.goldenhoop.installation --format '{{.ID}}')
+          test -z "$remaining"
+          remaining=$(docker volume ls --filter label=dev.goldenhoop.installation --format '{{.Name}}')
+          test -z "$remaining"
+          if docker image inspect goldenhoop-image-policy:test >/dev/null 2>&1; then
+            label=$(docker image inspect goldenhoop-image-policy:test --format '{{index .Config.Labels "dev.goldenhoop.fixture"}}')
+            test "$label" = image-policy
+            docker image rm goldenhoop-image-policy:test
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:

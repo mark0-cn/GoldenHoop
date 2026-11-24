@@ -19,9 +19,13 @@ M1 is in progress. The Rust sandbox agent now supports a private Unix RPC bridge
 - Windows Rust 1.99.1: formatting, clippy with warnings denied, and 14 tests passed.
 - Linux Rust 1.100.0 inside the image build: formatting, clippy with warnings denied, and 15 tests passed.
 - The actual Docker/runc agent contract passed all 10 cases on Docker Desktop. [Evidence](evidence/m1-agent-runc-windows-docker.json) records source hashes, runtime versions, individual results and confirmed container cleanup.
-- A separate CI matrix exercises runc and gVisor. gVisor results are pending until observed; the local host has no runsc runtime.
+- The agent increment is pushed in commit 65c559aa57756a447c9a5d391e097bb2e993ab77. [CI run 45319722824](https://github.com/mark0-cn/GoldenHoop/actions/runs/45319722824) passed on Windows and Ubuntu.
+- Both runc and actual gVisor agent suites passed all 10 cases with confirmed cleanup in [run 45319722773](https://github.com/mark0-cn/GoldenHoop/actions/runs/45319722773). [Raw CI evidence](evidence/ci-45319722773/agent-runsc/agent-runsc.json) records runsc release-20261116.0. The local host still has no runsc runtime.
+- The Docker driver now provisions a trusted static musl agent into independent Linux workload images, validates ownership and create retries, reconnects through runtime labels, pauses/resumes and confirms removal. A separate Rust expiration worker scans absolute deadlines outside the workload.
+- The local actual driver contract passed 14 cases, including a fixture with a conflicting entrypoint, environment and image health check. Image health checks are explicitly disabled so they cannot execute as supervisor root. [Driver evidence](evidence/m1-driver-runc-windows-docker.json) includes source hashes and image identities. All created containers and bundle volumes were removed, and the fixture image was deleted after validation.
+- The static agent also passed all 10 actual local cases. [Static-agent evidence](evidence/m1-agent-static-runc-windows-docker.json). The expanded CI matrix will exercise the static agent and Rust driver on gVisor before that driver profile is counted as verified.
 - No M1 API/CLI/SDK release is claimed yet. Firecracker/KVM and Kubernetes remain unverified and unimplemented.
 
 ## Next actions
 
-Push the agent increment, observe both CI workflows, then implement M1's Docker driver, persistent API, CLI and Rust/Python SDK execution loop. Missing gVisor/KVM evidence remains a release gate; it does not narrow M1-M6.
+Push the Docker driver increment, observe the expanded actual-runtime CI, then implement M1's persistent API, CLI and Rust/Python SDK execution loop. Missing Firecracker/KVM and Kubernetes evidence remains a release gate; it does not narrow M1-M6.

@@ -1,6 +1,9 @@
 FROM rust:1-bookworm AS build
 WORKDIR /src
-RUN rustup component add clippy rustfmt
+RUN apt-get update && apt-get install -y --no-install-recommends musl-tools \
+    && rm -rf /var/lib/apt/lists/* \
+    && rustup component add clippy rustfmt \
+    && rustup target add x86_64-unknown-linux-musl
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
@@ -9,10 +12,11 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo fmt --all --check \
     && cargo clippy --locked --workspace --all-targets -- -D warnings \
     && cargo test --locked --workspace \
-    && cargo build --locked --release -p goldenhoop-agent \
-    && cp /src/target/release/goldenhoop-agent /goldenhoop-agent
+    && cargo build --locked --release --target x86_64-unknown-linux-musl -p goldenhoop-agent \
+    && cp /src/target/x86_64-unknown-linux-musl/release/goldenhoop-agent /goldenhoop-agent
 
 FROM debian:bookworm-slim
+LABEL dev.goldenhoop.agent.libc="musl"
 RUN apt-get update && apt-get install -y --no-install-recommends python3 ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 1000 workload && useradd --uid 1000 --gid 1000 --no-create-home workload \

@@ -58,3 +58,16 @@ pub trait RuntimeDriver: Send + Sync {
         ))
     }
 }
+
+/// The worker's private transport, never a public workload-controlled endpoint.
+#[async_trait]
+pub trait AgentTransport: Send + Sync {
+    async fn rpc(
+        &self,
+        handle: &RuntimeHandle,
+        request: &AgentRequest,
+    ) -> Result<AgentResponse, ApiError>;
+}
+
+pub trait SandboxRuntime: RuntimeDriver + AgentTransport {}
+impl<T: RuntimeDriver + AgentTransport> SandboxRuntime for T {}
