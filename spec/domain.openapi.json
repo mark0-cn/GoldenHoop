@@ -1,0 +1,628 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "goldenhoop-protocol",
+    "description": "",
+    "license": {
+      "name": "Apache-2.0",
+      "identifier": "Apache-2.0"
+    },
+    "version": "0.1.0-alpha.1"
+  },
+  "paths": {},
+  "components": {
+    "schemas": {
+      "ApiError": {
+        "type": "object",
+        "required": [
+          "code",
+          "message",
+          "retryable"
+        ],
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/ErrorCode"
+          },
+          "message": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "retryable": {
+            "type": "boolean"
+          }
+        }
+      },
+      "Availability": {
+        "type": "string",
+        "enum": [
+          "available",
+          "unavailable",
+          "unverified"
+        ]
+      },
+      "Capability": {
+        "type": "string",
+        "enum": [
+          "commands",
+          "files",
+          "shell_sessions",
+          "pty",
+          "code_contexts",
+          "isolated_sessions",
+          "pause",
+          "rootfs_snapshot",
+          "volume_snapshot",
+          "memory_snapshot",
+          "network_isolation",
+          "network_policy",
+          "secret_injection",
+          "gpu",
+          "artifacts",
+          "diagnostics"
+        ]
+      },
+      "CleanupState": {
+        "type": "string",
+        "enum": [
+          "not_required",
+          "pending",
+          "complete",
+          "unknown"
+        ]
+      },
+      "CommandSpec": {
+        "type": "object",
+        "required": [
+          "argv"
+        ],
+        "properties": {
+          "argv": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "cwd": {
+            "type": "string"
+          },
+          "env": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "max_output_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreateSandbox": {
+        "type": "object",
+        "required": [
+          "profile",
+          "image"
+        ],
+        "properties": {
+          "image": {
+            "type": "string"
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "network": {
+            "$ref": "#/components/schemas/NetworkPolicy"
+          },
+          "profile": {
+            "type": "string"
+          },
+          "required_capabilities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Capability"
+            },
+            "uniqueItems": true
+          },
+          "resources": {
+            "$ref": "#/components/schemas/ResourceLimits"
+          },
+          "ttl_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "ErrorCode": {
+        "type": "string",
+        "enum": [
+          "invalid_request",
+          "unauthorized",
+          "forbidden",
+          "not_found",
+          "conflict",
+          "invalid_state",
+          "unsupported_capability",
+          "backend_unavailable",
+          "quota_exceeded",
+          "deadline_exceeded",
+          "internal"
+        ]
+      },
+      "EventKind": {
+        "type": "string",
+        "enum": [
+          "started",
+          "stdout",
+          "stderr",
+          "output_truncated",
+          "completed",
+          "diagnostic"
+        ]
+      },
+      "Execution": {
+        "type": "object",
+        "required": [
+          "id",
+          "sandbox_id",
+          "state",
+          "created_at",
+          "output_truncated",
+          "cleanup"
+        ],
+        "properties": {
+          "cleanup": {
+            "$ref": "#/components/schemas/CleanupState"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "exit_code": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "output_truncated": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sandbox_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "started_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ExecutionState"
+          }
+        }
+      },
+      "ExecutionEvent": {
+        "type": "object",
+        "required": [
+          "sequence",
+          "execution_id",
+          "timestamp",
+          "kind",
+          "data"
+        ],
+        "properties": {
+          "data": {},
+          "execution_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/EventKind"
+          },
+          "sequence": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ExecutionState": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "running",
+          "succeeded",
+          "failed",
+          "cancelled",
+          "timed_out",
+          "unknown"
+        ]
+      },
+      "Isolation": {
+        "type": "string",
+        "enum": [
+          "oci",
+          "gvisor",
+          "kata",
+          "firecracker"
+        ]
+      },
+      "NetworkAction": {
+        "type": "string",
+        "enum": [
+          "deny",
+          "allow"
+        ]
+      },
+      "NetworkPolicy": {
+        "type": "object",
+        "required": [
+          "default_action"
+        ],
+        "properties": {
+          "default_action": {
+            "$ref": "#/components/schemas/NetworkAction"
+          },
+          "rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NetworkRule"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "NetworkRule": {
+        "type": "object",
+        "required": [
+          "destination",
+          "ports",
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/NetworkAction"
+          },
+          "destination": {
+            "type": "string"
+          },
+          "ports": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "Operation": {
+        "type": "object",
+        "required": [
+          "id",
+          "resource_id",
+          "state",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "error": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ApiError"
+              }
+            ]
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "resource_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "state": {
+            "$ref": "#/components/schemas/OperationState"
+          }
+        }
+      },
+      "OperationState": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "running",
+          "succeeded",
+          "failed",
+          "cancelled"
+        ]
+      },
+      "Placement": {
+        "type": "string",
+        "enum": [
+          "local",
+          "kubernetes"
+        ]
+      },
+      "ResourceLimits": {
+        "type": "object",
+        "required": [
+          "cpu_millis",
+          "memory_bytes",
+          "pids"
+        ],
+        "properties": {
+          "cpu_millis": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "memory_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "pids": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "RuntimeProfile": {
+        "type": "object",
+        "required": [
+          "id",
+          "placement",
+          "isolation",
+          "availability",
+          "capabilities",
+          "max_resources",
+          "max_ttl_seconds"
+        ],
+        "properties": {
+          "availability": {
+            "$ref": "#/components/schemas/Availability"
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Capability"
+            },
+            "uniqueItems": true
+          },
+          "id": {
+            "type": "string"
+          },
+          "isolation": {
+            "$ref": "#/components/schemas/Isolation"
+          },
+          "max_resources": {
+            "$ref": "#/components/schemas/ResourceLimits"
+          },
+          "max_ttl_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "placement": {
+            "$ref": "#/components/schemas/Placement"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Sandbox": {
+        "type": "object",
+        "required": [
+          "id",
+          "profile",
+          "image",
+          "state",
+          "cleanup",
+          "created_at",
+          "expires_at",
+          "resources",
+          "metadata"
+        ],
+        "properties": {
+          "cleanup": {
+            "$ref": "#/components/schemas/CleanupState"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "image": {
+            "type": "string"
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "observed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "profile": {
+            "type": "string"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resources": {
+            "$ref": "#/components/schemas/ResourceLimits"
+          },
+          "state": {
+            "$ref": "#/components/schemas/SandboxState"
+          }
+        }
+      },
+      "SandboxState": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "starting",
+          "running",
+          "pausing",
+          "paused",
+          "resuming",
+          "stopping",
+          "terminated",
+          "failed",
+          "unknown"
+        ]
+      },
+      "SnapshotKind": {
+        "type": "string",
+        "enum": [
+          "rootfs",
+          "volumes",
+          "memory_and_disk"
+        ]
+      },
+      "SnapshotManifest": {
+        "type": "object",
+        "required": [
+          "format_version",
+          "id",
+          "source_sandbox_id",
+          "kind",
+          "driver",
+          "architecture",
+          "image_digest",
+          "objects",
+          "runtime_version",
+          "created_at"
+        ],
+        "properties": {
+          "architecture": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "driver": {
+            "type": "string"
+          },
+          "format_version": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "image_digest": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/SnapshotKind"
+          },
+          "objects": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "runtime_version": {
+            "type": "string"
+          },
+          "source_sandbox_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      }
+    }
+  }
+}
