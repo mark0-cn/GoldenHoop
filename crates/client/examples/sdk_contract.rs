@@ -1,9 +1,174 @@
 //! Actual API contract. The outer harness owns the server/installation.
 use std::time::Duration;
 
+use base64::{Engine, engine::general_purpose::STANDARD};
 use futures_util::{FutureExt, StreamExt};
 use goldenhoop_client::*;
 use uuid::Uuid;
+
+fn append_session_output(bytes: &mut Vec<u8>, event: &ExecutionEvent) {
+    if event.kind == EventKind::Stdout {
+        bytes.extend(
+            STANDARD
+                .decode(event.data["data"].as_str().unwrap())
+                .unwrap(),
+        );
+    }
+}
+async fn socket_output(
+    socket: &mut SessionSocket,
+    bytes: &mut Vec<u8>,
+    marker: &[u8],
+) -> Result<()> {
+    while !bytes.windows(marker.len()).any(|value| value == marker) {
+        match socket.recv().await? {
+            Some(SessionSocketServerMessage::Event(event)) => append_session_output(bytes, &event),
+            Some(SessionSocketServerMessage::Control(receipt))
+                if matches!(
+                    receipt.state,
+                    SessionControlState::Unknown | SessionControlState::Rejected
+                ) =>
+            {
+                return Err(Error::Api(receipt.error.unwrap()));
+            }
+            None => return Err(Error::Protocol("session ended before expected output")),
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+async fn interactive_sessions(client: &Client, sandbox: Uuid) -> Result<()> {
+    let pipe = client
+        .create_session(sandbox, &SessionSpec::shell(), &Uuid::new_v4().to_string())
+        .await?;
+    let pipe_id = pipe.execution.id;
+    let write = SessionControl {
+        sequence: 1,
+        action: SessionAction::Write {
+            data_base64: STANDARD.encode(b"v=rust; printf '%s' \"$v\"\n"),
+        },
+    };
+    client.session_control(pipe_id, &write).await?;
+    assert_eq!(
+        client
+            .wait_session_control(pipe_id, 1, Duration::from_secs(20))
+            .await?
+            .state,
+        SessionControlState::Applied
+    );
+    client
+        .session_control(
+            pipe_id,
+            &SessionControl {
+                sequence: 2,
+                action: SessionAction::CloseInput,
+            },
+        )
+        .await?;
+    let mut events = client.events(pipe_id, None).await?;
+    let mut output = Vec::new();
+    let mut completed = false;
+    while let Some(event) = events.next().await {
+        let event = event?;
+        append_session_output(&mut output, &event);
+        if event.kind == EventKind::Completed {
+            let execution: Execution = serde_json::from_value(event.data).unwrap();
+            assert_eq!(execution.state, ExecutionState::Succeeded);
+            assert_eq!(execution.cleanup, CleanupState::Complete);
+            completed = true;
+        }
+    }
+    assert!(completed);
+    assert_eq!(output, b"rust");
+
+    let code = "import os,sys,tty,termios; assert all(os.isatty(fd) for fd in (0,1,2)); tty.setraw(0); print('READY',flush=True); n=0\nfor data in sys.stdin.buffer:\n if data==b'quit\\n': break\n n+=1; print('COUNT:%d:%s'%(n,data.hex()),flush=True)\nprint('FINAL:%d:%d:%d'%(n,*termios.tcgetwinsize(0)),flush=True)";
+    let mut spec = SessionSpec {
+        command: CommandSpec::new(["python3", "-c", code]),
+        terminal: Some(TerminalSize {
+            rows: 24,
+            columns: 80,
+        }),
+    };
+    spec.command.timeout_seconds = 30;
+    let key = Uuid::new_v4().to_string();
+    let created = client.create_session(sandbox, &spec, &key).await?;
+    let id = created.execution.id;
+    assert_eq!(
+        client
+            .create_session(sandbox, &spec, &key)
+            .await?
+            .execution
+            .id,
+        id
+    );
+    let mut socket = client.session_socket(id, 0).await?;
+    let mut output = Vec::new();
+    socket_output(&mut socket, &mut output, b"READY\n").await?;
+    let input = SessionControl {
+        sequence: 1,
+        action: SessionAction::Write {
+            data_base64: STANDARD.encode(b"\x00\xff\n"),
+        },
+    };
+    socket.control(&input).await?;
+    socket_output(&mut socket, &mut output, b"COUNT:1:00ff0a\n").await?;
+    let cursor = socket.cursor();
+    socket.close().await?;
+    assert_eq!(
+        client.session(id).await?.execution.state,
+        ExecutionState::Running
+    );
+    let mut socket = client.session_socket(id, cursor).await?;
+    socket.control(&input).await?;
+    socket
+        .control(&SessionControl {
+            sequence: 2,
+            action: SessionAction::Resize {
+                size: TerminalSize {
+                    rows: 40,
+                    columns: 100,
+                },
+            },
+        })
+        .await?;
+    socket
+        .control(&SessionControl {
+            sequence: 3,
+            action: SessionAction::Write {
+                data_base64: STANDARD.encode(b"quit\n"),
+            },
+        })
+        .await?;
+    let mut completion = None;
+    while let Some(message) = socket.recv().await? {
+        if let SessionSocketServerMessage::Event(event) = message {
+            append_session_output(&mut output, &event);
+            if event.kind == EventKind::Completed {
+                completion = Some(serde_json::from_value::<Execution>(event.data).unwrap());
+            }
+        }
+    }
+    assert_eq!(completion.unwrap().state, ExecutionState::Succeeded);
+    assert!(
+        output
+            .windows(b"FINAL:1:40:100\n".len())
+            .any(|bytes| bytes == b"FINAL:1:40:100\n")
+    );
+    assert_eq!(
+        client.session_control_status(id, 1).await?.state,
+        SessionControlState::Applied
+    );
+    assert!(
+        client
+            .list_sessions(Some(sandbox), None, 100)
+            .await?
+            .items
+            .iter()
+            .any(|session| session.execution.id == id)
+    );
+    Ok(())
+}
 
 async fn exercise(client: &Client, id: Uuid) -> Result<Uuid> {
     assert!(
@@ -132,6 +297,7 @@ async fn exercise(client: &Client, id: Uuid) -> Result<Uuid> {
     assert!(
         matches!(client.read_file(id,"rust.bin",100).await,Err(Error::Api(error)) if error.code==ErrorCode::NotFound)
     );
+    interactive_sessions(client, id).await?;
     let artifact = client
         .capture_artifact(
             id,

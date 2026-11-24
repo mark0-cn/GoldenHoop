@@ -36,6 +36,8 @@ use utoipa::OpenApi;
     SessionSpec,
     Session,
     SessionPage,
+    SessionSocketClientMessage,
+    SessionSocketServerMessage,
     TerminalSize,
     SessionControl,
     SessionAction,

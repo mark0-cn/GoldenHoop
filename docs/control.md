@@ -57,12 +57,22 @@ All requests require `Authorization: Bearer <token>`. JSON DTO schemas are in sp
 | GET | /v1/artifacts?sandbox_id=UUID&after=UUID&limit=100 | Retained artifact metadata page |
 | GET / DELETE | /v1/artifacts/{id} | Metadata / 202 deletion operation |
 | GET | /v1/artifacts/{id}/content | Integrity-checked binary download |
+| POST | /v1/sandboxes/{id}/sessions | 202 long-lived shell/process or PTY |
+| GET | /v1/sessions | Session metadata page |
+| GET | /v1/sessions/{id} | Session specification and execution |
+| POST | /v1/sessions/{id}/controls | Queue ordered input control |
+| GET | /v1/sessions/{id}/controls/{sequence} | Read delivery receipt |
+| POST | /v1/sessions/{id}/cancel | Persist cancellation intent |
+| GET | /v1/sessions/{id}/events | Resumable execution SSE |
+| GET | /v1/sessions/{id}/socket?after=SEQUENCE | Authenticated duplex WebSocket |
 
 Typed errors distinguish invalid input, authentication, forbidden access, conflict/state, unsupported capabilities, quotas and unavailable backends. Public errors do not expose raw runtime payloads. Input decoding failures use the same error envelope.
 
 Diagnostics use a separately authenticated private worker route; they never forward a workload-supplied RPC method. See [sampling and missing-data semantics](diagnostics.md).
 
 Retained artifacts use a separate UUID-only private content route. Capture reads an authorized workspace file and prepares immutable length/digest before uploading. The storage credentials remain in the worker. Source expiration does not delete captured output; explicit artifact deletion is required. Configure the private local root or explicit S3 backend on the worker; see [configuration, recovery and cleanup](artifacts.md). Artifact create/delete requests also require Idempotency-Key.
+
+Interactive sessions share execution IDs/events/cancellation. The API durably queues ordered controls and the worker reconciles delivery receipts before acknowledging them. A delivered input is not a code-success verdict. The same bearer authentication protects WebSocket upgrades; closing an observer does not cancel the session. See [session sequencing, limits and reconnect](sessions.md). Session create requires Idempotency-Key; controls use their sequence and content as their identity.
 
 ## Execution and recovery
 

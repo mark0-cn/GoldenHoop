@@ -27,7 +27,7 @@ Runtime support is declared per profile and checked against the host. Missing is
 - [Rust/Python SDKs and client CLI](docs/clients.md)
 - [Runtime diagnostics](docs/diagnostics.md)
 - [Retained artifacts and storage](docs/artifacts.md)
-- [Interactive session transport and pending integration](docs/sessions.md)
+- [Interactive sessions, terminal sockets and recovery](docs/sessions.md)
 - [中文说明](README.zh-CN.md)
 
 ## License

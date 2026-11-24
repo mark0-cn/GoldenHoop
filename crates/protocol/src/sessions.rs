@@ -17,6 +17,26 @@ pub struct SessionPage {
     pub next_after: Option<Uuid>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(
+    tag = "kind",
+    content = "value",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+pub enum SessionSocketClientMessage {
+    Control(SessionControl),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+pub enum SessionSocketServerMessage {
+    Session(Session),
+    Event(crate::ExecutionEvent),
+    Control(SessionControlReceipt),
+    Error(ApiError),
+}
+
 /// An actual long-lived process. A terminal merges stdout and stderr.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]

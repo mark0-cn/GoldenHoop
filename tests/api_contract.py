@@ -559,6 +559,137 @@ class Contract:
         self.artifact_residue = {"fault_injected_late_write": True, "republishing_refused": True,
                                   "before": before, "after": after, "backend_absence_confirmed": True}
 
+    def session_source(self, ttl=120):
+        created = self.create(ttl=ttl)
+        self.wait_operation(created["operation"]["id"])
+        return created["sandbox"]["id"]
+
+    def start_session(self, sandbox, command=None, terminal=None, timeout=90):
+        spec = {"command": {"argv": command or ["/bin/sh"], "timeout_seconds": timeout}, "terminal": terminal}
+        key = str(uuid.uuid4())
+        created = self.request("POST", f"/v1/sandboxes/{sandbox}/sessions", spec, key)
+        identity = created["execution"]["id"]
+        assert self.request("POST", f"/v1/sandboxes/{sandbox}/sessions", spec, key)["execution"]["id"] == identity
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            current = self.request("GET", f"/v1/sessions/{identity}")
+            if current["execution"]["state"] == "running":
+                return identity
+            time.sleep(.1)
+        raise AssertionError("session did not become running")
+
+    @staticmethod
+    def session_input(sequence, data):
+        return {"sequence": sequence, "action": {"kind": "write", "data_base64": base64.b64encode(data).decode()}}
+
+    def session_control(self, identity, control, expected="applied"):
+        receipt = self.request("POST", f"/v1/sessions/{identity}/controls", control)
+        assert receipt["execution_id"] == identity and receipt["sequence"] == control["sequence"]
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            receipt = self.request("GET", f"/v1/sessions/{identity}/controls/{control['sequence']}")
+            if receipt["state"] != "pending":
+                assert receipt["state"] == expected, receipt
+                assert self.request("POST", f"/v1/sessions/{identity}/controls", control) == receipt
+                return receipt
+            time.sleep(.1)
+        raise AssertionError("session control did not settle")
+
+    def shell_state_survives_api_worker_restart_and_input_replay(self):
+        sandbox = self.session_source(ttl=150)
+        container = self.container(sandbox)
+        identity = self.start_session(sandbox)
+        first = self.session_input(1, b"value=golden; mkdir -p session-dir; cd session-dir; printf 'READY\\n'\n")
+        receipt = self.session_control(identity, first)
+        assert b"READY\n" in self.output(self.events(identity, first_output=True))
+        self.stop("worker")
+        assert self.request("POST", f"/v1/sessions/{identity}/controls", first) == receipt
+        self.launch("worker")
+        self.stop("api")
+        self.launch("api")
+        assert self.container(sandbox) == container
+        assert self.request("GET", f"/v1/sessions/{identity}")["execution"]["id"] == identity
+        listed = self.request("GET", f"/v1/sessions?sandbox_id={sandbox}&limit=100")
+        assert any(item["execution"]["id"] == identity for item in listed["items"])
+        second = self.session_input(2, b"printf '%s:%s\\n' \"$value\" \"$PWD\"; printf once >> /workspace/session-count\n")
+        paused = self.request("POST", f"/v1/sandboxes/{sandbox}/pause", key=str(uuid.uuid4()))
+        self.wait_operation(paused["id"])
+        self.reject("POST", f"/v1/sessions/{identity}/controls", 409, "invalid_state", body=second)
+        resumed = self.request("POST", f"/v1/sandboxes/{sandbox}/resume", key=str(uuid.uuid4()))
+        self.wait_operation(resumed["id"])
+        self.session_control(identity, second)
+        self.reject("POST", f"/v1/sessions/{identity}/controls", 409, "conflict", body=self.session_input(2, b"echo other\n"))
+        self.reject("POST", f"/v1/sessions/{identity}/controls", 409, "conflict", body={"sequence": 4, "action": {"kind": "close_input"}})
+        self.session_control(identity, {"sequence": 3, "action": {"kind": "close_input"}})
+        record = self.wait_execution(identity)
+        assert record["state"] == "succeeded", record
+        assert b"golden:/workspace/session-dir\n" in self.output(self.events(identity))
+        data = self.request("GET", f"/v1/sandboxes/{sandbox}/files?path=session-count&max_bytes=32")
+        assert base64.b64decode(data["data_base64"]) == b"once"
+        operation = self.request("DELETE", f"/v1/sandboxes/{sandbox}", key=str(uuid.uuid4()))
+        self.wait_operation(operation["id"])
+
+    def pty_public_controls_resize_binary_input_and_half_close_refusal(self):
+        sandbox = self.session_source(ttl=90)
+        code = (
+            "import os,sys,termios,tty; assert all(os.isatty(fd) for fd in (0,1,2)); "
+            "open('/dev/tty').close(); tty.setraw(0); print('READY',flush=True); "
+            "data=sys.stdin.buffer.read(3); assert data==b'\\x00\\xff\\n'; "
+            "assert termios.tcgetwinsize(0)==(40,100); print('BIN:'+data.hex(),flush=True)"
+        )
+        identity = self.start_session(sandbox, ["python3", "-c", code], {"rows": 24, "columns": 80})
+        assert b"READY\n" in self.output(self.events(identity, first_output=True))
+        self.session_control(identity, {"sequence": 1, "action": {"kind": "resize", "size": {"rows": 40, "columns": 100}}})
+        rejected = self.session_control(identity, {"sequence": 2, "action": {"kind": "close_input"}}, expected="rejected")
+        assert rejected["error"]["code"] == "unsupported_capability"
+        self.session_control(identity, self.session_input(3, b"\x00\xff\n"))
+        record = self.wait_execution(identity)
+        assert record["state"] == "succeeded", record
+        assert b"BIN:00ff0a\n" in self.output(self.events(identity))
+        operation = self.request("DELETE", f"/v1/sandboxes/{sandbox}", key=str(uuid.uuid4()))
+        self.wait_operation(operation["id"])
+
+    def lost_runtime_never_replays_queued_session_input(self):
+        source = self.session_source(ttl=90)
+        container = self.container(source)
+        identity = self.start_session(source)
+        self.stop("worker")
+        control = self.session_input(1, b"echo must-not-be-replayed > /workspace/once\n")
+        receipt = self.request("POST", f"/v1/sessions/{identity}/controls", control)
+        assert receipt["state"] == "pending", receipt
+        docker("kill", container)
+        self.launch("worker")
+        execution = self.wait_execution(identity)
+        assert execution["state"] == "failed" and execution["cleanup"] == "complete", execution
+        receipt = self.request("GET", f"/v1/sessions/{identity}/controls/1")
+        assert receipt["state"] == "unknown", receipt
+        assert self.request("POST", f"/v1/sessions/{identity}/controls", control) == receipt
+        sandbox = self.request("GET", f"/v1/sandboxes/{source}")
+        assert sandbox["state"] == "failed" and sandbox["cleanup"] == "complete", sandbox
+        assert not docker("ps", "-a", "--filter", f"id={container}", "--format", "{{.ID}}")
+        assert not docker("ps", "-a", "--filter", f"label=dev.goldenhoop.sandbox={source}", "--format", "{{.ID}}")
+
+    def paused_interactive_session_expires_while_api_is_down(self):
+        sandbox = self.session_source(ttl=12)
+        container = self.container(sandbox)
+        code = "import os,time; pid=os.fork(); os.setsid() if pid==0 else None; print('READY',flush=True); time.sleep(30)"
+        identity = self.start_session(sandbox, ["python3", "-c", code], {"rows": 24, "columns": 80}, timeout=60)
+        assert b"READY" in self.output(self.events(identity, first_output=True))
+        paused = self.request("POST", f"/v1/sandboxes/{sandbox}/pause", key=str(uuid.uuid4()))
+        self.wait_operation(paused["id"])
+        self.stop("api")
+        deadline = time.monotonic() + 25
+        while time.monotonic() < deadline:
+            if not docker("ps", "-a", "--filter", f"id={container}", "--format", "{{.ID}}"):
+                break
+            time.sleep(.2)
+        else:
+            raise AssertionError("paused interactive runtime survived expiration")
+        self.launch("api")
+        record = self.wait_execution(identity)
+        assert record["state"] == "timed_out" and record["cleanup"] == "complete", record
+        assert self.request("GET", f"/v1/sandboxes/{sandbox}")["cleanup"] == "complete"
+
     def pid_pressure_is_bounded_and_cleanup_is_confirmed(self):
         created = self.create(ttl=90, memory=1073741824)
         identity = created["sandbox"]["id"]
@@ -682,7 +813,11 @@ assert not alive,alive
                          "pid_pressure_is_bounded_and_cleanup_is_confirmed",
                          "failed_provision_and_repeat_delete_confirm_cleanup",
                          "diagnostics_use_actual_samples_and_distinguish_absence",
-                         "artifact_capture_retention_restarts_and_confirmed_delete")
+                         "artifact_capture_retention_restarts_and_confirmed_delete",
+                         "shell_state_survives_api_worker_restart_and_input_replay",
+                         "pty_public_controls_resize_binary_input_and_half_close_refusal",
+                         "lost_runtime_never_replays_queued_session_input",
+                         "paused_interactive_session_expires_while_api_is_down")
             for name in (() if self.args.clients_only else cases):
                 self.check(name, getattr(self, name))
             if self.args.rust_client and self.args.cli:

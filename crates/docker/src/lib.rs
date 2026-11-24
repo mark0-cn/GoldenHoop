@@ -15,6 +15,13 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
 
+mod sessions;
+struct ProbeSupport {
+    diagnostics: bool,
+    shell: bool,
+    pty: bool,
+}
+
 pub const INSTALL_LABEL: &str = "dev.goldenhoop.installation";
 pub const SANDBOX_LABEL: &str = "dev.goldenhoop.sandbox";
 pub const PROFILE_LABEL: &str = "dev.goldenhoop.profile";
@@ -620,7 +627,7 @@ impl DockerDriver {
         .map_err(|_| unavailable("agent bridge timed out"))?
     }
 
-    async fn smoke_test(&self) -> Result<bool, ApiError> {
+    async fn smoke_test(&self) -> Result<ProbeSupport, ApiError> {
         let info = self.docker.info().await.map_err(backend)?;
         if info.os_type.as_deref() != Some("linux")
             || !matches!(info.architecture.as_deref(), Some("x86_64" | "amd64"))
@@ -678,11 +685,13 @@ impl DockerDriver {
             if !completed { return Err(unavailable("runtime command smoke test did not finish")); }
             let diagnostic_support = self.diagnostics(&handle).await.ok().and_then(|sample|sample.usage)
                 .is_some_and(|usage| usage.cpu_time_ns.is_some() && usage.memory_bytes.is_some() && usage.host_tasks.is_some());
+            let shell=self.probe_session(&handle,false).await?;
+            let pty=if shell {self.probe_session(&handle,true).await?}else{false};
             self.docker.pause_container(&handle.backend_ref).await.map_err(backend)?;
             if self.inspect(&handle).await?.state != ObservedState::Paused { return Err(unavailable("runtime pause was not observed")); }
             self.docker.unpause_container(&handle.backend_ref).await.map_err(backend)?;
             self.bridge(&handle, &AgentRequest::Ping).await?;
-            Ok(diagnostic_support)
+            Ok(ProbeSupport {diagnostics:diagnostic_support,shell,pty})
         }.await;
         self.remove(&handle).await?;
         outcome
@@ -809,7 +818,7 @@ impl RuntimeDriver for DockerDriver {
         };
         let mut profile = self.profile.write().await;
         match result {
-            Ok(diagnostic_support) => {
+            Ok(support) => {
                 profile.availability = Availability::Available;
                 profile.capabilities = [
                     Capability::Commands,
@@ -819,8 +828,14 @@ impl RuntimeDriver for DockerDriver {
                 ]
                 .into_iter()
                 .collect();
-                if diagnostic_support {
+                if support.diagnostics {
                     profile.capabilities.insert(Capability::Diagnostics);
+                }
+                if support.shell {
+                    profile.capabilities.insert(Capability::ShellSessions);
+                }
+                if support.pty {
+                    profile.capabilities.insert(Capability::Pty);
                 }
                 profile.reason = None;
             }

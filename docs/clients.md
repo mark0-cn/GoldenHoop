@@ -74,6 +74,12 @@ Rust and Python sync/async clients expose create_artifact, artifact, list_artifa
 
 Capture observation failures preserve the artifact ID (`Error::Artifact` in Rust and ArtifactError in Python). Uncertain acceptance preserves the idempotency key; Python async cancellation records the available recovery ID/key in the exception notes. Cancelling observation does not delete retained output. Metadata remains readable while the worker is down, but content requests fail explicitly. CLI capture/delete prints recovery IDs before waiting, and downloads refuse to overwrite local files. See [artifact routes, limits and recovery](artifacts.md).
 
+## Interactive Rust sessions
+
+Rust Client now provides create_session, session, list_sessions, session_control, session_control_status, wait_session_control and session_socket. SessionSpec::shell starts /bin/sh with pipes; setting terminal requests an actual PTY. Keep the source sandbox lease alive while using the session. Use the ordinary execution cancel/events methods with its execution ID, and explicitly close the source lease to confirm sandbox cleanup.
+
+Controls carry caller-managed contiguous sequences. Save them before submitting. Applied confirms delivery, while Rejected and Unknown remain distinct final receipts. The WebSocket channel validates event IDs/order and explicit completion, exposes its last cursor, and reconnects with that cursor without restarting the process. Socket close/drop does not cancel remote execution. The actual Rust SDK contract covers REST stdin and terminal reconnect/input replay/resize. Python/CLI session bindings are still pending; see [the public session protocol](sessions.md).
+
 ## Actual validation
 
 The API harness can launch both services, the Rust SDK example, the Python sync/async SDK and the Rust CLI against a fresh installation:

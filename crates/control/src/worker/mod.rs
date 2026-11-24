@@ -1,6 +1,7 @@
 mod artifacts;
 mod executions;
 mod lifecycle;
+mod sessions;
 
 use std::{
     collections::HashMap,

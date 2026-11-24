@@ -19,9 +19,12 @@ use uuid::Uuid;
 use crate::{InternalArtifactCall, InternalFileCall, InternalSandboxCall, http::*};
 use base64::{Engine, engine::general_purpose::STANDARD};
 
+mod sessions;
+
 struct App {
     store: Store,
     worker_client: reqwest::Client,
+    session_sockets: Arc<tokio::sync::Semaphore>,
 }
 type AppState = Arc<App>;
 
@@ -42,6 +45,7 @@ pub fn router(store: Store, token: &str) -> Result<Router, ApiError> {
     let app = Arc::new(App {
         store,
         worker_client,
+        session_sockets: Arc::new(tokio::sync::Semaphore::new(64)),
     });
     Ok(Router::new()
         .route("/healthz", get(health))
@@ -65,6 +69,17 @@ pub fn router(store: Store, token: &str) -> Result<Router, ApiError> {
         .route("/v1/artifacts", get(list_artifacts))
         .route("/v1/artifacts/{id}", get(artifact).delete(delete_artifact))
         .route("/v1/artifacts/{id}/content", get(artifact_content))
+        .route("/v1/sandboxes/{id}/sessions", post(sessions::create))
+        .route("/v1/sessions", get(sessions::list))
+        .route("/v1/sessions/{id}", get(sessions::get_session))
+        .route("/v1/sessions/{id}/cancel", post(sessions::cancel_session))
+        .route("/v1/sessions/{id}/events", get(sessions::session_events))
+        .route("/v1/sessions/{id}/controls", post(sessions::control))
+        .route(
+            "/v1/sessions/{id}/controls/{sequence}",
+            get(sessions::control_status),
+        )
+        .route("/v1/sessions/{id}/socket", get(sessions::socket))
         .fallback(not_found)
         .layer(DefaultBodyLimit::max(24 * 1024 * 1024))
         .layer(ConcurrencyLimitLayer::new(64))

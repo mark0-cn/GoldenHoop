@@ -1,7 +1,9 @@
 //! Cross-platform client. Waiting and observing never imply cancellation.
 mod artifacts;
 mod events;
+mod sessions;
 pub use events::{EventStream, RunOutput};
+pub use sessions::SessionSocket;
 
 use std::{
     sync::Arc,
@@ -28,6 +30,7 @@ pub enum Error {
     UncertainRequest(String),
     Observation(Uuid, Box<Error>),
     Artifact(Uuid, Box<Error>),
+    SessionControl(Uuid, u64, Box<Error>),
     Cleanup(Uuid, Box<Error>, Box<Error>),
 }
 impl std::fmt::Display for Error {
@@ -46,6 +49,10 @@ impl std::fmt::Display for Error {
             ),
             Self::Observation(id, error) => write!(f, "execution {id} observation failed: {error}"),
             Self::Artifact(id, error) => write!(f, "artifact {id} operation failed: {error}"),
+            Self::SessionControl(id, sequence, error) => write!(
+                f,
+                "session {id} control {sequence} could not be confirmed: {error}; replay only the same sequence and content"
+            ),
             Self::Cleanup(id, original, error) => write!(
                 f,
                 "sandbox {id} cleanup is unconfirmed after {original}: {error}"
@@ -58,6 +65,7 @@ impl std::error::Error for Error {}
 struct Inner {
     http: reqwest::Client,
     base: Url,
+    authorization: HeaderValue,
 }
 #[derive(Clone)]
 pub struct Client(Arc<Inner>);
@@ -94,7 +102,7 @@ impl Client {
             .map_err(|_| Error::Protocol("invalid authentication header"))?;
         bearer.set_sensitive(true);
         let mut headers = HeaderMap::new();
-        headers.insert(AUTHORIZATION, bearer);
+        headers.insert(AUTHORIZATION, bearer.clone());
         let http = reqwest::Client::builder()
             .default_headers(headers)
             .no_proxy()
@@ -103,7 +111,11 @@ impl Client {
             .read_timeout(Duration::from_secs(30))
             .build()
             .map_err(|_| Error::Transport)?;
-        Ok(Self(Arc::new(Inner { http, base })))
+        Ok(Self(Arc::new(Inner {
+            http,
+            base,
+            authorization: bearer,
+        })))
     }
 
     fn url(&self, path: &str) -> Result<Url> {

@@ -29,6 +29,7 @@ impl Worker {
         stored: StoredExecution,
     ) -> Result<bool, ApiError> {
         let id = stored.execution.id;
+        let session = self.store.session_spec(id).await?;
         if stored.cancel_requested {
             self.cancellations
                 .lock()
@@ -40,6 +41,16 @@ impl Worker {
             Ok(AgentResponse::Execution(record)) => normalize(record, &stored)?,
             Ok(_) => return Err(unexpected()),
             Err(error) if error.code == ErrorCode::NotFound => {
+                if session.is_some() && stored.execution.started_at.is_some() {
+                    self.stop(
+                        self.store.sandbox(handle.sandbox_id).await?,
+                        driver,
+                        "previously started session is absent from its agent; refusing to rerun it",
+                        ExecutionState::Failed,
+                    )
+                    .await?;
+                    return Ok(false);
+                }
                 if driver.inspect(handle).await?.state != ObservedState::Running {
                     let sandbox = self.store.sandbox(handle.sandbox_id).await?;
                     self.stop(
@@ -62,16 +73,18 @@ impl Worker {
                     self.cancellations.lock().await.remove(&id);
                     return Ok(true);
                 }
-                match driver
-                    .rpc(
-                        handle,
-                        &AgentRequest::Start {
-                            id,
-                            command: stored.spec.clone(),
-                        },
-                    )
-                    .await
-                {
+                let start = if let Some(session) = &session {
+                    AgentRequest::StartSession {
+                        id,
+                        session: session.clone(),
+                    }
+                } else {
+                    AgentRequest::Start {
+                        id,
+                        command: stored.spec.clone(),
+                    }
+                };
+                match driver.rpc(handle, &start).await {
                     Ok(AgentResponse::Execution(record)) => normalize(record, &stored)?,
                     Ok(_) => return Err(unexpected()),
                     Err(error)
@@ -114,6 +127,17 @@ impl Worker {
                 Err(error) => {
                     return self.execution_unknown(handle, driver, stored, &error).await;
                 }
+            }
+        }
+        if session.is_some()
+            && let Err(error) = self
+                .sync_session_controls(handle, driver, &stored, &actual)
+                .await
+        {
+            if actual.state.is_terminal() {
+                report("terminal_session_input_unconfirmed", &error);
+            } else {
+                return self.execution_unknown(handle, driver, stored, &error).await;
             }
         }
         let AgentResponse::Events(mut events) = driver
