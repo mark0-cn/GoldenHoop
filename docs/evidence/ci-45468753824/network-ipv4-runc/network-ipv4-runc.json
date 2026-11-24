@@ -1,0 +1,491 @@
+{
+  "suite": "ipv4-routed-filter-prototype",
+  "runtime": "runc",
+  "scope": "fixture mechanism only; production policy/DNS/IPv6/L2/TLS and flow collection are not established",
+  "timestamp": "2026-11-24T19:22:11.506562+00:00",
+  "attempt": "6bed78ff73cf40ca8a14b0ddbf858408",
+  "receiver_publication": "routed",
+  "result": "failed",
+  "cleanup": "complete",
+  "cases": [
+    "default_deny_is_installed_before_unprivileged_workload_start",
+    "owned_filter_table_networks_and_containers_confirmed_absent"
+  ],
+  "resources": [
+    {
+      "role": "helper",
+      "container_id": "db8fabe0f8748eb4424596318eaef47e129bf7933a66e9a23ae66a4080fb71d0",
+      "boundary": {
+        "Runtime": "runc",
+        "NetworkMode": "host",
+        "ReadonlyRootfs": true,
+        "CapDrop": [
+          "ALL"
+        ],
+        "CapAdd": [
+          "CAP_NET_ADMIN"
+        ],
+        "SecurityOpt": [
+          "no-new-privileges:true"
+        ],
+        "Memory": 134217728,
+        "MemorySwap": 134217728,
+        "NanoCpus": 250000000,
+        "PidsLimit": 32
+      }
+    },
+    {
+      "role": "guest-net",
+      "network_id": "f75144769c110f9bea38ea7694f0ced52ff0f158499c63a0df5b77caaefdb644",
+      "options": {
+        "com.docker.network.bridge.enable_ip_masquerade": "false",
+        "com.docker.network.bridge.name": "ghnp6bed78ff73c"
+      },
+      "ipam": {
+        "Driver": "default",
+        "Options": {},
+        "Config": [
+          {
+            "Subnet": "172.18.0.0/16",
+            "Gateway": "172.18.0.1"
+          }
+        ]
+      }
+    },
+    {
+      "role": "target-net",
+      "network_id": "1b3daecb9eb8379381b524a03fef5e6ffde0754e899868430f86e64cb208e04a",
+      "options": {
+        "com.docker.network.bridge.gateway_mode_ipv4": "routed"
+      },
+      "ipam": {
+        "Driver": "default",
+        "Options": {},
+        "Config": [
+          {
+            "Subnet": "172.19.0.0/16",
+            "Gateway": "172.19.0.1"
+          }
+        ]
+      }
+    },
+    {
+      "role": "target",
+      "container_id": "a2baeb5fe17404d4f094b44ad227b0b7b0d97ae19240bcbea811f3ccdea7cbc7",
+      "boundary": {
+        "Runtime": "runc",
+        "NetworkMode": "1b3daecb9eb8379381b524a03fef5e6ffde0754e899868430f86e64cb208e04a",
+        "ReadonlyRootfs": true,
+        "CapDrop": [
+          "ALL"
+        ],
+        "CapAdd": null,
+        "SecurityOpt": [
+          "no-new-privileges:true"
+        ],
+        "Memory": 134217728,
+        "MemorySwap": 134217728,
+        "NanoCpus": 250000000,
+        "PidsLimit": 32
+      }
+    },
+    {
+      "role": "guest",
+      "container_id": "0e91de0e417e6786d84bf7237b86a65a6edc61864cbf2c9f1fa51280a7f3e266",
+      "boundary": {
+        "Runtime": "runc",
+        "NetworkMode": "f75144769c110f9bea38ea7694f0ced52ff0f158499c63a0df5b77caaefdb644",
+        "ReadonlyRootfs": true,
+        "CapDrop": [
+          "ALL"
+        ],
+        "CapAdd": null,
+        "SecurityOpt": [
+          "no-new-privileges:true"
+        ],
+        "Memory": 1073741824,
+        "MemorySwap": 1073741824,
+        "NanoCpus": 1000000000,
+        "PidsLimit": 256
+      }
+    }
+  ],
+  "observations": [
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a36626564373866663733636634306361386131346230646462663835383430380a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": true,
+      "reply_hex": "6f6b3a36626564373866663733636634306361386131346230646462663835383430380a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": true,
+      "reply_hex": "6f6b3a36626564373866663733636634306361386131346230646462663835383430380a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.18.0.1",
+      "port": 42963,
+      "ok": true,
+      "reply_hex": "6f6b3a36626564373866663733636634306361386131346230646462663835383430380a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": false,
+      "error": "TimeoutError"
+    },
+    {
+      "origin": "workload",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": false,
+      "error": "TimeoutError"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a36626564373866663733636634306361386131346230646462663835383430380a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": true,
+      "reply_hex": "6f6b3a36626564373866663733636634306361386131346230646462663835383430380a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": true,
+      "reply_hex": "6f6b3a36626564373866663733636634306361386131346230646462663835383430380a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.18.0.1",
+      "port": 42963,
+      "ok": true,
+      "reply_hex": "6f6b3a36626564373866663733636634306361386131346230646462663835383430380a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": false,
+      "error": "TimeoutError"
+    }
+  ],
+  "source_files_sha256": {
+    "tests/network_contract.py": "a42ecd66eb86b8f64b112886808e30c1076d6f9e47b5f0db0c15dc9c1a390ce6",
+    "tests/network_samples.py": "7a776745a3d328313470c240207f726b540a2787562dda2367d19cae26da0a45",
+    "tests/fixtures/network.Dockerfile": "01e6e4a232ddfef8f64763c4612c3812b2ea38b9a450ac344091f6b6a1cf5b97"
+  },
+  "image_id": "sha256:0edca3214acb482dc853daa20d632d6234ff8b52062caade3837b1a40afe83b6",
+  "docker": {
+    "Platform": {
+      "Name": "Docker Engine - Community"
+    },
+    "Version": "29.4.2",
+    "ApiVersion": "1.54",
+    "MinAPIVersion": "1.40",
+    "Os": "linux",
+    "Arch": "amd64",
+    "Components": [
+      {
+        "Name": "Engine",
+        "Version": "29.4.2",
+        "Details": {
+          "ApiVersion": "1.54",
+          "Arch": "amd64",
+          "BuildTime": "Fri May  1 10:24:04 2026",
+          "Experimental": "false",
+          "GitCommit": "d329809",
+          "GoVersion": "go1.26.2",
+          "KernelVersion": "7.0.0-1020-azure",
+          "MinAPIVersion": "1.40",
+          "Module": "github.com/moby/moby/v2",
+          "ModuleVersion": "v2.0.0+unknown",
+          "Os": "linux"
+        }
+      },
+      {
+        "Name": "containerd",
+        "Version": "v2.4.2",
+        "Details": {
+          "GitCommit": "b7a25261e029d68978bbf290df0a62fc819b3c51"
+        }
+      },
+      {
+        "Name": "runc",
+        "Version": "1.5.3",
+        "Details": {
+          "GitCommit": "v1.5.3-0-g46365c62"
+        }
+      },
+      {
+        "Name": "docker-init",
+        "Version": "0.19.0",
+        "Details": {
+          "GitCommit": "de40ad0"
+        }
+      }
+    ],
+    "GitCommit": "d329809",
+    "GoVersion": "go1.26.2",
+    "KernelVersion": "7.0.0-1020-azure",
+    "BuildTime": "2026-05-01T10:24:04.000000000+00:00"
+  },
+  "target_port_bindings": {
+    "19001/tcp": [
+      {
+        "HostIp": "0.0.0.0",
+        "HostPort": ""
+      }
+    ],
+    "19002/udp": [
+      {
+        "HostIp": "0.0.0.0",
+        "HostPort": ""
+      }
+    ],
+    "19003/tcp": [
+      {
+        "HostIp": "0.0.0.0",
+        "HostPort": ""
+      }
+    ]
+  },
+  "owner_marker_validation": "nft-text-table-comment",
+  "transactions": [
+    "add table inet ghnp_6bed78ff73cf40ca8a14b0ddbf858408 { comment \"goldenhoop-network-prototype:6bed78ff73cf40ca8a14b0ddbf858408\"; }\nadd chain inet ghnp_6bed78ff73cf40ca8a14b0ddbf858408 input { type filter hook input priority -190; policy accept; }\nadd rule inet ghnp_6bed78ff73cf40ca8a14b0ddbf858408 input iifname \"ghnp6bed78ff73c\" counter drop\nadd chain inet ghnp_6bed78ff73cf40ca8a14b0ddbf858408 egress\nadd chain inet ghnp_6bed78ff73cf40ca8a14b0ddbf858408 forward { type filter hook forward priority -190; policy accept; }\nadd rule inet ghnp_6bed78ff73cf40ca8a14b0ddbf858408 forward iifname \"ghnp6bed78ff73c\" jump egress\nadd rule inet ghnp_6bed78ff73cf40ca8a14b0ddbf858408 egress counter drop\n",
+    "flush chain inet ghnp_6bed78ff73cf40ca8a14b0ddbf858408 egress\nadd rule inet ghnp_6bed78ff73cf40ca8a14b0ddbf858408 egress ip daddr 172.19.0.2 tcp dport 19001 counter accept\nadd rule inet ghnp_6bed78ff73cf40ca8a14b0ddbf858408 egress counter drop\n"
+  ],
+  "workload_identity": {
+    "uid": 1000,
+    "gid": 1000,
+    "groups": [
+      1000
+    ],
+    "credentials": {
+      "CapEff": "0000000000000000",
+      "NoNewPrivs": "1"
+    },
+    "nft_exit_code": 1
+  },
+  "error": "AssertionError",
+  "failure_filter_table": [
+    {
+      "metainfo": {
+        "version": "1.0.6",
+        "release_name": "Lester Gooch #5",
+        "json_schema_version": 1
+      }
+    },
+    {
+      "table": {
+        "family": "inet",
+        "name": "ghnp_6bed78ff73cf40ca8a14b0ddbf858408",
+        "handle": 7
+      }
+    },
+    {
+      "chain": {
+        "family": "inet",
+        "table": "ghnp_6bed78ff73cf40ca8a14b0ddbf858408",
+        "name": "input",
+        "handle": 1,
+        "type": "filter",
+        "hook": "input",
+        "prio": -190,
+        "policy": "accept"
+      }
+    },
+    {
+      "chain": {
+        "family": "inet",
+        "table": "ghnp_6bed78ff73cf40ca8a14b0ddbf858408",
+        "name": "egress",
+        "handle": 3
+      }
+    },
+    {
+      "chain": {
+        "family": "inet",
+        "table": "ghnp_6bed78ff73cf40ca8a14b0ddbf858408",
+        "name": "forward",
+        "handle": 4,
+        "type": "filter",
+        "hook": "forward",
+        "prio": -190,
+        "policy": "accept"
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "ghnp_6bed78ff73cf40ca8a14b0ddbf858408",
+        "chain": "input",
+        "handle": 2,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": {
+                "meta": {
+                  "key": "iifname"
+                }
+              },
+              "right": "ghnp6bed78ff73c"
+            }
+          },
+          {
+            "counter": {
+              "packets": 0,
+              "bytes": 0
+            }
+          },
+          {
+            "drop": null
+          }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "ghnp_6bed78ff73cf40ca8a14b0ddbf858408",
+        "chain": "egress",
+        "handle": 7,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": {
+                "payload": {
+                  "protocol": "ip",
+                  "field": "daddr"
+                }
+              },
+              "right": "172.19.0.2"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": {
+                "payload": {
+                  "protocol": "tcp",
+                  "field": "dport"
+                }
+              },
+              "right": 19001
+            }
+          },
+          {
+            "counter": {
+              "packets": 2,
+              "bytes": 120
+            }
+          },
+          {
+            "accept": null
+          }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "ghnp_6bed78ff73cf40ca8a14b0ddbf858408",
+        "chain": "egress",
+        "handle": 8,
+        "expr": [
+          {
+            "counter": {
+              "packets": 0,
+              "bytes": 0
+            }
+          },
+          {
+            "drop": null
+          }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "ghnp_6bed78ff73cf40ca8a14b0ddbf858408",
+        "chain": "forward",
+        "handle": 5,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": {
+                "meta": {
+                  "key": "iifname"
+                }
+              },
+              "right": "ghnp6bed78ff73c"
+            }
+          },
+          {
+            "jump": {
+              "target": "egress"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "ephemeral_ci_host_diagnostics": {
+    "nft --json list ruleset": {
+      "exit": 0,
+      "stdout": "{\"nftables\": [{\"metainfo\": {\"version\": \"1.0.6\", \"release_name\": \"Lester Gooch #5\", \"json_schema_version\": 1}}, {\"table\": {\"family\": \"ip\", \"name\": \"security\", \"handle\": 1}}, {\"chain\": {\"family\": \"ip\", \"table\": \"security\", \"name\": \"OUTPUT\", \"handle\": 1, \"type\": \"filter\", \"hook\": \"output\", \"prio\": 150, \"policy\": \"accept\"}}, {\"rule\": {\"family\": \"ip\", \"table\": \"security\", \"chain\": \"OUTPUT\", \"handle\": 2, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"ip\", \"field\": \"daddr\"}}, \"right\": \"168.63.129.16\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"tcp\", \"field\": \"dport\"}}, \"right\": 53}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"accept\": null}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"security\", \"chain\": \"OUTPUT\", \"handle\": 3, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"ip\", \"field\": \"daddr\"}}, \"right\": \"168.63.129.16\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"ip\", \"field\": \"protocol\"}}, \"right\": \"tcp\"}}, {\"xt\": {\"type\": \"match\", \"name\": \"owner\"}}, {\"counter\": {\"packets\": 1162, \"bytes\": 386606}}, {\"accept\": null}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"security\", \"chain\": \"OUTPUT\", \"handle\": 4, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"ip\", \"field\": \"daddr\"}}, \"right\": \"168.63.129.16\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"ip\", \"field\": \"protocol\"}}, \"right\": \"tcp\"}}, {\"xt\": {\"type\": \"match\", \"name\": \"conntrack\"}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"drop\": null}]}}, {\"table\": {\"family\": \"ip\", \"name\": \"nat\", \"handle\": 2}}, {\"chain\": {\"family\": \"ip\", \"table\": \"nat\", \"name\": \"DOCKER\", \"handle\": 1}}, {\"chain\": {\"family\": \"ip\", \"table\": \"nat\", \"name\": \"PREROUTING\", \"handle\": 2, \"type\": \"nat\", \"hook\": \"prerouting\", \"prio\": -100, \"policy\": \"accept\"}}, {\"chain\": {\"family\": \"ip\", \"table\": \"nat\", \"name\": \"OUTPUT\", \"handle\": 4, \"type\": \"nat\", \"hook\": \"output\", \"prio\": -100, \"policy\": \"accept\"}}, {\"chain\": {\"family\": \"ip\", \"table\": \"nat\", \"name\": \"POSTROUTING\", \"handle\": 6, \"type\": \"nat\", \"hook\": \"postrouting\", \"prio\": 100, \"policy\": \"accept\"}}, {\"rule\": {\"family\": \"ip\", \"table\": \"nat\", \"chain\": \"PREROUTING\", \"handle\": 3, \"expr\": [{\"xt\": {\"type\": \"match\", \"name\": \"addrtype\"}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"jump\": {\"target\": \"DOCKER\"}}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"nat\", \"chain\": \"OUTPUT\", \"handle\": 5, \"expr\": [{\"match\": {\"op\": \"!=\", \"left\": {\"payload\": {\"protocol\": \"ip\", \"field\": \"daddr\"}}, \"right\": {\"prefix\": {\"addr\": \"127.0.0.0\", \"len\": 8}}}}, {\"xt\": {\"type\": \"match\", \"name\": \"addrtype\"}}, {\"counter\": {\"packets\": 2, \"bytes\": 120}}, {\"jump\": {\"target\": \"DOCKER\"}}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"nat\", \"chain\": \"POSTROUTING\", \"handle\": 8, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"ip\", \"field\": \"saddr\"}}, \"right\": {\"prefix\": {\"addr\": \"172.17.0.0\", \"len\": 16}}}}, {\"match\": {\"op\": \"!=\", \"left\": {\"meta\": {\"key\": \"oifname\"}}, \"right\": \"docker0\"}}, {\"counter\": {\"packets\": 27, \"bytes\": 1686}}, {\"xt\": {\"type\": \"target\", \"name\": \"MASQUERADE\"}}]}}, {\"table\": {\"family\": \"ip\", \"name\": \"filter\", \"handle\": 3}}, {\"chain\": {\"family\": \"ip\", \"table\": \"filter\", \"name\": \"DOCKER\", \"handle\": 1}}, {\"chain\": {\"family\": \"ip\", \"table\": \"filter\", \"name\": \"DOCKER-FORWARD\", \"handle\": 2}}, {\"chain\": {\"family\": \"ip\", \"table\": \"filter\", \"name\": \"DOCKER-BRIDGE\", \"handle\": 3}}, {\"chain\": {\"family\": \"ip\", \"table\": \"filter\", \"name\": \"DOCKER-CT\", \"handle\": 4}}, {\"chain\": {\"family\": \"ip\", \"table\": \"filter\", \"name\": \"DOCKER-INTERNAL\", \"handle\": 5}}, {\"chain\": {\"family\": \"ip\", \"table\": \"filter\", \"name\": \"FORWARD\", \"handle\": 6, \"type\": \"filter\", \"hook\": \"forward\", \"prio\": 0, \"policy\": \"drop\"}}, {\"chain\": {\"family\": \"ip\", \"table\": \"filter\", \"name\": \"DOCKER-USER\", \"handle\": 15}}, {\"rule\": {\"family\": \"ip\", \"table\": \"filter\", \"chain\": \"DOCKER\", \"handle\": 32, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"ip\", \"field\": \"daddr\"}}, \"right\": \"172.19.0.2\"}}, {\"match\": {\"op\": \"!=\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"br-1b3daecb9eb8\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"oifname\"}}, \"right\": \"br-1b3daecb9eb8\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"tcp\", \"field\": \"dport\"}}, \"right\": 19003}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"accept\": null}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"filter\", \"chain\": \"DOCKER\", \"handle\": 31, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"ip\", \"field\": \"daddr\"}}, \"right\": \"172.19.0.2\"}}, {\"match\": {\"op\": \"!=\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"br-1b3daecb9eb8\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"oifname\"}}, \"right\": \"br-1b3daecb9eb8\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"udp\", \"field\": \"dport\"}}, \"right\": 19002}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"accept\": null}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"filter\", \"chain\": \"DOCKER\", \"handle\": 30, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"ip\", \"field\": \"daddr\"}}, \"right\": \"172.19.0.2\"}}, {\"match\": {\"op\": \"!=\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"br-1b3daecb9eb8\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"oifname\"}}, \"right\": \"br-1b3daecb9eb8\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"tcp\", \"field\": \"dport\"}}, \"right\": 19001}}, {\"counter\": {\"packets\": 2, \"bytes\": 120}}, {\"accept\": null}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"filter\", \"chain\": \"DOCKER\", \"handle\": 18, \"expr\": [{\"match\": {\"op\": \"!=\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"docker0\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"oifname\"}}, \"right\": \"docker0\"}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"drop\": null}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"filter\", \"chain\": \"DOCKER\", \"handle\": 22, \"expr\": [{\"match\": {\"op\": \"!=\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"ghnp6bed78ff73c\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"oifname\"}}, \"right\": \"ghnp6bed78ff73c\"}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"drop\": null}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"filter\", \"chain\": \"DOCKER\", \"handle\": 25, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"oifname\"}}, \"right\": \"br-1b3daecb9eb8\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"ip\", \"field\": \"protocol\"}}, \"right\": \"icmp\"}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"accept\": null}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"filter\", \"chain\": \"DOCKER\", \"handle\": 27, \"expr\": [{\"match\": {\"op\": \"!=\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"br-1b3daecb9eb8\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"oifname\"}}, \"right\": \"br-1b3daecb9eb8\"}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"drop\": null}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"filter\", \"chain\": \"DOCKER-FORWARD\", \"handle\": 10, \"expr\": [{\"counter\": {\"packets\": 15206, \"bytes\": 152197446}}, {\"jump\": {\"target\": \"DOCKER-CT\"}}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"filter\", \"chain\": \"DOCKER-FORWARD\", \"handle\": 9, \"expr\": [{\"counter\": {\"packets\": 5602, \"bytes\": 370278}}, {\"jump\": {\"target\": \"DOCKER-INTERNAL\"}}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"filter\", \"chain\": \"DOCKER-FORWARD\", \"handle\": 8, \"expr\": [{\"counter\": {\"packets\": 5602, \"bytes\": 370278}}, {\"jump\": {\"target\": \"DOCKER-BRIDGE\"}}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"filter\", \"chain\": \"DOCKER-FORWARD\", \"handle\": 17, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"docker0\"}}, {\"counter\": {\"packets\": 5600, \"bytes\": 370158}}, {\"accept\": null}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"filter\", \"chain\": \"DOCKER-FORWARD\", \"handle\": 21, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"ghnp6bed78ff73c\"}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"accept\": null}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"filter\", \"chain\": \"DOCKER-FORWARD\", \"handle\": 26, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"br-1b3daecb9eb8\"}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"accept\": null}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"filter\", \"chain\": \"DOCKER-BRIDGE\", \"handle\": 20, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"oifname\"}}, \"right\": \"docker0\"}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"jump\": {\"target\": \"DOCKER\"}}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"filter\", \"chain\": \"DOCKER-BRIDGE\", \"handle\": 24, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"oifname\"}}, \"right\": \"ghnp6bed78ff73c\"}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"jump\": {\"target\": \"DOCKER\"}}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"filter\", \"chain\": \"DOCKER-BRIDGE\", \"handle\": 29, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"oifname\"}}, \"right\": \"br-1b3daecb9eb8\"}}, {\"counter\": {\"packets\": 2, \"bytes\": 120}}, {\"jump\": {\"target\": \"DOCKER\"}}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"filter\", \"chain\": \"DOCKER-CT\", \"handle\": 19, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"oifname\"}}, \"right\": \"docker0\"}}, {\"xt\": {\"type\": \"match\", \"name\": \"conntrack\"}}, {\"counter\": {\"packets\": 9604, \"bytes\": 151827168}}, {\"accept\": null}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"filter\", \"chain\": \"DOCKER-CT\", \"handle\": 23, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"oifname\"}}, \"right\": \"ghnp6bed78ff73c\"}}, {\"xt\": {\"type\": \"match\", \"name\": \"conntrack\"}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"accept\": null}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"filter\", \"chain\": \"DOCKER-CT\", \"handle\": 28, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"oifname\"}}, \"right\": \"br-1b3daecb9eb8\"}}, {\"xt\": {\"type\": \"match\", \"name\": \"conntrack\"}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"accept\": null}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"filter\", \"chain\": \"FORWARD\", \"handle\": 16, \"expr\": [{\"counter\": {\"packets\": 15206, \"bytes\": 152197446}}, {\"jump\": {\"target\": \"DOCKER-USER\"}}]}}, {\"rule\": {\"family\": \"ip\", \"table\": \"filter\", \"chain\": \"FORWARD\", \"handle\": 7, \"expr\": [{\"counter\": {\"packets\": 15206, \"bytes\": 152197446}}, {\"jump\": {\"target\": \"DOCKER-FORWARD\"}}]}}, {\"table\": {\"family\": \"ip6\", \"name\": \"nat\", \"handle\": 4}}, {\"chain\": {\"family\": \"ip6\", \"table\": \"nat\", \"name\": \"DOCKER\", \"handle\": 1}}, {\"chain\": {\"family\": \"ip6\", \"table\": \"nat\", \"name\": \"PREROUTING\", \"handle\": 2, \"type\": \"nat\", \"hook\": \"prerouting\", \"prio\": -100, \"policy\": \"accept\"}}, {\"chain\": {\"family\": \"ip6\", \"table\": \"nat\", \"name\": \"OUTPUT\", \"handle\": 4, \"type\": \"nat\", \"hook\": \"output\", \"prio\": -100, \"policy\": \"accept\"}}, {\"rule\": {\"family\": \"ip6\", \"table\": \"nat\", \"chain\": \"PREROUTING\", \"handle\": 3, \"expr\": [{\"xt\": {\"type\": \"match\", \"name\": \"addrtype\"}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"jump\": {\"target\": \"DOCKER\"}}]}}, {\"rule\": {\"family\": \"ip6\", \"table\": \"nat\", \"chain\": \"OUTPUT\", \"handle\": 5, \"expr\": [{\"match\": {\"op\": \"!=\", \"left\": {\"payload\": {\"protocol\": \"ip6\", \"field\": \"daddr\"}}, \"right\": \"::1\"}}, {\"xt\": {\"type\": \"match\", \"name\": \"addrtype\"}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"jump\": {\"target\": \"DOCKER\"}}]}}, {\"table\": {\"family\": \"ip6\", \"name\": \"filter\", \"handle\": 5}}, {\"chain\": {\"family\": \"ip6\", \"table\": \"filter\", \"name\": \"DOCKER\", \"handle\": 1}}, {\"chain\": {\"family\": \"ip6\", \"table\": \"filter\", \"name\": \"DOCKER-FORWARD\", \"handle\": 2}}, {\"chain\": {\"family\": \"ip6\", \"table\": \"filter\", \"name\": \"DOCKER-BRIDGE\", \"handle\": 3}}, {\"chain\": {\"family\": \"ip6\", \"table\": \"filter\", \"name\": \"DOCKER-CT\", \"handle\": 4}}, {\"chain\": {\"family\": \"ip6\", \"table\": \"filter\", \"name\": \"DOCKER-INTERNAL\", \"handle\": 5}}, {\"chain\": {\"family\": \"ip6\", \"table\": \"filter\", \"name\": \"FORWARD\", \"handle\": 6, \"type\": \"filter\", \"hook\": \"forward\", \"prio\": 0, \"policy\": \"accept\"}}, {\"chain\": {\"family\": \"ip6\", \"table\": \"filter\", \"name\": \"DOCKER-USER\", \"handle\": 11}}, {\"rule\": {\"family\": \"ip6\", \"table\": \"filter\", \"chain\": \"DOCKER-FORWARD\", \"handle\": 10, \"expr\": [{\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"jump\": {\"target\": \"DOCKER-CT\"}}]}}, {\"rule\": {\"family\": \"ip6\", \"table\": \"filter\", \"chain\": \"DOCKER-FORWARD\", \"handle\": 9, \"expr\": [{\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"jump\": {\"target\": \"DOCKER-INTERNAL\"}}]}}, {\"rule\": {\"family\": \"ip6\", \"table\": \"filter\", \"chain\": \"DOCKER-FORWARD\", \"handle\": 8, \"expr\": [{\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"jump\": {\"target\": \"DOCKER-BRIDGE\"}}]}}, {\"rule\": {\"family\": \"ip6\", \"table\": \"filter\", \"chain\": \"FORWARD\", \"handle\": 12, \"expr\": [{\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"jump\": {\"target\": \"DOCKER-USER\"}}]}}, {\"rule\": {\"family\": \"ip6\", \"table\": \"filter\", \"chain\": \"FORWARD\", \"handle\": 7, \"expr\": [{\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"jump\": {\"target\": \"DOCKER-FORWARD\"}}]}}, {\"table\": {\"family\": \"ip\", \"name\": \"raw\", \"handle\": 6}}, {\"chain\": {\"family\": \"ip\", \"table\": \"raw\", \"name\": \"PREROUTING\", \"handle\": 1, \"type\": \"filter\", \"hook\": \"prerouting\", \"prio\": -300, \"policy\": \"accept\"}}, {\"rule\": {\"family\": \"ip\", \"table\": \"raw\", \"chain\": \"PREROUTING\", \"handle\": 6, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"ip\", \"field\": \"daddr\"}}, \"right\": \"172.18.0.2\"}}, {\"match\": {\"op\": \"!=\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"ghnp6bed78ff73c\"}}, {\"counter\": {\"packets\": 3, \"bytes\": 180}}, {\"drop\": null}]}}, {\"table\": {\"family\": \"inet\", \"name\": \"ghnp_6bed78ff73cf40ca8a14b0ddbf858408\", \"handle\": 7}}, {\"chain\": {\"family\": \"inet\", \"table\": \"ghnp_6bed78ff73cf40ca8a14b0ddbf858408\", \"name\": \"input\", \"handle\": 1, \"type\": \"filter\", \"hook\": \"input\", \"prio\": -190, \"policy\": \"accept\"}}, {\"chain\": {\"family\": \"inet\", \"table\": \"ghnp_6bed78ff73cf40ca8a14b0ddbf858408\", \"name\": \"egress\", \"handle\": 3}}, {\"chain\": {\"family\": \"inet\", \"table\": \"ghnp_6bed78ff73cf40ca8a14b0ddbf858408\", \"name\": \"forward\", \"handle\": 4, \"type\": \"filter\", \"hook\": \"forward\", \"prio\": -190, \"policy\": \"accept\"}}, {\"rule\": {\"family\": \"inet\", \"table\": \"ghnp_6bed78ff73cf40ca8a14b0ddbf858408\", \"chain\": \"input\", \"handle\": 2, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"ghnp6bed78ff73c\"}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"drop\": null}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"ghnp_6bed78ff73cf40ca8a14b0ddbf858408\", \"chain\": \"egress\", \"handle\": 7, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"ip\", \"field\": \"daddr\"}}, \"right\": \"172.19.0.2\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"tcp\", \"field\": \"dport\"}}, \"right\": 19001}}, {\"counter\": {\"packets\": 2, \"bytes\": 120}}, {\"accept\": null}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"ghnp_6bed78ff73cf40ca8a14b0ddbf858408\", \"chain\": \"egress\", \"handle\": 8, \"expr\": [{\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"drop\": null}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"ghnp_6bed78ff73cf40ca8a14b0ddbf858408\", \"chain\": \"forward\", \"handle\": 5, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"ghnp6bed78ff73c\"}}, {\"jump\": {\"target\": \"egress\"}}]}}]}\n",
+      "stderr": ""
+    },
+    "iptables-save": {
+      "exit": 0,
+      "stdout": "# Generated by iptables-save v1.8.9 (nf_tables) on Tue Nov 24 19:22:20 2026\n*security\n:INPUT ACCEPT [0:0]\n:FORWARD ACCEPT [0:0]\n:OUTPUT ACCEPT [7476:999163]\n-A OUTPUT -d 168.63.129.16/32 -p tcp -m tcp --dport 53 -j ACCEPT\n-A OUTPUT -d 168.63.129.16/32 -p tcp -m owner --uid-owner 0 -j ACCEPT\n-A OUTPUT -d 168.63.129.16/32 -p tcp -m conntrack --ctstate INVALID,NEW -j DROP\nCOMMIT\n# Completed on Tue Nov 24 19:22:20 2026\n# Generated by iptables-save v1.8.9 (nf_tables) on Tue Nov 24 19:22:20 2026\n*raw\n:PREROUTING ACCEPT [16445:152427136]\n:OUTPUT ACCEPT [0:0]\n-A PREROUTING -d 172.18.0.2/32 ! -i ghnp6bed78ff73c -j DROP\nCOMMIT\n# Completed on Tue Nov 24 19:22:20 2026\n# Generated by iptables-save v1.8.9 (nf_tables) on Tue Nov 24 19:22:20 2026\n*filter\n:INPUT ACCEPT [0:0]\n:FORWARD DROP [0:0]\n:OUTPUT ACCEPT [0:0]\n:DOCKER - [0:0]\n:DOCKER-BRIDGE - [0:0]\n:DOCKER-CT - [0:0]\n:DOCKER-FORWARD - [0:0]\n:DOCKER-INTERNAL - [0:0]\n:DOCKER-USER - [0:0]\n-A FORWARD -j DOCKER-USER\n-A FORWARD -j DOCKER-FORWARD\n-A DOCKER -d 172.19.0.2/32 ! -i br-1b3daecb9eb8 -o br-1b3daecb9eb8 -p tcp -m tcp --dport 19003 -j ACCEPT\n-A DOCKER -d 172.19.0.2/32 ! -i br-1b3daecb9eb8 -o br-1b3daecb9eb8 -p udp -m udp --dport 19002 -j ACCEPT\n-A DOCKER -d 172.19.0.2/32 ! -i br-1b3daecb9eb8 -o br-1b3daecb9eb8 -p tcp -m tcp --dport 19001 -j ACCEPT\n-A DOCKER ! -i docker0 -o docker0 -j DROP\n-A DOCKER ! -i ghnp6bed78ff73c -o ghnp6bed78ff73c -j DROP\n-A DOCKER -o br-1b3daecb9eb8 -p icmp -j ACCEPT\n-A DOCKER ! -i br-1b3daecb9eb8 -o br-1b3daecb9eb8 -j DROP\n-A DOCKER-BRIDGE -o docker0 -j DOCKER\n-A DOCKER-BRIDGE -o ghnp6bed78ff73c -j DOCKER\n-A DOCKER-BRIDGE -o br-1b3daecb9eb8 -j DOCKER\n-A DOCKER-CT -o docker0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT\n-A DOCKER-CT -o ghnp6bed78ff73c -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT\n-A DOCKER-CT -o br-1b3daecb9eb8 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT\n-A DOCKER-FORWARD -j DOCKER-CT\n-A DOCKER-FORWARD -j DOCKER-INTERNAL\n-A DOCKER-FORWARD -j DOCKER-BRIDGE\n-A DOCKER-FORWARD -i docker0 -j ACCEPT\n-A DOCKER-FORWARD -i ghnp6bed78ff73c -j ACCEPT\n-A DOCKER-FORWARD -i br-1b3daecb9eb8 -j ACCEPT\nCOMMIT\n# Completed on Tue Nov 24 19:22:20 2026\n# Generated by iptables-save v1.8.9 (nf_tables) on Tue Nov 24 19:22:20 2026\n*nat\n:PREROUTING ACCEPT [31:1927]\n:INPUT ACCEPT [0:0]\n:OUTPUT ACCEPT [360:24825]\n:POSTROUTING ACCEPT [361:24885]\n:DOCKER - [0:0]\n-A PREROUTING -m addrtype --dst-type LOCAL -j DOCKER\n-A OUTPUT ! -d 127.0.0.0/8 -m addrtype --dst-type LOCAL -j DOCKER\n-A POSTROUTING -s 172.17.0.0/16 ! -o docker0 -j MASQUERADE\nCOMMIT\n# Completed on Tue Nov 24 19:22:20 2026\n",
+      "stderr": ""
+    },
+    "iptables-legacy-save": {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    "ip -json route show": {
+      "exit": 0,
+      "stdout": "[{\"dst\":\"default\",\"gateway\":\"10.1.0.1\",\"dev\":\"eth0\",\"protocol\":\"dhcp\",\"prefsrc\":\"10.1.0.253\",\"metric\":100,\"flags\":[]},{\"dst\":\"10.1.0.0/20\",\"dev\":\"eth0\",\"protocol\":\"kernel\",\"scope\":\"link\",\"prefsrc\":\"10.1.0.253\",\"metric\":100,\"flags\":[]},{\"dst\":\"10.1.0.1\",\"dev\":\"eth0\",\"protocol\":\"dhcp\",\"scope\":\"link\",\"prefsrc\":\"10.1.0.253\",\"metric\":100,\"flags\":[]},{\"dst\":\"168.63.129.16\",\"gateway\":\"10.1.0.1\",\"dev\":\"eth0\",\"protocol\":\"dhcp\",\"prefsrc\":\"10.1.0.253\",\"metric\":100,\"flags\":[]},{\"dst\":\"169.254.169.254\",\"gateway\":\"10.1.0.1\",\"dev\":\"eth0\",\"protocol\":\"dhcp\",\"prefsrc\":\"10.1.0.253\",\"metric\":100,\"flags\":[]},{\"dst\":\"172.17.0.0/16\",\"dev\":\"docker0\",\"protocol\":\"kernel\",\"scope\":\"link\",\"prefsrc\":\"172.17.0.1\",\"flags\":[\"linkdown\"]},{\"dst\":\"172.18.0.0/16\",\"dev\":\"ghnp6bed78ff73c\",\"protocol\":\"kernel\",\"scope\":\"link\",\"prefsrc\":\"172.18.0.1\",\"flags\":[]},{\"dst\":\"172.19.0.0/16\",\"dev\":\"br-1b3daecb9eb8\",\"protocol\":\"kernel\",\"scope\":\"link\",\"prefsrc\":\"172.19.0.1\",\"flags\":[]}]\n",
+      "stderr": ""
+    }
+  },
+  "owned_filter_table_absent": true,
+  "image_removed": true
+}

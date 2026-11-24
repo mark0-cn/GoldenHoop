@@ -217,7 +217,7 @@ class Contract:
             links = json.loads(self.exec(self.helper, "ip", "-json", "link", "show").stdout)
             assert not any(link["ifname"] == self.bridge for link in links)
             guest_network, observed = self.network("guest-net", "--opt", "com.docker.network.bridge.name=" + self.bridge,
-                                                  "--opt", "com.docker.network.bridge.enable_ip_masquerade=false")
+                                                  "--opt", "com.docker.network.bridge.enable_ip_masquerade=true")
             assert observed["Options"]["com.docker.network.bridge.name"] == self.bridge
             self.gateway = next(config["Gateway"] for config in observed["IPAM"]["Config"] if ipaddress.ip_network(config["Subnet"]).version == 4)
             assert str(ipaddress.IPv4Address(self.gateway)) == self.gateway
