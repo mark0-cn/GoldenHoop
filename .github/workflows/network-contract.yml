@@ -35,3 +35,55 @@ jobs:
         with:
           name: network-prerequisites
           path: evidence/
+  routed-ipv4:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [runc, runsc]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install gVisor on the disposable CI runner
+        if: matrix.runtime == 'runsc'
+        shell: bash
+        run: |
+          set -euo pipefail
+          scratch=$(mktemp -d)
+          trap 'rm -rf "$scratch"' EXIT
+          base="https://storage.googleapis.com/gvisor/releases/release/latest/$(uname -m)"
+          cd "$scratch"
+          curl --fail --location --retry 3 "$base/gvisor.tar.zstd" -o gvisor.tar.zstd
+          curl --fail --location --retry 3 "$base/gvisor.tar.zstd.sha512" -o gvisor.tar.zstd.sha512
+          sha512sum -c gvisor.tar.zstd.sha512
+          sudo tar --zstd -xf gvisor.tar.zstd -C /usr/local/bin
+          sudo /usr/local/bin/runsc install
+          sudo systemctl reload docker
+          runsc --version
+      - name: Build the actual agent base and public network fixture
+        run: |
+          docker build --label dev.goldenhoop.build=network-prototype -f images/agent/Dockerfile -t goldenhoop-agent:test .
+          docker build -f tests/fixtures/network.Dockerfile -t goldenhoop-network-fixture:test .
+      - name: Verify the IPv4 routed-filter mechanism and scoped collection
+        run: python3 -B tests/network_contract.py --runtime ${{ matrix.runtime }} --remove-image --output evidence/network-ipv4-${{ matrix.runtime }}.json
+      - name: Verify owned containers and networks are absent
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          remaining=$(docker ps -a --filter label=dev.goldenhoop.test=network-contract --format '{{.ID}}')
+          test -z "$remaining"
+          remaining=$(docker network ls --filter label=dev.goldenhoop.test=network-contract --format '{{.ID}}')
+          test -z "$remaining"
+          if docker image inspect goldenhoop-network-fixture:test >/dev/null 2>&1; then
+            label=$(docker image inspect goldenhoop-network-fixture:test --format '{{index .Config.Labels "dev.goldenhoop.fixture"}}')
+            test "$label" = network-interop
+            remaining=$(docker ps -a --filter ancestor=goldenhoop-network-fixture:test --format '{{.ID}}')
+            test -z "$remaining"
+            docker image rm --no-prune goldenhoop-network-fixture:test
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: network-ipv4-${{ matrix.runtime }}
+          path: evidence/
