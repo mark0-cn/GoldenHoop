@@ -1,6 +1,6 @@
 # Persistent control state
 
-The SQLite store uses SQLx, WAL journaling, full synchronization and immediate write transactions. A stable installation UUID is initialized atomically and retained across restarts. Schema version 1 is embedded in the binary; unsupported versions are refused. PostgreSQL and cluster migrations remain part of M5.
+The SQLite store uses SQLx, WAL journaling, full synchronization and immediate write transactions. A stable installation UUID is initialized atomically and retained across restarts. Schema version 2 adds artifact metadata and generic operation resource IDs; version 1 upgrades transactionally while preserving identities and operations. Unsupported versions are refused. PostgreSQL and cluster migrations remain part of M5.
 
 The API commits desired state and idempotent requests before the worker acts. Observations update actual state without overwriting a concurrent desired-state change or extending the original absolute deadline. A terminated state requires confirmed cleanup. Failed resources with unconfirmed cleanup remain charged to the installation quota.
 
@@ -13,3 +13,5 @@ Worker metadata contains a private loopback endpoint and authentication token. I
 The durability suite covers concurrent idempotency, failed transaction rollback, resource charging until confirmed cleanup, desired-state races, absolute expiration, completion/cursor atomicity, terminal immutability, cancellation preservation, stale heartbeat refusal and actual SQLite close/reopen. Temporary database files are removed after the suite, including assertion failure paths.
 
 The public API, worker reconciliation loop, CLI and SDKs now use these primitives; see control.md and clients.md.
+
+Artifact metadata reserves identity and idempotency before capture. Prepared content length/digest are immutable. Availability and operation completion commit atomically, and a concurrent deletion intent cannot be overwritten by a late upload observation. Completed deletion cannot be resurrected. Pending deletion/uploading states survive database close/reopen. The initial limit is 256 retained or uncollected artifacts; failed cleanup remains charged until absence is confirmed. Artifact worker/API integration is still pending.

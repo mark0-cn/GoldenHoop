@@ -1,6 +1,6 @@
 # Artifact storage
 
-The `goldenhoop-artifacts` crate implements bounded immutable blobs on `object_store` local filesystem and S3-compatible backends. This is the storage layer: public artifact routes, durable artifact tasks and sandbox file capture are the next integration increment. Profiles do not advertise Artifacts yet.
+The `goldenhoop-artifacts` crate implements bounded immutable blobs on `object_store` local filesystem and S3-compatible backends. SQLite now also persists artifact identities, immutable prepared metadata, operations and deletion intent. Worker capture and public artifact routes are the next integration increment. Profiles do not advertise Artifacts yet.
 
 Every object key is generated from a non-nil installation UUID and blob UUID. Callers cannot supply a filesystem path or arbitrary object key. A blob reference contains its ID, byte count and lowercase SHA-256. The initial transfer limit is 16 MiB; large snapshot streaming is a separate M4 requirement.
 
@@ -26,9 +26,11 @@ python -B tests/artifact_contract.py --binary target/debug/examples/s3_contract 
 
 Use `--remove-image` only when the fixture image was pulled for this task. It refuses to remove an image used by another container. The fixture does not use global container, image or volume pruning.
 
-## Pending control integration
+## Durable state and pending worker integration
 
-- Reserve artifact identity, metadata and idempotency in SQLite before a worker writes a blob. Long operations return an operation ID.
+The metadata layer implements pending/uploading/available/failed/deleting/deleted states, idempotent create/delete operations, immutable length/digest, atomic state/operation publication and cleanup-dependent quota release. Schema 1 upgrades to schema 2 without replacing installation, sandbox or operation identities. Tests actually close/reopen the database, race deletion with late upload results, reject resurrection and verify quota reservation rollback. These are persistence tests, not proof of a working public artifact API.
+
+- Connect the existing durable reservations to authenticated public routes; long operations return their operation ID.
 - Capture only an authorized workspace file through the agent. Provider credentials and local storage paths stay outside the workload and public responses.
-- Persist requested/uploading/available/failed/deleting/deleted states. Recover an interrupted upload by verifying its existing blob; never publish changed source bytes under an already prepared digest.
+- Recover an interrupted upload by verifying its existing blob; never publish changed source bytes under an already prepared digest.
 - Preserve concurrent deletion intent. Charge quotas until cleanup is confirmed. Artifact retention is independent of sandbox expiration; remove retained user artifacts only through explicit deletion.

@@ -189,3 +189,23 @@ pub fn validate_idempotency_key(key: &str) -> Result<(), ApiError> {
         Ok(())
     }
 }
+
+pub fn validate_artifact(request: &CreateArtifact) -> Result<(), ApiError> {
+    if request.path.is_empty()
+        || request.path.len() > 4096
+        || request.path.contains('\0')
+        || request.name.is_empty()
+        || request.name.len() > 255
+        || matches!(request.name.as_str(), "." | "..")
+        || request
+            .name
+            .chars()
+            .any(|c| c.is_control() || c == '/' || c == '\\')
+    {
+        return Err(ApiError::new(
+            ErrorCode::InvalidRequest,
+            "artifact requires a bounded source path and a single display filename",
+        ));
+    }
+    Ok(())
+}

@@ -1,4 +1,5 @@
 //! Durable control state. Runtime access belongs exclusively to the worker.
+mod artifacts;
 mod executions;
 mod lifecycle;
 
@@ -36,6 +37,13 @@ pub struct StoredExecution {
     pub spec: CommandSpec,
     pub cancel_requested: bool,
     pub cursor: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct StoredArtifact {
+    pub artifact: Artifact,
+    pub request: CreateArtifact,
+    pub create_operation: Uuid,
 }
 
 /// Private host metadata. Never serialize this structure through the public API.
@@ -210,7 +218,12 @@ impl Store {
                 .fetch_one(&mut *tx)
                 .await
                 .map_err(db)?;
-        if version != "1" {
+        if version == "1" {
+            sqlx::raw_sql(include_str!("schema-v2.sql"))
+                .execute(&mut *tx)
+                .await
+                .map_err(db)?;
+        } else if version != "2" {
             return Err(ApiError::new(
                 ErrorCode::UnsupportedCapability,
                 "database schema version is unsupported",
