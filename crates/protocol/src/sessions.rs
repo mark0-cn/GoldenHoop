@@ -3,7 +3,19 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use crate::{ApiError, CommandSpec};
+use crate::{ApiError, CommandSpec, Execution};
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct Session {
+    pub execution: Execution,
+    pub spec: SessionSpec,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SessionPage {
+    pub items: Vec<Session>,
+    pub next_after: Option<Uuid>,
+}
 
 /// An actual long-lived process. A terminal merges stdout and stderr.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

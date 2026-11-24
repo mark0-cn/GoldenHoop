@@ -2,6 +2,7 @@
 mod artifacts;
 mod executions;
 mod lifecycle;
+mod sessions;
 
 use std::{path::Path, time::Duration};
 
@@ -44,6 +45,12 @@ pub struct StoredArtifact {
     pub artifact: Artifact,
     pub request: CreateArtifact,
     pub create_operation: Uuid,
+}
+
+#[derive(Debug, Clone)]
+pub struct StoredSessionControl {
+    pub request: SessionControl,
+    pub receipt: SessionControlReceipt,
 }
 
 /// Private host metadata. Never serialize this structure through the public API.
@@ -218,16 +225,23 @@ impl Store {
                 .fetch_one(&mut *tx)
                 .await
                 .map_err(db)?;
+        if !matches!(version.as_str(), "1" | "2" | "3") {
+            return Err(ApiError::new(
+                ErrorCode::UnsupportedCapability,
+                "database schema version is unsupported",
+            ));
+        }
         if version == "1" {
             sqlx::raw_sql(include_str!("schema-v2.sql"))
                 .execute(&mut *tx)
                 .await
                 .map_err(db)?;
-        } else if version != "2" {
-            return Err(ApiError::new(
-                ErrorCode::UnsupportedCapability,
-                "database schema version is unsupported",
-            ));
+        }
+        if version != "3" {
+            sqlx::raw_sql(include_str!("schema-v3.sql"))
+                .execute(&mut *tx)
+                .await
+                .map_err(db)?;
         }
         sqlx::query("INSERT OR IGNORE INTO meta(key,value) VALUES('installation_id',?)")
             .bind(Uuid::new_v4().to_string())

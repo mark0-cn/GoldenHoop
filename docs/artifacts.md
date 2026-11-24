@@ -44,7 +44,7 @@ The capture/delete CLI prints recovery IDs before waiting. Downloads are atomic 
 
 ## Durable recovery and cleanup
 
-The metadata layer implements pending/uploading/available/failed/deleting/deleted states, idempotent operations, immutable length/digest, atomic publication/deletion and cleanup-dependent quota release. Schema 1 upgrades transactionally to schema 2 without replacing installation, sandbox or operation identities. The initial installation limit is 256 retained or uncollected artifacts. Pending captures, retained output and unconfirmed cleanup consume quota.
+The metadata layer implements pending/uploading/available/failed/deleting/deleted states, idempotent operations, immutable length/digest, atomic publication/deletion and cleanup-dependent quota release. Transactional schema upgrades preserve installation, sandbox, artifact and operation identities; session metadata uses schema 3. The initial installation limit is 256 retained or uncollected artifacts. Pending captures, retained output and unconfirmed cleanup consume quota.
 
 Deletion intent wins over late upload results and immediately refuses new content requests. Metadata and deletion intent remain accessible while the worker is down; content requires a live worker. A failed capture operation can finish before cleanup; inspect the separate cleanup field.
 

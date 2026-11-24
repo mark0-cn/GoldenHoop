@@ -32,21 +32,31 @@ impl Store {
         spec: &CommandSpec,
         key: &str,
     ) -> Result<Execution, ApiError> {
+        self.create_process(sandbox_id, spec, key, None).await
+    }
+
+    pub(crate) async fn create_process(
+        &self,
+        sandbox_id: Uuid,
+        spec: &CommandSpec,
+        key: &str,
+        session: Option<&SessionSpec>,
+    ) -> Result<Execution, ApiError> {
         let id = Uuid::new_v4();
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
-        if let Some(existing) = reserve(
-            &mut tx,
-            &format!("commands:{sandbox_id}"),
-            key,
-            &fingerprint(spec)?,
-            id,
-        )
-        .await?
-        {
+        let (scope, request_fingerprint) = if let Some(session) = session {
+            (format!("sessions:{sandbox_id}"), fingerprint(session)?)
+        } else {
+            (format!("commands:{sandbox_id}"), fingerprint(spec)?)
+        };
+        if let Some(existing) = reserve(&mut tx, &scope, key, &request_fingerprint, id).await? {
             tx.commit().await.map_err(db)?;
             return Ok(self.execution(existing).await?.execution);
         }
         validate_command(spec)?;
+        if let Some(session) = session {
+            goldenhoop_core::validate_session(session)?;
+        }
         let sandbox = sandbox_row(
             &sqlx::query("SELECT * FROM sandboxes WHERE id=?")
                 .bind(sandbox_id.to_string())
@@ -98,6 +108,14 @@ impl Store {
         .execute(&mut *tx)
         .await
         .map_err(db)?;
+        if let Some(session) = session {
+            sqlx::query("INSERT INTO sessions(execution_id,spec) VALUES(?,?)")
+                .bind(id.to_string())
+                .bind(encode(session)?)
+                .execute(&mut *tx)
+                .await
+                .map_err(db)?;
+        }
         tx.commit().await.map_err(db)?;
         Ok(record)
     }
@@ -238,6 +256,9 @@ impl Store {
             .execute(&mut *tx)
             .await
             .map_err(db)?;
+        if record.state.is_terminal() {
+            super::sessions::finish_pending_controls(&mut tx, record.id).await?;
+        }
         tx.commit().await.map_err(db)?;
         Ok(())
     }

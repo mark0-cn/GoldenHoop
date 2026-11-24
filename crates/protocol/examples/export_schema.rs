@@ -34,6 +34,8 @@ use utoipa::OpenApi;
     CleanupState,
     CommandSpec,
     SessionSpec,
+    Session,
+    SessionPage,
     TerminalSize,
     SessionControl,
     SessionAction,
