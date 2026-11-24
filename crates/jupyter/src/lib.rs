@@ -22,15 +22,17 @@ const MAX_ROUTING_BYTES: usize = 16 * 1024;
 pub enum Error {
     Limits,
     Malformed,
+    Header(&'static str),
     Authentication,
 }
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::Limits => "kernel message exceeds wire limits",
-            Self::Malformed => "kernel message is malformed",
-            Self::Authentication => "kernel JSON message authentication failed",
-        })
+        match self {
+            Self::Limits => f.write_str("kernel message exceeds wire limits"),
+            Self::Malformed => f.write_str("kernel message is malformed"),
+            Self::Header(field) => write!(f, "kernel message header field {field} is malformed"),
+            Self::Authentication => f.write_str("kernel JSON message authentication failed"),
+        }
     }
 }
 impl std::error::Error for Error {}
@@ -124,6 +126,21 @@ impl Codec {
 
     /// Authenticate original bytes before decoding JSON; do not reserialize for MAC.
     pub fn decode<B: AsRef<[u8]>>(&self, frames: &[B]) -> Result<Message> {
+        self.decode_inner(frames, false)?.ok_or(Error::Malformed)
+    }
+
+    /// Initial output-channel handshake only. `None` is an authenticated legacy
+    /// unparented startup notice, never a kernel identity or readiness receipt.
+    /// The ordinary decoder remains strict before and after execution.
+    pub fn decode_startup<B: AsRef<[u8]>>(&self, frames: &[B]) -> Result<Option<Message>> {
+        self.decode_inner(frames, true)
+    }
+
+    fn decode_inner<B: AsRef<[u8]>>(
+        &self,
+        frames: &[B],
+        allow_startup: bool,
+    ) -> Result<Option<Message>> {
         if frames.len() > MAX_FRAMES {
             return Err(Error::Limits);
         }
@@ -178,13 +195,33 @@ impl Codec {
         {
             return Err(Error::Malformed);
         }
+        // jupyter-jvm-basekernel 2.3.0 publishes status/starting with a null
+        // MessageContext, so its header has no session. Authentication and all
+        // envelope bounds above still apply. This exact no-buffer notice is
+        // ignored by the initial output handshake, not treated as a Message.
+        if allow_startup
+            && matches!(header.get("session"), None | Some(Value::Null))
+            && header["username"] == "kernel"
+            && header["msg_type"] == "status"
+            && header["version"] == "5.3"
+            && header["msg_id"]
+                .as_str()
+                .is_some_and(|value| text(value, 256))
+            && parent.as_object().is_some_and(|value| value.is_empty())
+            && metadata.as_object().is_some_and(|value| value.is_empty())
+            && content.as_object().is_some_and(|value| value.len() == 1)
+            && content["execution_state"] == "starting"
+            && frames.len() == delimiter + 6
+        {
+            return Ok(None);
+        }
         for field in ["msg_id", "session", "msg_type", "version"] {
             if !header
                 .get(field)
                 .and_then(Value::as_str)
                 .is_some_and(|value| text(value, if field == "version" { 16 } else { 256 }))
             {
-                return Err(Error::Malformed);
+                return Err(Error::Header(field));
             }
         }
         if parent
@@ -197,13 +234,13 @@ impl Codec {
             .iter()
             .map(|frame| frame.as_ref().to_vec())
             .collect();
-        Ok(Message {
+        Ok(Some(Message {
             header,
             parent,
             metadata,
             content,
             buffers,
-        })
+        }))
     }
 }
 

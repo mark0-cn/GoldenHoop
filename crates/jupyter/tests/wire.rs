@@ -77,3 +77,116 @@ fn request_limits_and_signature_scope_are_explicit() {
         Err(Error::Malformed)
     ));
 }
+
+fn legacy_starting(omitted: bool) -> Vec<Vec<u8>> {
+    // Independent Python stdlib HMAC/SHA-256 vectors for the old Java
+    // Message(null, PublishStatus.STARTING) envelope, not a readiness reply.
+    let (header, signature) = if omitted {
+        (
+            r#"{"msg_id":"startup-message","username":"kernel","msg_type":"status","version":"5.3"}"#,
+            "1864796ff1c21baa4ac4b52e86c3989a49d956c98a1444621a328f89c8fed098",
+        )
+    } else {
+        (
+            r#"{"msg_id":"startup-message","username":"kernel","msg_type":"status","version":"5.3","session":null}"#,
+            "62627c025511cb4df2e1b2708b693aa3067d19a9803b7991f3a11773b5907020",
+        )
+    };
+    vec![
+        b"kernel.status".to_vec(),
+        DELIMITER.to_vec(),
+        signature.as_bytes().to_vec(),
+        header.as_bytes().to_vec(),
+        b"{}".to_vec(),
+        b"{}".to_vec(),
+        br#"{"execution_state":"starting"}"#.to_vec(),
+    ]
+}
+
+fn resign(frames: &mut [Vec<u8>]) {
+    use hmac::{Hmac, KeyInit, Mac};
+    let mut mac =
+        Hmac::<sha2_11::Sha256>::new_from_slice(b"0123456789abcdefghijklmnopqrstuv").unwrap();
+    for frame in &frames[3..7] {
+        mac.update(frame);
+    }
+    frames[2] = mac
+        .finalize()
+        .into_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>()
+        .into_bytes();
+}
+
+#[test]
+fn authenticated_legacy_startup_is_a_notice_only_and_never_an_identity_or_reply() {
+    for omitted in [false, true] {
+        let frames = legacy_starting(omitted);
+        assert_eq!(
+            codec().decode(&frames).unwrap_err(),
+            Error::Header("session")
+        );
+        assert!(codec().decode_startup(&frames).unwrap().is_none());
+    }
+    let message = codec()
+        .decode_startup(&independent_fixture())
+        .unwrap()
+        .unwrap();
+    assert_eq!(message.kernel_session(), "kernel_epoch");
+    assert_eq!(message.parent_id(), Some("request-1"));
+}
+
+#[test]
+fn startup_notice_compatibility_keeps_authentication_and_framing_requirements() {
+    let mut frames = legacy_starting(false);
+    frames[2][0] ^= 1;
+    assert_eq!(
+        codec().decode_startup(&frames).unwrap_err(),
+        Error::Authentication
+    );
+    let mut frames = legacy_starting(false);
+    frames.push(b"unsigned buffer".to_vec());
+    assert!(codec().decode_startup(&frames).is_err());
+    let mut frames = legacy_starting(false);
+    frames[4] = b"null".to_vec();
+    resign(&mut frames);
+    assert_eq!(
+        codec().decode_startup(&frames).unwrap_err(),
+        Error::Malformed
+    );
+}
+
+#[test]
+fn unscoped_correlated_other_state_and_other_protocol_messages_are_not_ignored() {
+    for state in ["idle", "busy", "unknown"] {
+        let mut frames = legacy_starting(false);
+        frames[6] = serde_json::to_vec(&json!({"execution_state":state})).unwrap();
+        resign(&mut frames);
+        assert!(codec().decode_startup(&frames).is_err());
+    }
+    for (field, value) in [
+        ("version", json!("5.4")),
+        ("msg_type", json!("execute_reply")),
+        ("session", json!("")),
+        ("username", json!("other")),
+        ("msg_id", json!("")),
+    ] {
+        let mut frames = legacy_starting(false);
+        let mut header: serde_json::Value = serde_json::from_slice(&frames[3]).unwrap();
+        header[field] = value;
+        frames[3] = serde_json::to_vec(&header).unwrap();
+        resign(&mut frames);
+        assert!(codec().decode_startup(&frames).is_err(), "{field}");
+    }
+    for (index, value) in [
+        (4, json!({"msg_id":"request-1"})),
+        (5, json!({"extra":true})),
+        (6, json!({"execution_state":"starting","extra":true})),
+    ] {
+        let mut frames = legacy_starting(false);
+        frames[index] = serde_json::to_vec(&value).unwrap();
+        resign(&mut frames);
+        assert!(codec().decode_startup(&frames).is_err());
+    }
+}

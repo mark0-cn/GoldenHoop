@@ -88,11 +88,24 @@ impl Peer {
     }
 
     pub async fn next(&mut self) -> io::Result<Observation> {
+        self.observe(false)
+            .await?
+            .ok_or_else(|| invalid("unexpected unscoped kernel startup notice"))
+    }
+
+    async fn observe(&mut self, allow_startup: bool) -> io::Result<Option<Observation>> {
         let (channel, raw) = tokio::select! {
             value = self.shell.receive() => (Channel::Shell, value?),
             value = self.output.receive() => (Channel::Output, value?),
         };
-        let message = self.codec.decode(&raw).map_err(invalid)?;
+        let message = if allow_startup && channel == Channel::Output {
+            match self.codec.decode_startup(&raw).map_err(invalid)? {
+                Some(message) => message,
+                None => return Ok(None),
+            }
+        } else {
+            self.codec.decode(&raw).map_err(invalid)?
+        };
         if !message.buffers().is_empty() {
             return Err(invalid(
                 "unsigned kernel binary-buffer extension is unsupported",
@@ -108,11 +121,13 @@ impl Peer {
             None => self.epoch = Some(message.kernel_session().to_owned()),
             _ => {}
         }
-        Ok(Observation { channel, message })
+        Ok(Some(Observation { channel, message }))
     }
 
     /// Only kernel-info is retried. Code requests are never retried here.
     pub async fn ready(&mut self) -> io::Result<Value> {
+        let allow_startup = self.epoch.is_none();
+        let mut notices = 0;
         for _ in 0..10 {
             let id = Uuid::new_v4();
             let parent = id.to_string();
@@ -126,10 +141,19 @@ impl Peer {
             let deadline = Instant::now() + Duration::from_millis(500);
             let (mut reply, mut idle) = (None, false);
             while Instant::now() < deadline {
-                let next = match tokio::time::timeout_at(deadline, self.next()).await {
-                    Ok(value) => value?,
-                    Err(_) => break,
-                };
+                let next =
+                    match tokio::time::timeout_at(deadline, self.observe(allow_startup)).await {
+                        Ok(Ok(Some(value))) => value,
+                        Ok(Ok(None)) => {
+                            notices += 1;
+                            if notices > 8 {
+                                return Err(invalid("too many unscoped kernel startup notices"));
+                            }
+                            continue;
+                        }
+                        Ok(Err(error)) => return Err(error),
+                        Err(_) => break,
+                    };
                 if next.message.parent_id() != Some(parent.as_str()) {
                     continue;
                 }
@@ -197,6 +221,9 @@ fn version(value: &Value) -> bool {
 fn invalid(error: impl std::fmt::Display) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, error.to_string())
 }
+
+#[cfg(test)]
+mod startup_tests;
 
 #[cfg(test)]
 mod tests {
