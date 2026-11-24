@@ -28,7 +28,7 @@ struct Source {
 }
 #[derive(Default, Clone)]
 struct State {
-    sources: BTreeMap<Domain, Source>,
+    sources: BTreeMap<(Domain, RecordType), Source>,
     lookups: BTreeMap<Uuid, Instant>,
 }
 
@@ -88,12 +88,17 @@ impl LeaseBook {
         Ok(())
     }
 
-    pub fn source_expiry(&self, name: &Domain, now: Instant) -> Result<Option<Instant>, ApiError> {
+    pub fn source_expiry(
+        &self,
+        name: &Domain,
+        query_type: RecordType,
+        now: Instant,
+    ) -> Result<Option<Instant>, ApiError> {
         self.known()?;
         Ok(self
             .state
             .sources
-            .get(name)
+            .get(&(name.clone(), query_type))
             .filter(|s| s.expires_at > now)
             .map(|s| s.expires_at))
     }
@@ -129,6 +134,12 @@ impl LeaseBook {
         if request.addresses.len() > MAX_ADDRESSES {
             return Err(error(ErrorCode::QuotaExceeded, "too many source addresses"));
         }
+        if !matches!(request.query_type, RecordType::A | RecordType::AAAA) {
+            return Err(error(
+                ErrorCode::InvalidRequest,
+                "unsupported DNS source question type",
+            ));
+        }
         let authority = match request.origin {
             DecisionOrigin::AllowAlways(_) => Authority::OperatorAllow,
             DecisionOrigin::UserAgreement => Authority::User,
@@ -155,7 +166,8 @@ impl LeaseBook {
             .insert(request.lookup_id, request.lookup_deadline);
         let source_expiry = request.expires_at.min(self.sandbox_deadline);
         if request.addresses.is_empty() {
-            next.sources.remove(&request.source);
+            next.sources
+                .remove(&(request.source.clone(), request.query_type));
         } else {
             let addresses = request
                 .addresses
@@ -165,7 +177,7 @@ impl LeaseBook {
                 .into_iter()
                 .collect();
             next.sources.insert(
-                request.source.clone(),
+                (request.source.clone(), request.query_type),
                 Source {
                     authority,
                     addresses,
@@ -260,6 +272,7 @@ mod tests {
             lookup_deadline: now + Duration::from_secs(6),
             revision: 9,
             source: Domain::parse(name).unwrap(),
+            query_type: RecordType::A,
             origin: DecisionOrigin::UserAgreement,
             addresses: vec![ip.parse().unwrap()],
             expires_at: now + Duration::from_secs(ttl),
@@ -283,9 +296,14 @@ mod tests {
         accept(&mut book, &original, now);
         accept(&mut book, &alias, now);
         let later = now + Duration::from_secs(2);
-        assert_eq!(book.source_expiry(&original.source, later).unwrap(), None);
         assert_eq!(
-            book.source_expiry(&alias.source, later).unwrap(),
+            book.source_expiry(&original.source, RecordType::A, later)
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            book.source_expiry(&alias.source, RecordType::A, later)
+                .unwrap(),
             Some(alias.expires_at)
         );
         let leases = book.memberships(later).unwrap();
@@ -314,7 +332,10 @@ mod tests {
         let mut negative = grant("a.test", "192.0.2.2", 20, now);
         negative.addresses.clear();
         accept(&mut book, &negative, now);
-        assert_eq!(book.source_expiry(&a.source, now).unwrap(), None);
+        assert_eq!(
+            book.source_expiry(&a.source, RecordType::A, now).unwrap(),
+            None
+        );
         let leases = book.memberships(now).unwrap();
         assert_eq!(leases.len(), 1);
         assert_eq!(leases[0].address, b.addresses[0]);
@@ -346,7 +367,10 @@ mod tests {
             assert!(book.is_unknown());
             assert!(book.begin(&grant, now).is_err());
             assert!(book.memberships(now).is_err());
-            assert!(book.source_expiry(&grant.source, now).is_err());
+            assert!(
+                book.source_expiry(&grant.source, RecordType::A, now)
+                    .is_err()
+            );
         }
     }
 
@@ -389,6 +413,41 @@ mod tests {
         assert_eq!(leases[1].authority, Authority::OperatorAllow);
         assert_eq!(leases[0].expires_at, a.expires_at);
         assert_eq!(leases[1].expires_at, b.expires_at);
+    }
+
+    #[test]
+    fn a_and_aaaa_of_one_name_do_not_overwrite_or_negatively_clear_each_other() {
+        let now = Instant::now();
+        let mut book = book(now);
+        let v4 = grant("both.test", "192.0.2.1", 60, now);
+        let mut v6 = grant("both.test", "2001:db8::1", 30, now);
+        v6.query_type = RecordType::AAAA;
+        accept(&mut book, &v4, now);
+        accept(&mut book, &v6, now);
+        assert_eq!(book.memberships(now).unwrap().len(), 2);
+        assert_eq!(
+            book.source_expiry(&v4.source, RecordType::A, now).unwrap(),
+            Some(v4.expires_at)
+        );
+        assert_eq!(
+            book.source_expiry(&v6.source, RecordType::AAAA, now)
+                .unwrap(),
+            Some(v6.expires_at)
+        );
+        let mut negative = grant("both.test", "192.0.2.1", 30, now);
+        negative.query_type = RecordType::AAAA;
+        negative.addresses.clear();
+        accept(&mut book, &negative, now);
+        assert_eq!(
+            book.source_expiry(&v4.source, RecordType::A, now).unwrap(),
+            Some(v4.expires_at)
+        );
+        assert_eq!(
+            book.source_expiry(&v4.source, RecordType::AAAA, now)
+                .unwrap(),
+            None
+        );
+        assert_eq!(book.memberships(now).unwrap().len(), 1);
     }
 
     #[test]

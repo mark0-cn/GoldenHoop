@@ -355,7 +355,7 @@ impl Manager {
     }
 }
 
-async fn nft(args: &[&str], input: Option<&[u8]>) -> Result<Vec<u8>, ApiError> {
+pub(crate) async fn nft(args: &[&str], input: Option<&[u8]>) -> Result<Vec<u8>, ApiError> {
     let mut command = Command::new(NFT);
     command
         .args(args)

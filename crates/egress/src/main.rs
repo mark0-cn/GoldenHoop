@@ -74,6 +74,24 @@ mod server {
     }
 
     pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
+        if std::env::args_os()
+            .nth(1)
+            .is_some_and(|arg| arg == "--probe-dns-sets")
+            && std::env::args_os().len() == 2
+        {
+            let mut bytes = Vec::new();
+            tokio::io::stdin()
+                .take(MAX_FRAME + 1)
+                .read_to_end(&mut bytes)
+                .await?;
+            if bytes.len() as u64 > MAX_FRAME {
+                return Err("oversized probe allocation".into());
+            }
+            let allocation = serde_json::from_slice::<Allocation>(&bytes)?;
+            let result = goldenhoop_egress::dns::probe_staged_sets(allocation).await?;
+            println!("{}", serde_json::to_string(&result)?);
+            return Ok(());
+        }
         if std::env::args_os().len() != 1 {
             return Err("manager accepts private JSON-line control on stdio only".into());
         }

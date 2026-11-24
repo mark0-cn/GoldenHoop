@@ -4,6 +4,12 @@ mod upstream;
 pub use upstream::Upstream;
 mod leases;
 pub use leases::{Authority, KernelLease, LeaseBook, LeaseTransaction};
+mod sets;
+pub use sets::{SetConfirmation, SetNames, StagedSets};
+#[cfg(target_os = "linux")]
+mod probe;
+#[cfg(target_os = "linux")]
+pub use probe::probe_staged_sets;
 
 use crate::error;
 use goldenhoop_policy::{DecisionOrigin, Domain, Model};
@@ -152,6 +158,7 @@ impl Request {
             lookup_deadline: self.started_at + Duration::from_secs(6),
             revision: self.revision,
             source: self.source.clone(),
+            query_type: self.query.query_type,
             origin: self.origin,
             addresses,
             expires_at: now + Duration::from_secs(u64::from(ttl)),
@@ -193,6 +200,7 @@ pub struct GrantRequest {
     lookup_deadline: Instant,
     revision: u64,
     source: Domain,
+    query_type: RecordType,
     origin: DecisionOrigin,
     addresses: Vec<IpAddr>,
     expires_at: Instant,
@@ -209,6 +217,9 @@ impl GrantRequest {
     }
     pub fn source(&self) -> &Domain {
         &self.source
+    }
+    pub fn query_type(&self) -> RecordType {
+        self.query_type
     }
     pub fn origin(&self) -> DecisionOrigin {
         self.origin
