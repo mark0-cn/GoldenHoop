@@ -44,6 +44,38 @@ fn profile() -> RuntimeProfile {
 }
 
 #[test]
+fn policy_syntax_never_grants_a_backend_capability_and_is_validated_before_admission() {
+    let mut observed = profile();
+    let mut request = CreateSandbox::new(&observed.id, "cached:test");
+    validate_create(&observed, &request).unwrap();
+    request.network = NetworkPolicy {
+        default_action: NetworkAction::Deny,
+        rules: vec![NetworkRule {
+            destination: "192.0.2.0/24".into(),
+            ports: vec![443],
+            action: NetworkAction::Allow,
+        }],
+    };
+    assert_eq!(
+        validate_create(&observed, &request).unwrap_err().code,
+        ErrorCode::UnsupportedCapability
+    );
+    // This is an explicitly available model fixture, not a production probe.
+    observed.capabilities.insert(Capability::NetworkPolicy);
+    validate_create(&observed, &request).unwrap();
+    request.network.rules[0].destination = "https://user:private-secret@example.test/path".into();
+    let error = validate_create(&observed, &request).unwrap_err();
+    assert_eq!(error.code, ErrorCode::InvalidRequest);
+    assert!(!error.message.contains("private-secret"));
+    request.network.rules[0].destination = "192.0.2.0/24".into();
+    request.network.rules[0].ports = vec![0];
+    assert_eq!(
+        validate_create(&observed, &request).unwrap_err().code,
+        ErrorCode::InvalidRequest
+    );
+}
+
+#[test]
 fn language_names_do_not_grant_unprobed_adapters() {
     assert_eq!(
         serde_json::to_value(CodeLanguage::ALL).unwrap(),

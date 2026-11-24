@@ -3,6 +3,7 @@ import argparse
 import hashlib
 import ipaddress
 import json
+import os
 import queue
 import shlex
 import subprocess
@@ -86,6 +87,7 @@ class Contract:
         self.evidence = {"suite": "ipv4-routed-filter-prototype", "runtime": args.runtime,
             "scope": "fixture mechanism only; production policy/DNS/IPv6/L2/TLS and flow collection are not established",
             "timestamp": datetime.now(timezone.utc).isoformat(), "attempt": self.attempt,
+            "receiver_publication": args.receiver_publication,
             "result": "failed", "cleanup": "unknown", "cases": [], "resources": [], "observations": [],
             "source_files_sha256": {p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
                 for p in [Path(__file__).resolve(), root/"tests/network_samples.py", root/"tests/fixtures/network.Dockerfile"]}}
@@ -220,9 +222,10 @@ class Contract:
             self.gateway = next(config["Gateway"] for config in observed["IPAM"]["Config"] if ipaddress.ip_network(config["Subnet"]).version == 4)
             assert str(ipaddress.IPv4Address(self.gateway)) == self.gateway
             target_network, _ = self.network("target-net", "--opt", "com.docker.network.bridge.gateway_mode_ipv4=routed")
+            bind = "0.0.0.0" if self.args.receiver_publication == "routed" else "127.0.0.1"
             target = self.container("target", ["--runtime", "runc", "--network", target_network, "--user", "1000:1000",
                 "--memory", "128m", "--memory-swap", "128m", "--cpus", "0.25", "--pids-limit", "32",
-                "--publish", "127.0.0.1::19001/tcp", "--publish", "127.0.0.1::19003/tcp", "--publish", "127.0.0.1::19002/udp"], TARGET, self.attempt)
+                "--publish", f"{bind}::19001/tcp", "--publish", f"{bind}::19003/tcp", "--publish", f"{bind}::19002/udp"], TARGET, self.attempt)
             deadline = time.monotonic() + 10
             while time.monotonic() < deadline:
                 lines = docker("logs", target).stdout.splitlines()
@@ -240,6 +243,8 @@ class Contract:
             # the target IP directly and must hit the owned FORWARD counters.
             assert all(not item["HostPort"] or item["HostIp"] in ("127.0.0.1", "::1")
                        for values in bindings.values() for item in (values or [])), bindings
+            if self.args.receiver_publication == "routed":
+                assert all(not item["HostPort"] for values in bindings.values() for item in (values or [])), bindings
             self.target_ip = next(iter(observed["NetworkSettings"]["Networks"].values()))["IPAddress"]
             config = json.dumps({"gateway": self.gateway, "token": self.attempt})
             self.exec(self.helper, "python3", "-c", "import os,sys;from pathlib import Path;Path('/run/probe-config.tmp').write_text(sys.argv[1]);os.replace('/run/probe-config.tmp','/run/probe-config.json')", config)
@@ -303,7 +308,18 @@ add rule inet {self.table} egress counter drop
             self.evidence["result"] = "passed"
         except BaseException as error:
             failure = error
-            self.evidence["error"] = str(error)
+            self.evidence["error"] = str(error) or type(error).__name__
+            if self.helper and self.table_attempted:
+                try:
+                    self.evidence["failure_filter_table"] = self.owned_table()
+                    if self.args.ci_host_diagnostics:
+                        diagnostics = {}
+                        for command in [("nft", "--json", "list", "ruleset"), ("iptables-save",), ("iptables-legacy-save",), ("ip", "-json", "route", "show")]:
+                            result = self.exec(self.helper, *command, check=False)
+                            diagnostics[' '.join(command)] = {"exit": result.returncode, "stdout": result.stdout[:2*1024*1024], "stderr": result.stderr[:4096]}
+                        self.evidence["ephemeral_ci_host_diagnostics"] = diagnostics
+                except BaseException as diagnostic_error:
+                    self.evidence["diagnostic_error"] = str(diagnostic_error)
         finally:
             try:
                 self.cleanup()
@@ -362,4 +378,9 @@ if __name__ == "__main__":
     parser.add_argument("--runtime", choices=["runc", "runsc"], default="runc")
     parser.add_argument("--output", required=True)
     parser.add_argument("--remove-image", action="store_true")
-    Contract(parser.parse_args()).run()
+    parser.add_argument("--receiver-publication", choices=["loopback", "routed"], default="loopback")
+    parser.add_argument("--ci-host-diagnostics", action="store_true")
+    arguments = parser.parse_args()
+    if arguments.ci_host_diagnostics and os.environ.get("GITHUB_ACTIONS") != "true":
+        parser.error('--ci-host-diagnostics requires an ephemeral GitHub Actions runner')
+    Contract(arguments).run()

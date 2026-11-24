@@ -225,6 +225,11 @@ class Contract(ContextCases, IsolatedCases):
         profile = "local-gvisor" if self.args.runtime == "runsc" else "local-runc-dev"
         self.reject("POST", "/v1/sandboxes", 422, "unsupported_capability", body={
             "profile": profile, "image": self.args.image, "required_capabilities": ["memory_snapshot"]}, key=str(uuid.uuid4()))
+        observed = next(value for value in profiles if value["id"] == profile)
+        if "network_policy" not in observed["capabilities"]:
+            self.reject("POST", "/v1/sandboxes", 422, "unsupported_capability", body={
+                "profile": profile, "image": self.args.image,
+                "network": {"default_action": "allow", "rules": []}}, key=str(uuid.uuid4()))
 
     def lifecycle_commands_files_and_events(self):
         created = self.create()

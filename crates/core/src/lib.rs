@@ -78,6 +78,9 @@ pub fn validate_create(profile: &RuntimeProfile, request: &CreateSandbox) -> Res
             Capability::NetworkPolicy,
         )?;
     }
+    // Syntax validation is separate from enforcement. A compiled policy never
+    // grants NetworkPolicy; an actual backend capability is still mandatory.
+    goldenhoop_policy::Policy::compile(&request.network)?;
     Ok(())
 }
 
