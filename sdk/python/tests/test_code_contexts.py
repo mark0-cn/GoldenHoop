@@ -28,7 +28,10 @@ class CodeProtocolTests(unittest.TestCase):
         self.assertEqual(context_spec(CodeContextSpec())["language"],"python")
         for value in [CodeRunSpec("中"*22000),CodeRunSpec("x\0"),{"code":"x","timeout_seconds":True},{"code":"x","max_output_bytes":True}]:
             with self.assertRaises(ProtocolError):run_spec(value)
-        with self.assertRaises(ProtocolError):context_spec({"language":"javascript"})
+        for language in ("python", "java", "go", "typescript", "bash", "javascript"):
+            self.assertEqual(context_spec(CodeContextSpec(language=language))["language"], language)
+        for language in ("ruby", "JavaScript", [], None):
+            with self.assertRaises(ProtocolError): context_spec({"language":language})
 
     def test_context_framing_refuses_wrong_scope_boolean_cursor_and_oversized_lines(self):
         cid,rid=str(uuid4()),str(uuid4())

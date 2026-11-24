@@ -29,6 +29,13 @@ fn capability(value: &str) -> std::result::Result<Capability, String> {
         .map_err(|_| format!("unknown capability: {value}"))
 }
 
+fn code_language(value: &str) -> std::result::Result<CodeLanguage, String> {
+    CodeLanguage::ALL
+        .into_iter()
+        .find(|language| language.as_str() == value)
+        .ok_or_else(|| "language must be python, java, go, typescript, bash or javascript".into())
+}
+
 #[derive(clap::Args)]
 struct ScopeArgs {
     #[arg(long, requires_all=["child_memory_bytes","child_pids"])]
@@ -308,6 +315,8 @@ enum SessionsCommand {
 enum CodeCommand {
     ContextCreate {
         sandbox: Uuid,
+        #[arg(long, default_value = "python", value_parser = code_language)]
+        language: CodeLanguage,
         #[arg(long, default_value = "/workspace")]
         cwd: String,
         #[arg(long)]
@@ -672,20 +681,14 @@ async fn run(args: Args) -> CliResult<u8> {
         }
         Command::Code(CodeCommand::ContextCreate {
             sandbox,
+            language,
             cwd,
             idempotency_key,
         }) => {
             let key = key(idempotency_key);
             eprintln!("idempotency_key={key}");
             let context = client
-                .create_code_context(
-                    sandbox,
-                    &CodeContextSpec {
-                        cwd,
-                        ..Default::default()
-                    },
-                    &key,
-                )
+                .create_code_context(sandbox, &CodeContextSpec { language, cwd }, &key)
                 .await?;
             eprintln!("context_id={}", context.id);
             print_json(

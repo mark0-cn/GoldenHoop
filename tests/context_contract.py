@@ -26,9 +26,9 @@ class ContextContract(Contract):
                 "--network", "none", "--read-only", "--init", "--cap-drop", "ALL"]
         for cap in ["SETUID", "SETGID", "KILL", "CHOWN", "FOWNER", "DAC_OVERRIDE"]:
             args.extend(["--cap-add", cap])
-        args.extend(["--security-opt", "no-new-privileges", "--memory", "1g", "--cpus", "1", "--pids-limit", "256",
+        args.extend(["--security-opt", "no-new-privileges", "--memory", "1g", "--memory-swap", "1g", "--cpus", "1", "--pids-limit", "256",
                      "--tmpfs", "/workspace:rw,nosuid,nodev,size=128m,uid=1000,gid=1000,mode=2770",
-                     "--tmpfs", "/tmp:rw,nosuid,nodev,size=32m,mode=1777",
+                     "--tmpfs", "/tmp:rw,exec,nosuid,nodev,size=256m,mode=1777",
                      "--tmpfs", "/run/goldenhoop:rw,nosuid,nodev,size=32m,mode=700",
                      "--entrypoint", "/usr/local/bin/goldenhoop-agent", self.image, "serve"])
         self.container = docker(*args)
@@ -260,7 +260,7 @@ class ContextContract(Contract):
         self.observations.append({"context": record})
         self.no_retired_context_processes_or_private_files()
 
-    def unimplemented_language_never_allocates_or_falls_back_to_python(self):
+    def missing_language_never_allocates_or_falls_back_to_python(self):
         for language in ("java", "go", "typescript", "bash", "javascript"):
             identity = str(uuid.uuid4())
             self.reject({"method": "code_context_create", "id": identity, "spec": {"language": language}}, ("unsupported_capability",))
@@ -291,7 +291,7 @@ class ContextContract(Contract):
                          "close_during_startup_does_not_publish_late_ready"]
             if missing_kernel:
                 names = ["missing_kernel_does_not_relaunch"]
-            names.insert(0, "unimplemented_language_never_allocates_or_falls_back_to_python")
+            names.insert(0, "missing_language_never_allocates_or_falls_back_to_python")
             for name in names:
                 self.check(name, getattr(self, name))
             evidence["result"] = "passed"

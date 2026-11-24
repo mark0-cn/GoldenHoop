@@ -4,16 +4,16 @@ GoldenHoop keeps the complete M0-M6 target. The independent APIs do not promise 
 
 ## Stateful code languages
 
-The pinned reference [SupportedLanguage declaration](https://github.com/opensandbox-group/OpenSandbox/blob/8af823ed83f71209772d334df73626f90dd72496/sdks/code-interpreter/python/src/code_interpreter/models/code.py#L26) names six languages. Its [example](https://github.com/opensandbox-group/OpenSandbox/blob/8af823ed83f71209772d334df73626f90dd72496/examples/code-interpreter/main.py) uses language-specific contexts. GoldenHoop's target CodeLanguage enum names all six; native/API execution implements Python only. Fresh runtime profiles require both CodeContexts and an explicitly probed `code_languages` entry. Missing/legacy entries grant no language, and the other five variants are refused before allocation. Remaining adapters are part of M2 acceptance and must not be counted as implemented because a command can launch the corresponding interpreter.
+The pinned reference [SupportedLanguage declaration](https://github.com/opensandbox-group/OpenSandbox/blob/8af823ed83f71209772d334df73626f90dd72496/sdks/code-interpreter/python/src/code_interpreter/models/code.py#L26) names six languages. Its [example](https://github.com/opensandbox-group/OpenSandbox/blob/8af823ed83f71209772d334df73626f90dd72496/examples/code-interpreter/main.py) uses language-specific contexts. GoldenHoop now has native adapters for all six. The [18-group native gate](evidence/m2-six-language-agent-runc-windows-docker.json), [six-language driver probe](evidence/m2-six-language-probe-runc-windows-docker.json) and [all four client bindings](evidence/m2-six-language-clients-runc-windows-docker.json) pass locally on runc. The [initial public run](evidence/m2-six-language-api-clients-initial-runc-windows-docker.json) completed 27 API groups, including mixed-language service recovery, before its test-helper failure; the suite remains recorded as failed. Expanded full gVisor/S3 verification remains separate acceptance work. Fresh profiles require CodeContexts plus an explicitly probed `code_languages` entry; missing/legacy entries grant no language. A command launching an interpreter is not evidence of a stateful context.
 
 | Language | Current GoldenHoop evidence | Remaining work |
 | --- | --- | --- |
 | Python | Actual private/public contexts, state/replay/cancellation/recovery, child kernel and four clients on runc/gVisor; S3-backed API also passes | Preserve these gates |
-| Java | Not implemented or advertised | Native adapter, installed workload dependency and actual retained-state/error/collection tests |
-| Go | Not implemented or advertised | Native adapter, installed workload dependency and actual retained-state/error/collection tests |
-| TypeScript | Not implemented or advertised | Native adapter, installed workload dependency and actual retained-state/error/collection tests |
-| Bash | Persistent shell/PTY is verified; a Bash code context is not implemented | Separate code-context adapter and actual kernel protocol tests |
-| JavaScript | Not implemented or advertised | Native adapter, installed workload dependency and actual retained-state/error/collection tests |
+| Java | Native lifecycle, driver probe, mixed-language service recovery and all four local clients | Expanded full runc/gVisor/S3 CI |
+| Go | Native lifecycle, driver probe, mixed-language service recovery and all four local clients | Expanded full runc/gVisor/S3 CI; underlying interpreter feature limits remain explicit |
+| TypeScript | Native lifecycle, driver probe, mixed-language service recovery and all four local clients | Expanded full runc/gVisor/S3 CI |
+| Bash | Separate Bash kernel lifecycle, driver probe, mixed-language service recovery and all four local clients | Expanded full runc/gVisor/S3 CI |
+| JavaScript | Native lifecycle, driver probe, mixed-language service recovery and all four local clients | Expanded full runc/gVisor/S3 CI |
 
 Language support must be explicit per verified image/profile. Missing dependencies or unavailable transport must not launch another language. Retain bounded decoding, authenticated messages, private connection material, separate interpreter identities, no uncertain resend, explicit kernel completion and confirmed collection. Supporting another kernel must not silently remove those boundaries. Actual language fixtures remain disposable workload dependencies; production platform code remains Rust.
 

@@ -9,6 +9,8 @@ use uuid::Uuid;
 mod contexts;
 #[path = "sdk_contract/isolated.rs"]
 mod isolated;
+#[path = "sdk_contract/languages.rs"]
+mod languages;
 
 fn append_session_output(bytes: &mut Vec<u8>, event: &ExecutionEvent) {
     if event.kind == EventKind::Stdout {

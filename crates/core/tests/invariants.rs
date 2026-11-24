@@ -44,7 +44,7 @@ fn profile() -> RuntimeProfile {
 }
 
 #[test]
-fn language_names_do_not_grant_unprobed_or_unimplemented_adapters() {
+fn language_names_do_not_grant_unprobed_adapters() {
     assert_eq!(
         serde_json::to_value(CodeLanguage::ALL).unwrap(),
         serde_json::json!(["python", "java", "go", "typescript", "bash", "javascript"])
@@ -72,15 +72,12 @@ fn language_names_do_not_grant_unprobed_or_unimplemented_adapters() {
             require_code_language(&observed, language).unwrap_err().code,
             ErrorCode::UnsupportedCapability
         );
-        assert_eq!(
-            validate_code_context(&CodeContextSpec {
-                language,
-                ..Default::default()
-            })
-            .unwrap_err()
-            .code,
-            ErrorCode::UnsupportedCapability
-        );
+        validate_code_context(&CodeContextSpec {
+            language,
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(serde_json::to_value(language).unwrap(), language.as_str());
     }
     let mut old = serde_json::to_value(&observed).unwrap();
     old.as_object_mut().unwrap().remove("code_languages");

@@ -80,11 +80,11 @@ impl Worker {
                 self.context_closures.lock().await.remove(&id);
                 return Ok(true);
             }
-            if !driver
-                .profile_snapshot()
-                .await
-                .capabilities
-                .contains(&Capability::CodeContexts)
+            if goldenhoop_core::require_code_language(
+                &driver.profile_snapshot().await,
+                stored.context.spec.language,
+            )
+            .is_err()
             {
                 self.store.finish_code_context_absent(id, "runtime no longer has verified code-context support; context was not dispatched").await?;
                 return Ok(true);
@@ -266,21 +266,11 @@ impl Worker {
                 break;
             }
             if !run.dispatched {
-                if !driver
-                    .profile_snapshot()
-                    .await
-                    .capabilities
-                    .contains(&Capability::CodeContexts)
-                {
-                    self.store
-                        .reject_code_run(
-                            run.run.id,
-                            &ApiError::new(
-                                ErrorCode::UnsupportedCapability,
-                                "runtime no longer has verified kernel support",
-                            ),
-                        )
-                        .await?;
+                if let Err(error) = goldenhoop_core::require_code_language(
+                    &driver.profile_snapshot().await,
+                    current.spec.language,
+                ) {
+                    self.store.reject_code_run(run.run.id, &error).await?;
                     continue;
                 }
                 let dispatch = match self.store.dispatch_code_run(run.run.id).await {

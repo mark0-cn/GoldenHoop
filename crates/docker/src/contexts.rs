@@ -1,4 +1,5 @@
 use super::*;
+mod probes;
 
 impl DockerDriver {
     /// Cached observations from completed probes; this performs no new runtime check.
@@ -27,6 +28,36 @@ impl DockerDriver {
                 "invalid cached kernel-probe image",
             ));
         }
+        let mut languages = BTreeSet::new();
+        for language in CodeLanguage::ALL {
+            if self.probe_code_language(image, language).await? {
+                languages.insert(language);
+            }
+        }
+        if languages.is_empty() {
+            return Err(unavailable(
+                "no language passed the actual kernel probe and collection gate",
+            ));
+        }
+        let mut current = self.profile.write().await;
+        if current.availability != Availability::Available {
+            return Err(unavailable(
+                "runtime availability changed during the kernel probe",
+            ));
+        }
+        current.capabilities.insert(Capability::CodeContexts);
+        current.code_languages = languages;
+        Ok(current.clone())
+    }
+
+    async fn probe_code_language(
+        &self,
+        image: &str,
+        language: CodeLanguage,
+    ) -> Result<bool, ApiError> {
+        // A failed language cannot occupy another language's UID slots, sockets
+        // or memory. Each candidate owns a fresh, fully collected sandbox.
+        let profile = self.profile_snapshot().await;
         let mut request = CreateSandbox::new(&profile.id, image);
         request.ttl_seconds = 60;
         let created = Utc::now();
@@ -48,7 +79,7 @@ impl DockerDriver {
         let outcome = tokio::time::timeout(Duration::from_secs(45), async {
             let actual = self.create(&sandbox, &request).await?;
             handle = Some(actual.clone());
-            self.kernel_loop(&actual).await
+            self.kernel_loop(&actual, language).await
         })
         .await
         .map_err(|_| unavailable("code-context probe timed out"))
@@ -74,26 +105,26 @@ impl DockerDriver {
         {
             return Err(unavailable("code-context probe cleanup is unconfirmed"));
         }
-        outcome?;
-        let mut current = self.profile.write().await;
-        if current.availability != Availability::Available {
-            return Err(unavailable(
-                "runtime availability changed during the kernel probe",
-            ));
-        }
-        current.capabilities.insert(Capability::CodeContexts);
-        current.code_languages.insert(CodeLanguage::Python);
-        Ok(current.clone())
+        // A failure grants no language. Cleanup errors above abort the whole
+        // optional probe, including otherwise successful candidates.
+        Ok(outcome.is_ok())
     }
 
-    async fn kernel_loop(&self, handle: &RuntimeHandle) -> Result<(), ApiError> {
+    async fn kernel_loop(
+        &self,
+        handle: &RuntimeHandle,
+        language: CodeLanguage,
+    ) -> Result<(), ApiError> {
         let context = Uuid::new_v4();
         let response = self
             .bridge(
                 handle,
                 &AgentRequest::CodeContextCreate {
                     id: context,
-                    spec: CodeContextSpec::default(),
+                    spec: CodeContextSpec {
+                        language,
+                        ..Default::default()
+                    },
                 },
             )
             .await?;
@@ -102,12 +133,21 @@ impl DockerDriver {
                 "kernel probe creation returned a different identity",
             ));
         }
-        self.wait_kernel_context(handle, context, CodeContextState::Ready)
+        let ready = self
+            .wait_kernel_context(handle, context, CodeContextState::Ready)
             .await?;
+        if ready.spec.language != language
+            || ready
+                .kernel_info
+                .as_ref()
+                .and_then(|info| info["language_info"]["name"].as_str())
+                != Some(language.as_str())
+        {
+            return Err(unavailable("kernel probe returned a different language"));
+        }
         let mut cursor = 0;
-        let first_spec = CodeRunSpec::new(
-            "import os\nassert 20000<=os.getuid()<20004 and os.getgid()==1000 and os.getgroups()==[]\nassert 'CapEff:\\t0000000000000000' in open('/proc/self/status').read()\nprobe_value=globals().get('probe_value',39)+1\nprint('kernel-start')",
-        );
+        let (first_source, second_source, error_source) = probes::sources(language);
+        let first_spec = CodeRunSpec::new(first_source);
         let first = Uuid::new_v4();
         let request = AgentRequest::CodeRunStart {
             context_id: context,
@@ -130,13 +170,19 @@ impl DockerDriver {
                     == serde_json::to_value(&first_record).ok() => {}
             _ => return Err(unavailable("kernel run replay changed the observed result")),
         }
+        if !matches!(self.bridge(handle, &AgentRequest::ReadFile { path: "goldenhoop-probe-once".into(), max_bytes: 16 }).await?, AgentResponse::File {data_base64} if data_base64 == "eA==")
+        {
+            return Err(unavailable(
+                "kernel probe replay executed its side effect more than once",
+            ));
+        }
         let second = Uuid::new_v4();
         self.bridge(
             handle,
             &AgentRequest::CodeRunStart {
                 context_id: context,
                 id: second,
-                spec: CodeRunSpec::new("probe_value+=2\nprint(probe_value)\nprobe_value"),
+                spec: CodeRunSpec::new(second_source),
             },
         )
         .await?;
@@ -152,11 +198,12 @@ impl DockerDriver {
             .collect::<String>();
         if record.state != CodeRunState::KernelSucceeded
             || output != "42\n"
-            || !events.iter().any(|event| {
-                event.run_id == Some(second)
-                    && event.kind == CodeContextEventKind::Result
-                    && event.data["content"]["data"]["text/plain"] == "42"
-            })
+            || (language == CodeLanguage::Python
+                && !events.iter().any(|event| {
+                    event.run_id == Some(second)
+                        && event.kind == CodeContextEventKind::Result
+                        && event.data["content"]["data"]["text/plain"] == "42"
+                }))
         {
             return Err(unavailable(
                 "kernel retained-state/output/result probe failed",
@@ -168,7 +215,7 @@ impl DockerDriver {
             &AgentRequest::CodeRunStart {
                 context_id: context,
                 id: exception,
-                spec: CodeRunSpec::new("raise ValueError('expected probe exception')"),
+                spec: CodeRunSpec::new(error_source),
             },
         )
         .await?;

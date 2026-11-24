@@ -16,9 +16,10 @@ def nonzero(value):
 def context_spec(value: CodeContextSpec | Json) -> Json:
     value = body(value)
     cwd = value.get("cwd", "/workspace")
-    if (value.get("language", "python") != "python" or not isinstance(cwd, str)
+    language = value.get("language", "python")
+    if (not isinstance(language, str) or language not in {"python", "java", "go", "typescript", "bash", "javascript"} or not isinstance(cwd, str)
             or not 1 <= len(cwd.encode()) <= 4096 or "\0" in cwd or "\\" in cwd):
-        raise ProtocolError("invalid Python context specification")
+        raise ProtocolError("invalid code-context language or working directory")
     return value
 
 

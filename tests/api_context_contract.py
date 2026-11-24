@@ -33,6 +33,7 @@ class ContextCases:
         observed = next(p for p in self.request("GET", "/v1/profiles") if p["id"] == profile)
         assert "code_contexts" in observed["capabilities"], observed
         assert "python" in observed["code_languages"], observed
+        assert set(observed["code_languages"]) == set(self.args.code_languages), observed
         value = self.request("POST", "/v1/sandboxes", {
             "profile": profile, "image": image or self.args.kernel_image,
             "ttl_seconds": ttl, "required_capabilities": ["code_contexts", "artifacts"],
@@ -151,9 +152,53 @@ assert not [child for parent in Path('/tmp').glob('ghctx-*') for child in parent
         value = self.request("DELETE", f"/v1/sandboxes/{sandbox}", key=str(uuid.uuid4()))
         self.wait_operation(value["id"])
 
+    def code_advertised_languages_retain_state_across_service_restarts(self):
+        from language_samples import SAMPLES
+        sandbox = self.code_box(ttl=600)
+        container = self.container(sandbox)
+        try:
+            languages = self.args.code_languages
+            # Stay within four simultaneous contexts and the shared 1-GiB budget.
+            for offset in range(0,len(languages),3):
+                retained=[]
+                for language in languages[offset:offset+3]:
+                    key=str(uuid.uuid4())
+                    spec={"language":language}
+                    context=self.request("POST",f"/v1/sandboxes/{sandbox}/code-contexts",spec,key)
+                    ready=self.wait_context(context['id'])
+                    assert ready['spec']['language']==language and ready['kernel_info']['language_info']['name']==language
+                    first,second,error=SAMPLES[language]
+                    run_key=str(uuid.uuid4())
+                    accepted=self.start_code(context['id'],first,timeout=30,key=run_key)
+                    result,events=self.wait_code(accepted,timeout=45)
+                    output=self.code_stdout(events)
+                    assert result['state']=='kernel_succeeded' and output.endswith('kernel-start\n') and output.count('kernel-start\n')==1, (result,events)
+                    retained.append((language,key,spec,context,run_key,first,second,error,result))
+                self.stop('worker')
+                self.stop('api')
+                self.launch('api')
+                self.launch('worker')
+                assert self.container(sandbox)==container
+                for language,key,spec,context,run_key,first,second,error,result in retained:
+                    replay=self.request('POST',f'/v1/sandboxes/{sandbox}/code-contexts',spec,key)
+                    assert replay['id']==context['id']
+                    assert self.start_code(context['id'],first,timeout=30,key=run_key)==result
+                    assert self.code_file(sandbox,'lang-replay-'+language)==b'x'
+                    result,events=self.code(context['id'],second)
+                    assert result['state']=='kernel_succeeded' and self.code_stdout(events)=='42\n', (result,events)
+                    result,events=self.code(context['id'],error)
+                    assert result['state']=='kernel_failed' and result['kernel_status']=='error', (result,events)
+                    assert self.wait_context(context['id'])['state']=='ready'
+                    self.close_context(context['id'])
+            self.no_context_processes(sandbox)
+        finally:
+            self.stop_code_box(sandbox)
+
     def code_state_replays_and_actual_service_restarts(self):
         sandbox = self.code_box()
         for language in ("java", "go", "typescript", "bash", "javascript"):
+            if language in self.args.code_languages:
+                continue
             self.reject("POST", f"/v1/sandboxes/{sandbox}/code-contexts", 422, "unsupported_capability",
                         body={"language": language}, key=str(uuid.uuid4()))
         assert not self.request("GET", f"/v1/code-contexts?sandbox_id={sandbox}")["items"]

@@ -31,7 +31,7 @@ jobs:
           path: evidence/
   api-s3:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -43,12 +43,12 @@ jobs:
       - name: Build the actual agent, API and clients
         run: |
           docker build -f images/agent/Dockerfile -t goldenhoop-agent:test .
-          docker build -f images/kernel/Dockerfile -t goldenhoop-kernel-fixture:test .
+          docker build -f images/languages/Dockerfile -t goldenhoop-languages-fixture:test .
           cargo build --locked -p goldenhoop-control -p goldenhoop-cli
           cargo build --locked -p goldenhoop-client --example sdk_contract
       - run: docker pull rustfs/rustfs@sha256:ee717072290bec9b11abfc0365f8310b00df1cd9b3639943edae47bdef05044a
       - name: Exercise S3-backed API, clients and actual worker crashes
-        run: python -B tests/api_contract.py --binary target/debug/goldenhoopd --rust-client target/debug/examples/sdk_contract --cli target/debug/goldenhoop --artifact-backend s3 --remove-artifact-fixture-image --runtime runc --kernel-image goldenhoop-kernel-fixture:test --work-dir .test-work --output evidence/api-s3.json
+        run: python -B tests/api_contract.py --binary target/debug/goldenhoopd --rust-client target/debug/examples/sdk_contract --cli target/debug/goldenhoop --artifact-backend s3 --remove-artifact-fixture-image --runtime runc --kernel-image goldenhoop-languages-fixture:test --code-languages python java go typescript bash javascript --work-dir .test-work --output evidence/api-s3.json
       - name: Verify all owned test resources are absent
         if: always()
         shell: bash
@@ -58,12 +58,12 @@ jobs:
           test -z "$remaining"
           remaining=$(docker volume ls --filter label=dev.goldenhoop.installation --format '{{.Name}}')
           test -z "$remaining"
-          if docker image inspect goldenhoop-kernel-fixture:test >/dev/null 2>&1; then
-            label=$(docker image inspect goldenhoop-kernel-fixture:test --format '{{index .Config.Labels "dev.goldenhoop.fixture"}}')
-            test "$label" = kernel-interop
-            remaining=$(docker ps -a --filter ancestor=goldenhoop-kernel-fixture:test --format '{{.ID}}')
+          if docker image inspect goldenhoop-languages-fixture:test >/dev/null 2>&1; then
+            label=$(docker image inspect goldenhoop-languages-fixture:test --format '{{index .Config.Labels "dev.goldenhoop.fixture"}}')
+            test "$label" = languages-interop
+            remaining=$(docker ps -a --filter ancestor=goldenhoop-languages-fixture:test --format '{{.ID}}')
             test -z "$remaining"
-            docker image rm goldenhoop-kernel-fixture:test
+            docker image rm goldenhoop-languages-fixture:test
           fi
       - uses: actions/upload-artifact@v4
         if: always()

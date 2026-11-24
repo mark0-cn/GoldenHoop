@@ -7,7 +7,7 @@ permissions:
 jobs:
   agent:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -63,8 +63,6 @@ jobs:
       - run: python -m pip install httpx==0.28.1
       - name: Build the disposable actual-kernel fixture
         run: docker build -f images/kernel/Dockerfile -t goldenhoop-kernel-fixture:test .
-      - name: Exercise API restart, worker recovery and cleanup
-        run: python -B tests/api_contract.py --binary target/debug/goldenhoopd --rust-client target/debug/examples/sdk_contract --cli target/debug/goldenhoop --runtime ${{ matrix.runtime }} --kernel-image goldenhoop-kernel-fixture:test --work-dir .test-work --output evidence/api-${{ matrix.runtime }}.json
       - name: Verify the driver's explicit optional kernel capability probe
         env:
           GOLDENHOOP_TEST_RUNTIME: ${{ matrix.runtime }}
@@ -77,6 +75,19 @@ jobs:
         run: python -B tests/context_contract.py --runtime ${{ matrix.runtime }} --output evidence/contexts-${{ matrix.runtime }}.json
       - name: Exercise Rust IPC against an actual Jupyter kernel
         run: python -B tests/kernel_contract.py --runtime ${{ matrix.runtime }} --remove-image --output evidence/kernel-${{ matrix.runtime }}.json
+      - name: Build the disposable six-language fixture
+        run: docker build -f images/languages/Dockerfile -t goldenhoop-languages-fixture:test .
+      - name: Verify each language's state, failure and descendant collection
+        run: python -B tests/language_contract.py --runtime ${{ matrix.runtime }} --output evidence/languages-${{ matrix.runtime }}.json
+      - name: Verify the explicit six-language capability probe
+        env:
+          GOLDENHOOP_TEST_RUNTIME: ${{ matrix.runtime }}
+          GOLDENHOOP_KERNEL_IMAGE: goldenhoop-languages-fixture:test
+          GOLDENHOOP_TEST_CODE_LANGUAGES: python,java,go,typescript,bash,javascript
+          GOLDENHOOP_EVIDENCE: evidence/language-probe-${{ matrix.runtime }}.json
+        run: cargo run --locked --quiet -p goldenhoop-docker --example context_probe
+      - name: Exercise API recovery, all language bindings and cleanup
+        run: python -B tests/api_contract.py --binary target/debug/goldenhoopd --rust-client target/debug/examples/sdk_contract --cli target/debug/goldenhoop --runtime ${{ matrix.runtime }} --kernel-image goldenhoop-languages-fixture:test --code-languages python java go typescript bash javascript --work-dir .test-work --output evidence/api-${{ matrix.runtime }}.json
       - name: Verify no test containers remain
         if: always()
         shell: bash
@@ -101,6 +112,13 @@ jobs:
             label=$(docker image inspect goldenhoop-image-policy:test --format '{{index .Config.Labels "dev.goldenhoop.fixture"}}')
             test "$label" = image-policy
             docker image rm goldenhoop-image-policy:test
+          fi
+          if docker image inspect goldenhoop-languages-fixture:test >/dev/null 2>&1; then
+            label=$(docker image inspect goldenhoop-languages-fixture:test --format '{{index .Config.Labels "dev.goldenhoop.fixture"}}')
+            test "$label" = languages-interop
+            remaining=$(docker ps -a --filter ancestor=goldenhoop-languages-fixture:test --format '{{.ID}}')
+            test -z "$remaining"
+            docker image rm goldenhoop-languages-fixture:test
           fi
       - uses: actions/upload-artifact@v4
         if: always()

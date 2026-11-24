@@ -83,7 +83,7 @@ class Contract(ContextCases, IsolatedCases):
                                    stderr=subprocess.STDOUT, env=environment,
                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         self.processes[role] = process
-        deadline = time.monotonic() + (120 if self.args.kernel_image else 35)
+        deadline = time.monotonic() + ((360 if len(self.args.code_languages)>1 else 120) if self.args.kernel_image else 35)
         while time.monotonic() < deadline:
             if process.poll() is not None:
                 raise RuntimeError(f"{role} exited during startup: {path.read_text(encoding='utf-8')}")
@@ -361,13 +361,14 @@ class Contract(ContextCases, IsolatedCases):
                             "GOLDENHOOP_TEST_ISOLATED_SESSIONS": "1",
                             "PYTHONPATH": str(root / "sdk" / "python" / "src")})
         environment.pop("GOLDENHOOP_TEST_KERNEL_IMAGE", None)
+        environment["GOLDENHOOP_TEST_CODE_LANGUAGES"] = ','.join(self.args.code_languages)
         if self.args.kernel_image:
             environment["GOLDENHOOP_TEST_KERNEL_IMAGE"] = self.args.kernel_image
         self.sdk_results = []
         for command in ([str(Path(self.args.rust_client).resolve())],
                         [sys.executable, "-B", str(root / "tests" / "client_contract.py"), "--cli", str(Path(self.args.cli).resolve())]):
             result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8",
-                                    env=environment, timeout=300,
+                                    env=environment, timeout=600 if len(self.args.code_languages)>1 else 300,
                                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             assert result.returncode == 0, (command, result.stdout, result.stderr)
             self.sdk_results.append(json.loads(result.stdout))
@@ -832,6 +833,8 @@ assert not alive,alive
             if self.args.kernel_image and not self.args.clients_only and not self.args.isolated_only:
                 for name in self.context_cases:
                     self.check(name, getattr(self, name))
+                if len(self.args.code_languages)>1:
+                    self.check("code_advertised_languages_retain_state_across_service_restarts", self.code_advertised_languages_retain_state_across_service_restarts)
             if not self.args.clients_only and not self.args.contexts_only:
                 for name in self.isolated_cases:
                     self.check(name, getattr(self, name))
@@ -854,12 +857,15 @@ assert not alive,alive
             sources.append(root / "tests" / "artifact_contract.py")
             sources.append(root / "tests" / "api_context_contract.py")
             sources.append(root / "tests" / "api_isolated_contract.py")
+            sources.append(root / "tests" / "language_samples.py")
+            sources.extend(p for p in (root / "images" / "languages").rglob('*') if p.is_file())
             if self.args.rust_client:
                 sources.extend((root / "sdk").rglob("*.py"))
                 sources.extend((root / "sdk").rglob("pyproject.toml"))
                 sources.append(root / "tests" / "client_contract.py")
                 sources.append(root / "tests" / "code_client_contract.py")
                 sources.append(root / "tests" / "isolated_client_contract.py")
+                sources.append(root / "tests" / "language_client_contract.py")
                 evidence["client_binary_sha256"] = {name: hashlib.sha256(Path(path).read_bytes()).hexdigest()
                                                      for name, path in (("rust", self.args.rust_client), ("cli", self.args.cli))}
             evidence["source_files_sha256"] = {p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(sources)}
@@ -916,6 +922,7 @@ assert not alive,alive
             evidence["artifact_backend"] = self.args.artifact_backend
             evidence["code_contexts"] = getattr(self, "context_observations", [])
             evidence["contexts_only"] = self.args.contexts_only
+            evidence["expected_code_languages"] = self.args.code_languages
             rendered = json.dumps(evidence, indent=2)
             if self.args.output:
                 Path(self.args.output).parent.mkdir(parents=True, exist_ok=True)
@@ -941,11 +948,14 @@ if __name__ == "__main__":
     parser.add_argument("--cli")
     parser.add_argument("--clients-only", action="store_true")
     parser.add_argument("--kernel-image")
+    parser.add_argument("--code-languages",nargs='+',choices=['python','java','go','typescript','bash','javascript'],default=['python'])
     parser.add_argument("--contexts-only", action="store_true")
     parser.add_argument("--isolated-only", action="store_true")
     parser.add_argument("--artifact-backend", choices=("local", "s3"), default="local")
     parser.add_argument("--remove-artifact-fixture-image", action="store_true")
     arguments = parser.parse_args()
+    if 'python' not in arguments.code_languages:
+        parser.error('--code-languages must include python for the baseline regression')
     if bool(arguments.rust_client) != bool(arguments.cli):
         parser.error("--rust-client and --cli must be supplied together")
     if arguments.clients_only and not arguments.rust_client:

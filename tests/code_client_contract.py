@@ -7,13 +7,14 @@ from contextlib import aclosing, closing
 from pathlib import Path
 from uuid import uuid4
 from goldenhoop import AsyncClient, Client, CreateSandbox, CodeContextSpec, CodeRunSpec, CodeObservationError
+from language_client_contract import sync_bindings, async_bindings, cli_bindings
 
 ENDPOINT=os.environ["GOLDENHOOP_ENDPOINT"]
 TOKEN=os.environ["GOLDENHOOP_API_TOKEN"]
 
 
 def request():
-    return CreateSandbox(os.environ["GOLDENHOOP_TEST_PROFILE"],os.environ["GOLDENHOOP_TEST_KERNEL_IMAGE"],ttl_seconds=180,required_capabilities=["code_contexts","artifacts"])
+    return CreateSandbox(os.environ["GOLDENHOOP_TEST_PROFILE"],os.environ["GOLDENHOOP_TEST_KERNEL_IMAGE"],ttl_seconds=360,required_capabilities=["code_contexts","artifacts"])
 
 
 def sync_code_contract():
@@ -57,7 +58,8 @@ def sync_code_contract():
             except CodeObservationError as error:assert client.code_run(error.run_id)["state"]=="unknown"
             else:raise AssertionError("kernel crash became a successful SDK result")
             assert client.wait_code_context_closed(crashed)["state"]=="failed"
-    return {"result":"passed","cleanup":"complete","cases":["retained_state","replay_cursor","rich_result","kernel_exception","sse_resume","cancel_queue","timeout","unknown_crash","metadata_pages"]}
+            languages=sync_bindings(client,sid)
+    return {"result":"passed","cleanup":"complete","languages":languages,"cases":["retained_state","replay_cursor","rich_result","kernel_exception","sse_resume","cancel_queue","timeout","unknown_crash","metadata_pages","all_advertised_languages"]}
 
 
 async def async_code_contract():
@@ -116,7 +118,8 @@ async def async_code_contract():
             except CodeObservationError as error:assert (await client.code_run(error.run_id))["state"]=="unknown"
             else:raise AssertionError("kernel crash became a successful async result")
             assert (await client.wait_code_context_closed(crashed))["state"]=="failed"
-    return {"result":"passed","cleanup":"complete","cases":["retained_state","replay_cursor","rich_result","kernel_exception","cancel_observer_without_cancelling_code","sse_resume","cancel_queue","timeout","unknown_crash","metadata_pages"]}
+            languages=await async_bindings(client,sid)
+    return {"result":"passed","cleanup":"complete","languages":languages,"cases":["retained_state","replay_cursor","rich_result","kernel_exception","cancel_observer_without_cancelling_code","sse_resume","cancel_queue","timeout","unknown_crash","metadata_pages","all_advertised_languages"]}
 
 
 def cli_code_contract(binary):
@@ -125,7 +128,7 @@ def cli_code_contract(binary):
         assert result.returncode==expected,(args,result.returncode,result.stdout.decode(errors="replace"),result.stderr.decode(errors="replace"))
         if empty:return result
         return [json.loads(line) for line in result.stdout.splitlines()] if lines else json.loads(result.stdout)
-    created=invoke("create","--profile",request().profile,"--image",request().image,"--ttl","180")
+    created=invoke("create","--profile",request().profile,"--image",request().image,"--ttl","360")
     sid=created["sandbox"]["id"]
     try:
         key=str(uuid4())
@@ -162,7 +165,9 @@ def cli_code_contract(binary):
         invoke("code-run",crashed,"-","--idempotency-key",key,source="import os;os._exit(7)",expected=125,empty=True)
         replay=invoke("code-run",crashed,"-","--idempotency-key",key,"--no-wait",source="import os;os._exit(7)")
         assert replay["state"]=="unknown" and invoke("context-get",crashed)["cleanup"]=="complete"
+        with Client(ENDPOINT,TOKEN) as observer:
+            languages=cli_bindings(invoke,observer,sid)
     finally:
         invoke("delete",sid)
     assert invoke("get",sid)["cleanup"]=="complete"
-    return {"result":"passed","cleanup":"complete","cases":["retained_state","replay_cursor","rich_result","kernel_exception_exit_1","no_wait","cancel_queue","event_resume","timeout_exit_124","unknown_exit_125","metadata_pages"]}
+    return {"result":"passed","cleanup":"complete","languages":languages,"cases":["retained_state","replay_cursor","rich_result","kernel_exception_exit_1","no_wait","cancel_queue","event_resume","timeout_exit_124","unknown_exit_125","metadata_pages","all_advertised_languages"]}

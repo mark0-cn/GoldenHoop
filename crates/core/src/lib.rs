@@ -298,14 +298,6 @@ pub fn validate_session(session: &SessionSpec) -> Result<(), ApiError> {
 }
 
 pub fn validate_code_context(spec: &CodeContextSpec) -> Result<(), ApiError> {
-    // Target names can be represented without claiming an implemented adapter.
-    // Remove this guard only alongside the corresponding native launch path.
-    if spec.language != CodeLanguage::Python {
-        return Err(ApiError::new(
-            ErrorCode::UnsupportedCapability,
-            "requested code-language adapter is not implemented",
-        ));
-    }
     if spec.cwd.is_empty() || spec.cwd.len() > 4096 || spec.cwd.contains(['\0', '\\']) {
         return Err(ApiError::new(
             ErrorCode::InvalidRequest,

@@ -243,28 +243,29 @@ pub async fn run(
     image: &str,
 ) -> std::result::Result<serde_json::Value, Box<dyn std::error::Error>> {
     let mut request = CreateSandbox::new(profile, image);
-    request.ttl_seconds = 180;
+    request.ttl_seconds = 360;
     request
         .required_capabilities
         .extend([Capability::CodeContexts, Capability::Artifacts]);
     let mut lease = client.lease(&request).await?;
     let sandbox = lease.id();
-    let result = std::panic::AssertUnwindSafe(tokio::time::timeout(
-        Duration::from_secs(100),
-        exercise(client, sandbox),
-    ))
-    .catch_unwind()
-    .await;
+    let result =
+        std::panic::AssertUnwindSafe(tokio::time::timeout(Duration::from_secs(240), async {
+            exercise(client, sandbox).await?;
+            super::languages::exercise(client, sandbox, profile).await
+        }))
+        .catch_unwind()
+        .await;
     lease.close().await?;
     assert_eq!(
         client.sandbox(sandbox).await?.cleanup,
         CleanupState::Complete
     );
-    match result {
+    let languages = match result {
         Ok(value) => value??,
         Err(error) => std::panic::resume_unwind(error),
     };
     Ok(
-        serde_json::json!({"sandbox_id":sandbox,"result":"passed","cleanup":"complete","cases":["retained_state","idempotent_result_replay","rich_result","kernel_exception","independent_context","sse_resume","cancel_queued_code","timeout_collection","unknown_crash","durable_history"]}),
+        serde_json::json!({"sandbox_id":sandbox,"result":"passed","cleanup":"complete","languages":languages,"cases":["retained_state","idempotent_result_replay","rich_result","kernel_exception","independent_context","sse_resume","cancel_queued_code","timeout_collection","unknown_crash","durable_history","all_advertised_languages"]}),
     )
 }

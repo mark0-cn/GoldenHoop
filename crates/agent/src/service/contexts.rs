@@ -6,6 +6,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::*;
 mod kernel;
+mod launch;
 
 pub(super) struct Contexts {
     items: Mutex<HashMap<Uuid, Arc<Context>>>,
@@ -78,6 +79,12 @@ impl Agent {
         spec: CodeContextSpec,
     ) -> Result<AgentResponse, ApiError> {
         validate_code_context(&spec)?;
+        launch::Launch::load(spec.language).map_err(|_| {
+            ApiError::new(
+                ErrorCode::UnsupportedCapability,
+                "requested language has no usable system kernelspec in this image",
+            )
+        })?;
         if id.is_nil() {
             return Err(ApiError::new(
                 ErrorCode::InvalidRequest,

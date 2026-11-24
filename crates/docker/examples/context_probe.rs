@@ -53,10 +53,14 @@ async fn contract(
     let enabled = driver.probe_code_contexts(kernel).await?;
     assert_eq!(enabled.availability, Availability::Available);
     assert!(enabled.capabilities.contains(&Capability::CodeContexts));
-    assert_eq!(
-        enabled.code_languages,
-        [CodeLanguage::Python].into_iter().collect()
-    );
+    let expected = std::env::var("GOLDENHOOP_TEST_CODE_LANGUAGES")
+        .unwrap_or_else(|_| "python".into())
+        .split(',')
+        .map(|name| {
+            serde_json::from_value(serde_json::json!(name)).expect("known expected language")
+        })
+        .collect();
+    assert_eq!(enabled.code_languages, expected);
     assert!(driver.discover().await?.is_empty());
     cases.push(json!({"case":"actual_uid_state_replay_output_exception_and_collection","result":"passed","profile":enabled}));
     assert!(driver.probe_code_contexts(agent).await.is_err());
@@ -144,6 +148,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Cargo.lock",
         "images/agent/Dockerfile",
         "images/kernel/Dockerfile",
+        "images/languages/Dockerfile",
+        "images/languages/kernels/java/kernel.json",
+        "images/languages/kernels/gophernotes/kernel.json",
+        "images/languages/kernels/tslab/kernel.json",
+        "images/languages/kernels/bash/kernel.json",
+        "images/languages/kernels/jslab/kernel.json",
     ] {
         source.insert(
             name.into(),

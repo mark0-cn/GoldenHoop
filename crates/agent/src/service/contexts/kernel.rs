@@ -20,7 +20,7 @@ use tokio::{
 };
 use uuid::Uuid;
 
-use super::{Agent, Context};
+use super::{Agent, Context, launch::Launch};
 
 pub(super) struct StartupLog {
     bytes: Arc<Mutex<Option<Vec<u8>>>>,
@@ -100,6 +100,8 @@ pub(super) async fn start(
     startup_log: &mut Option<StartupLog>,
 ) -> Result<(Peer, Value), String> {
     let result = async {
+        let spec = context.record.lock().await.spec.clone();
+        let plan = Launch::load(spec.language)?;
         std::fs::create_dir(directory)?;
         let private = std::fs::OpenOptions::new().read(true).custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW).open(directory)?;
         owned(&private, context.uid, 0o700)?;
@@ -113,13 +115,12 @@ pub(super) async fn start(
         file.sync_all()?;
         owned(&file, context.uid, 0o600)?;
         drop(file);
-        let cwd_path = context.record.lock().await.spec.cwd.clone();
-        let cwd = agent.workspace.cwd_handle(&cwd_path)?;
-        let mut command = Command::new("python3");
-        command.args(["-I", "-m", "ipykernel_launcher", "-f"]).arg(&connection)
+        let cwd = agent.workspace.cwd_handle(&spec.cwd)?;
+        let mut command = Command::new(&plan.program);
+        command.args(plan.args.iter().map(|arg| arg.replace("{connection_file}", &connection.to_string_lossy())))
             .current_dir(format!("/proc/self/fd/{}", cwd.as_raw_fd()))
-            .env_clear().env("PATH", "/usr/local/bin:/usr/bin:/bin").env("HOME", directory).env("USER", "workload-context").env("LANG", "C.UTF-8")
-            .env("IPYTHONDIR", directory.join("ipython")).env("JUPYTER_CONFIG_DIR", directory.join("config")).env("JUPYTER_RUNTIME_DIR", directory.join("runtime"))
+            .env_clear().envs(&plan.env).env("PATH", "/usr/local/bin:/usr/bin:/bin").env("HOME", directory).env("USER", "workload-context").env("LANG", "C.UTF-8")
+            .env("TMPDIR", directory).env("IPYTHONDIR", directory.join("ipython")).env("JUPYTER_CONFIG_DIR", directory.join("config")).env("JUPYTER_RUNTIME_DIR", directory.join("runtime"))
             .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()).process_group(0).kill_on_drop(true);
         let uid = context.uid;
         // SAFETY: the child hook only calls async-signal-safe libc operations.
@@ -138,22 +139,24 @@ pub(super) async fn start(
         drop(cwd);
         let deadline = Instant::now() + Duration::from_secs(20);
         loop {
-            if [1, 2].iter().all(|port| Path::new(&format!("{}-{port}", prefix.display())).exists()) { break; }
+            if [1, 2].iter().all(|port| plan.naming.path(&prefix, *port).exists()) { break; }
             if child.as_mut().expect("spawned kernel").try_wait()?.is_some() {
                 return Err("kernel exited before establishing IPC".into());
             }
             if Instant::now() >= deadline { return Err("kernel did not establish IPC before deadline".into()); }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
-        let mut peer = Peer::connect(&prefix, uid, key.into_bytes()).await?;
+        let mut peer = Peer::connect_named(&prefix, uid, key.into_bytes(), plan.naming).await?;
         let info = peer.ready().await?;
-        if info["language_info"]["name"] != "python" { return Err("image did not provide a Python kernel".into()); }
+        if !info["language_info"]["name"].as_str().is_some_and(|name| name.eq_ignore_ascii_case(spec.language.as_str())) {
+            return Err("image kernel-info language does not match the requested language".into());
+        }
         let mut retained = serde_json::Map::new();
         for field in ["protocol_version", "implementation", "implementation_version"] {
             let value = info[field].as_str().filter(|value| value.len() <= 128).ok_or("invalid kernel-info field")?;
             retained.insert(field.into(), json!(value));
         }
-        retained.insert("language_info".into(), json!({"name":"python","version":info["language_info"]["version"].as_str().filter(|value| value.len() <= 128)}));
+        retained.insert("language_info".into(), json!({"name":spec.language.as_str(),"version":info["language_info"]["version"].as_str().filter(|value| value.len() <= 128)}));
         if let Some(log)=startup_log.as_ref() {log.discard().await;}
         Ok::<_, Box<dyn std::error::Error + Send + Sync>>((peer, Value::Object(retained)))
     }.await;

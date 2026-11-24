@@ -21,6 +21,17 @@ pub enum CodeLanguage {
     JavaScript,
 }
 impl CodeLanguage {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Python => "python",
+            Self::Java => "java",
+            Self::Go => "go",
+            Self::TypeScript => "typescript",
+            Self::Bash => "bash",
+            Self::JavaScript => "javascript",
+        }
+    }
+
     pub const ALL: [Self; 6] = [
         Self::Python,
         Self::Java,

@@ -474,7 +474,10 @@ impl DockerDriver {
                         "/workspace".into(),
                         "rw,nosuid,nodev,size=128m,uid=1000,gid=1000,mode=2770".into(),
                     ),
-                    ("/tmp".into(), "rw,nosuid,nodev,size=32m,mode=1777".into()),
+                    (
+                        "/tmp".into(),
+                        "rw,exec,nosuid,nodev,size=256m,mode=1777".into(),
+                    ),
                     (
                         "/run/goldenhoop".into(),
                         "rw,nosuid,nodev,size=8m,mode=700".into(),
