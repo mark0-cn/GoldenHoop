@@ -403,7 +403,8 @@ impl DockerDriver {
                     .collect(),
             ),
             labels: Some(labels),
-            network_disabled: Some(true),
+            // The none driver initializes an isolated namespace with loopback.
+            // NetworkDisabled skips that initialization entirely on Docker.
             // Image-defined health checks would otherwise execute as supervisor root.
             healthcheck: Some(HealthConfig {
                 test: Some(vec!["NONE".into()]),
@@ -673,8 +674,31 @@ impl DockerDriver {
                 || host.readonly_rootfs != Some(true) || host.pids_limit != Some(128) || host.memory != Some(268435456)
             { return Err(unavailable("effective runtime restrictions do not match the profile")); }
             let id = Uuid::new_v4();
-            let command = serde_json::from_value(serde_json::json!({"argv":["python3","-c",
-                "import os,socket; assert os.getuid()==1000; lines=open('/proc/self/status').read().splitlines(); assert int(next(v.split()[1] for v in lines if v.startswith('CapEff:')),16)==0; s=socket.socket(); s.settimeout(1); assert s.connect_ex(('1.1.1.1',443))!=0"],"timeout_seconds":5})).map_err(|_| unavailable("invalid probe command"))?;
+            let command = serde_json::from_value(serde_json::json!({"argv":["python3","-c",r#"import os,socket,errno
+assert os.getuid()==1000
+lines=open('/proc/self/status').read().splitlines()
+assert int(next(v.split()[1] for v in lines if v.startswith('CapEff:')),16)==0
+names=sorted(name for _,name in socket.if_nameindex())
+assert names==['lo'],names
+with socket.socket() as listener:
+    listener.settimeout(1)
+    listener.bind(('127.0.0.1',0))
+    listener.listen(1)
+    with socket.create_connection(listener.getsockname(),timeout=1) as connection:
+        accepted,_=listener.accept()
+        with accepted:
+            connection.sendall(b'loopback')
+            assert accepted.recv(8)==b'loopback'
+for family,address in [(socket.AF_INET,('1.1.1.1',443)),(socket.AF_INET,('172.17.0.1',443)),(socket.AF_INET,('169.254.169.254',80)),(socket.AF_INET6,('2606:4700:4700::1111',443))]:
+    for kind in [socket.SOCK_STREAM,socket.SOCK_DGRAM]:
+        try: sock=socket.socket(family,kind)
+        except OSError as error:
+            assert family==socket.AF_INET6 and error.errno in (errno.EAFNOSUPPORT,errno.EPROTONOSUPPORT)
+            continue
+        with sock:
+            sock.settimeout(.5)
+            assert sock.connect_ex(address)!=0,(family,kind,address)
+"#],"timeout_seconds":5})).map_err(|_| unavailable("invalid probe command"))?;
             self.bridge(&handle, &AgentRequest::Start { id, command }).await?;
             let mut completed = false;
             for _ in 0..50 {
