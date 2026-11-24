@@ -139,3 +139,5 @@ python -B tests/api_contract.py --binary target/debug/goldenhoopd --rust-client 
 ```
 
 Use `runsc` only on a real gVisor host. `--clients-only` isolates client debugging and is not a complete API contract pass. All four clients capture output, close the source sandbox, verify retained bytes and explicitly delete the artifact. The harness confirms removal of its labeled containers, volumes, service processes and temporary directory on failure as well as success. Protocol regressions separately exercise premature EOF, partial-frame reconnect, sequence validation, deadline handling and artifact digest mismatch; these do not establish a runtime isolation boundary.
+
+Public code contexts and all four client loops pass on actual [gVisor](evidence/ci-45393987529/agent-runsc/api-runsc.json), [runc](evidence/ci-45393987529/agent-runc/api-runc.json) and [S3-compatible storage](evidence/ci-45393987398/api-s3/api-s3.json), with owned resources and temporary files collected.
