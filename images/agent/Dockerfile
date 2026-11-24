@@ -13,9 +13,18 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     && cargo clippy --locked --workspace --all-targets -- -D warnings \
     && cargo test --locked --workspace \
     && cargo build --locked --release --target x86_64-unknown-linux-musl -p goldenhoop-agent \
-    && cp /src/target/x86_64-unknown-linux-musl/release/goldenhoop-agent /goldenhoop-agent
+    && cargo build --locked --release --target x86_64-unknown-linux-musl -p goldenhoop-egress \
+    && cp /src/target/x86_64-unknown-linux-musl/release/goldenhoop-agent /goldenhoop-agent \
+    && cp /src/target/x86_64-unknown-linux-musl/release/goldenhoop-egress /goldenhoop-egress
 
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim AS host-egress
+LABEL dev.goldenhoop.egress="host-netfilter"
+RUN apt-get update && apt-get install -y --no-install-recommends nftables ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build /goldenhoop-egress /usr/local/bin/goldenhoop-egress
+ENTRYPOINT ["/usr/local/bin/goldenhoop-egress"]
+
+FROM debian:bookworm-slim AS agent
 LABEL dev.goldenhoop.agent.libc="musl"
 RUN apt-get update && apt-get install -y --no-install-recommends python3 ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
