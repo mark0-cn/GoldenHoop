@@ -3,6 +3,28 @@ use goldenhoop_core::*;
 use goldenhoop_protocol::*;
 use std::collections::BTreeSet;
 
+#[test]
+fn code_inputs_and_deadlines_are_bounded_before_delivery() {
+    validate_code_context(&CodeContextSpec::default()).unwrap();
+    let context = CodeContextSpec {
+        cwd: "x\0y".into(),
+        ..Default::default()
+    };
+    assert!(validate_code_context(&context).is_err());
+    let mut run = CodeRunSpec::new("x".repeat(64 * 1024));
+    validate_code_run(&run).unwrap();
+    run.code.push('x');
+    assert!(validate_code_run(&run).is_err());
+    run.code = "print(42)".into();
+    run.timeout_seconds = 0;
+    assert!(validate_code_run(&run).is_err());
+    run.timeout_seconds = 3600;
+    run.max_output_bytes = 16 * 1024 * 1024;
+    validate_code_run(&run).unwrap();
+    run.max_output_bytes += 1;
+    assert!(validate_code_run(&run).is_err());
+}
+
 fn profile() -> RuntimeProfile {
     RuntimeProfile {
         id: "docker-gvisor".into(),

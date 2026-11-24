@@ -232,6 +232,34 @@ pub fn validate_session(session: &SessionSpec) -> Result<(), ApiError> {
     Ok(())
 }
 
+pub fn validate_code_context(spec: &CodeContextSpec) -> Result<(), ApiError> {
+    if spec.cwd.is_empty() || spec.cwd.len() > 4096 || spec.cwd.contains(['\0', '\\']) {
+        return Err(ApiError::new(
+            ErrorCode::InvalidRequest,
+            "invalid kernel working directory",
+        ));
+    }
+    Ok(())
+}
+
+pub fn validate_code_run(spec: &CodeRunSpec) -> Result<(), ApiError> {
+    if spec.code.is_empty() || spec.code.len() > 64 * 1024 || spec.code.contains('\0') {
+        return Err(ApiError::new(
+            ErrorCode::InvalidRequest,
+            "code must contain 1..65536 bytes without NUL",
+        ));
+    }
+    if !(1..=3600).contains(&spec.timeout_seconds)
+        || !(1..=16 * 1024 * 1024).contains(&spec.max_output_bytes)
+    {
+        return Err(ApiError::new(
+            ErrorCode::InvalidRequest,
+            "code deadline/output budget exceeds limits",
+        ));
+    }
+    Ok(())
+}
+
 /// Returns the charged decoded input size. A control receipt never proves code success.
 pub fn validate_session_control(control: &SessionControl) -> Result<usize, ApiError> {
     use base64::{Engine, engine::general_purpose::STANDARD};

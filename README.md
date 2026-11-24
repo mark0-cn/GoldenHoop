@@ -28,7 +28,7 @@ Runtime support is declared per profile and checked against the host. Missing is
 - [Runtime diagnostics](docs/diagnostics.md)
 - [Retained artifacts and storage](docs/artifacts.md)
 - [Interactive sessions, terminal sockets and recovery](docs/sessions.md)
-- [Code context implementation plan](docs/code-contexts.md)
+- [Code context implementation and remaining work](docs/code-contexts.md)
 - [中文说明](README.zh-CN.md)
 
 ## License

@@ -1,4 +1,6 @@
 use std::io::{Read, Write};
+#[cfg(unix)]
+use std::os::fd::AsRawFd;
 use std::path::{Component, Path, PathBuf};
 
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -70,10 +72,20 @@ impl Workspace {
     }
 
     #[cfg(unix)]
-    fn set_owner(&self, file: &impl std::os::fd::AsRawFd) -> Result<(), ApiError> {
+    fn set_owner(&self, file: &cap_std::fs::File) -> Result<(), ApiError> {
         if let Some((uid, gid)) = self.owner {
             // SAFETY: this is an owned, already-open descriptor within the authorized root.
             if unsafe { libc::fchown(file.as_raw_fd(), uid, gid) } != 0 {
+                return Err(io_error(std::io::Error::last_os_error()));
+            }
+            let mode = if file.metadata().map_err(io_error)?.is_dir() {
+                0o2770
+            } else {
+                0o660
+            };
+            // SAFETY: this is the same owned workspace descriptor. GID 1000 is
+            // shared by commands and agent-assigned kernel identities.
+            if unsafe { libc::fchmod(file.as_raw_fd(), mode) } != 0 {
                 return Err(io_error(std::io::Error::last_os_error()));
             }
         }

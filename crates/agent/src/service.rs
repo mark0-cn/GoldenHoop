@@ -20,6 +20,7 @@ use uuid::Uuid;
 
 use crate::filesystem::Workspace;
 
+mod contexts;
 mod interactive;
 mod process;
 mod terminal;
@@ -49,6 +50,7 @@ struct Agent {
     // This allows complete UID-based descendant collection, including setsid().
     commands: Arc<Semaphore>,
     buffered: AtomicUsize,
+    contexts: contexts::Contexts,
 }
 
 impl Agent {
@@ -175,6 +177,34 @@ impl Agent {
                         .map(|(e, _)| e.clone())
                         .collect(),
                 ))
+            }
+            AgentRequest::CodeContextCreate { id, spec } => self.create_context(id, spec).await,
+            AgentRequest::CodeContextGet { id } => Ok(AgentResponse::CodeContext(
+                self.context(id).await?.record.lock().await.clone(),
+            )),
+            AgentRequest::CodeContextClose { id } => {
+                self.close_context(id, "context close requested").await
+            }
+            AgentRequest::CodeContextEvents { id, after } => self.context_events(id, after).await,
+            AgentRequest::CodeRunStart {
+                context_id,
+                id,
+                spec,
+            } => self.start_code(context_id, id, spec).await,
+            AgentRequest::CodeRunGet { context_id, id } => Ok(AgentResponse::CodeRun(
+                self.code_job(context_id, id)
+                    .await?
+                    .record
+                    .lock()
+                    .await
+                    .clone(),
+            )),
+            AgentRequest::CodeRunCancel { context_id, id } => {
+                let job = self.code_job(context_id, id).await?;
+                if !job.record.lock().await.state.is_terminal() {
+                    self.close_context(context_id, "code cancellation closes the entire context and discards interpreter state").await?;
+                }
+                Ok(AgentResponse::CodeRun(job.record.lock().await.clone()))
             }
             AgentRequest::WriteFile { path, data_base64 } => {
                 self.workspace.write(&path, &data_base64)?;
@@ -437,33 +467,53 @@ fn internal(error: impl std::fmt::Display) -> ApiError {
 }
 
 async fn collect_workload_processes() -> bool {
+    collect_uid_processes(WORKLOAD_UID).await
+}
+
+async fn collect_uid_processes(uid: u32) -> bool {
     for _ in 0..40 {
         let entries = match std::fs::read_dir("/proc") {
             Ok(value) => value,
             Err(_) => return false,
         };
         let mut alive = false;
-        for entry in entries.flatten() {
+        for entry in entries {
+            let Ok(entry) = entry else {
+                return false;
+            };
             let Ok(pid) = entry.file_name().to_string_lossy().parse::<i32>() else {
                 continue;
             };
-            let Ok(status) = std::fs::read_to_string(entry.path().join("status")) else {
-                continue;
+            let status = match std::fs::read_to_string(entry.path().join("status")) {
+                Ok(status) => status,
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::NotFound
+                        || error.raw_os_error() == Some(libc::ESRCH) =>
+                {
+                    continue;
+                }
+                Err(_) => return false,
             };
             let own_uid = status
                 .lines()
                 .find_map(|line| line.strip_prefix("Uid:"))
                 .and_then(|v| v.split_whitespace().next())
                 .and_then(|v| v.parse::<u32>().ok());
-            let zombie = status
+            let state = status
                 .lines()
                 .find_map(|line| line.strip_prefix("State:"))
-                .is_some_and(|v| matches!(v.trim_start().chars().next(), Some('Z' | 'X')));
-            if own_uid == Some(WORKLOAD_UID) && !zombie {
+                .and_then(|value| value.trim_start().chars().next());
+            if own_uid.is_none() || state.is_none() {
+                return false;
+            }
+            let zombie = matches!(state, Some('Z' | 'X'));
+            if own_uid == Some(uid) && !zombie {
                 alive = true;
                 // SAFETY: pid belongs to the fixed workload UID in this private PID namespace.
-                unsafe {
-                    libc::kill(pid, libc::SIGKILL);
+                if unsafe { libc::kill(pid, libc::SIGKILL) } != 0
+                    && std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+                {
+                    return false;
                 }
             }
         }
@@ -515,6 +565,7 @@ pub async fn serve(socket: &Path, workspace: &Path) -> Result<(), Box<dyn std::e
         jobs: Mutex::new(HashMap::new()),
         commands: Arc::new(Semaphore::new(1)),
         buffered: AtomicUsize::new(0),
+        contexts: contexts::Contexts::new()?,
     });
     loop {
         let (mut stream, _) = listener.accept().await?;

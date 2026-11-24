@@ -12,7 +12,9 @@ File operations use cap-std directory handles under /workspace, bounded binary t
 
 A clean result requires descendant collection. Unknown cleanup must cause the worker to terminate the whole sandbox.
 
-The private session transport adds persistent pipe shells and actual PTYs, binary input controls with sequence receipts, stdin close for pipes and terminal resize. A partially delivered input is Unknown and is not retried. PTY output is merged stdout/stderr. Public session routes and capability advertisement remain pending; see [session semantics and evidence](sessions.md).
+The session transport adds persistent pipe shells and actual PTYs, binary input controls with sequence receipts, stdin close for pipes and terminal resize. A partially delivered input is Unknown and is not retried. PTY output is merged stdout/stderr. Public routes, Rust/Python SDKs, CLI and capability probes pass actual runc/gVisor tests; see [session semantics and evidence](sessions.md).
+
+Private Python code contexts use independent kernel UIDs, shared workspace GID 1000, bounded authenticated IPC and scoped descendant/private-file collection. Their command result type distinguishes kernel-reported status from OS exit. The private agent memoizes create/run IDs and retains bounded event history; public durable context operations and capability advertisement remain pending. See [code-context boundaries and remaining work](code-contexts.md).
 
 ## Actual backend test
 

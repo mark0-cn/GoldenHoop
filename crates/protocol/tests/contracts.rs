@@ -59,3 +59,19 @@ fn snapshot_kinds_do_not_conflate_memory_with_filesystem() {
     );
     assert_ne!(SnapshotKind::Rootfs, SnapshotKind::MemoryAndDisk);
 }
+
+#[test]
+fn code_context_contract_does_not_accept_host_identities_or_claim_process_exit() {
+    let spec: CodeContextSpec = serde_json::from_str("{}").unwrap();
+    assert_eq!(spec.language, CodeLanguage::Python);
+    assert_eq!(spec.cwd, "/workspace");
+    for value in [
+        r#"{"uid":0}"#,
+        r#"{"language":"python","connection_url":"tcp://host"}"#,
+    ] {
+        assert!(serde_json::from_str::<CodeContextSpec>(value).is_err());
+    }
+    assert!(serde_json::from_str::<ExecutionState>(r#""kernel_succeeded""#).is_err());
+    assert!(!CodeRunState::Unknown.is_terminal());
+    assert!(CodeRunState::KernelFailed.is_terminal());
+}

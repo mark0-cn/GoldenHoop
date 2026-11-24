@@ -8,6 +8,8 @@ use zeroize::Zeroizing;
 
 #[cfg(target_os = "linux")]
 pub mod ipc;
+#[cfg(target_os = "linux")]
+pub mod peer;
 
 pub const DELIMITER: &[u8] = b"<IDS|MSG>";
 pub const MAX_MESSAGE_BYTES: usize = 16 * 1024 * 1024;
