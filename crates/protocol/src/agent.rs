@@ -2,13 +2,19 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use crate::{ApiError, CommandSpec, Execution, ExecutionEvent};
+use crate::{
+    ApiError, CommandSpec, Execution, ExecutionEvent, SessionControl, SessionControlReceipt,
+    SessionSpec,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "method", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AgentRequest {
     Ping,
     Start { id: Uuid, command: CommandSpec },
+    StartSession { id: Uuid, session: SessionSpec },
+    SessionControl { id: Uuid, control: SessionControl },
+    SessionControlStatus { id: Uuid, sequence: u64 },
     Inspect { id: Uuid },
     Events { id: Uuid, after: u64 },
     Cancel { id: Uuid },
@@ -24,6 +30,7 @@ pub enum AgentResponse {
     Pong { version: String },
     Execution(Execution),
     Events(Vec<ExecutionEvent>),
+    SessionControl(SessionControlReceipt),
     File { data_base64: String },
     Files(Vec<FileInfo>),
     Ok,

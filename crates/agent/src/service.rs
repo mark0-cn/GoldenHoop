@@ -1,7 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::os::{fd::AsRawFd, unix::fs::PermissionsExt};
 use std::path::Path;
-use std::process::Stdio;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
@@ -10,7 +9,7 @@ use std::time::Duration;
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use chrono::Utc;
-use goldenhoop_core::validate_command;
+use goldenhoop_core::validate_session;
 use goldenhoop_protocol::*;
 use serde_json::json;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
@@ -20,6 +19,11 @@ use tokio::sync::{Mutex, Semaphore, oneshot};
 use uuid::Uuid;
 
 use crate::filesystem::Workspace;
+
+mod interactive;
+mod process;
+mod terminal;
+use interactive::{InputSink, SessionInput};
 
 const MAX_FRAME: u64 = 24 * 1024 * 1024;
 const MAX_BUFFERED_EVENTS: usize = 16 * 1024 * 1024;
@@ -36,11 +40,12 @@ struct Job {
     cancel: Mutex<Option<oneshot::Sender<()>>>,
     output_used: AtomicU64,
     truncated: AtomicBool,
+    input: Option<Mutex<SessionInput>>,
 }
 struct Agent {
     workspace: Workspace,
     jobs: Mutex<HashMap<Uuid, Arc<Job>>>,
-    // Normal commands share a stable workload identity and execute sequentially.
+    // Commands and interactive sessions share one workload identity and serialize.
     // This allows complete UID-based descendant collection, including setsid().
     commands: Arc<Semaphore>,
     buffered: AtomicUsize,
@@ -122,56 +127,20 @@ impl Agent {
                 version: env!("CARGO_PKG_VERSION").into(),
             }),
             AgentRequest::Start { id, command } => {
-                validate_command(&command)?;
-                // Resolve under the directory capability before any process is created.
-                self.workspace.cwd_handle(&command.cwd)?;
-                let spec = serde_json::to_vec(&command).map_err(internal)?;
-                let mut jobs = self.jobs.lock().await;
-                if let Some(job) = jobs.get(&id) {
-                    if job.spec != spec {
-                        return Err(ApiError::new(
-                            ErrorCode::Conflict,
-                            "execution ID has different command content",
-                        ));
-                    }
-                    return Ok(AgentResponse::Execution(job.record.lock().await.clone()));
-                }
-                if jobs.len() >= 256 {
-                    return Err(ApiError::new(
-                        ErrorCode::QuotaExceeded,
-                        "sandbox execution history limit reached",
-                    ));
-                }
-                let record = Execution {
+                self.start_job(
                     id,
-                    sandbox_id: Uuid::nil(),
-                    state: ExecutionState::Pending,
-                    exit_code: None,
-                    created_at: Utc::now(),
-                    started_at: None,
-                    finished_at: None,
-                    output_truncated: false,
-                    cleanup: CleanupState::NotRequired,
-                    reason: None,
-                };
-                let (send, receive) = oneshot::channel();
-                let job = Arc::new(Job {
-                    spec,
-                    record: Mutex::new(record.clone()),
-                    events: Mutex::new(EventBuffer {
-                        next: 1,
-                        events: VecDeque::new(),
-                    }),
-                    cancel: Mutex::new(Some(send)),
-                    output_used: AtomicU64::new(0),
-                    truncated: AtomicBool::new(false),
-                });
-                jobs.insert(id, job.clone());
-                let agent = self.clone();
-                tokio::spawn(async move {
-                    agent.run(job, command, receive).await;
-                });
-                Ok(AgentResponse::Execution(record))
+                    SessionSpec {
+                        command,
+                        terminal: None,
+                    },
+                    false,
+                )
+                .await
+            }
+            AgentRequest::StartSession { id, session } => self.start_job(id, session, true).await,
+            AgentRequest::SessionControl { id, control } => self.control(id, control).await,
+            AgentRequest::SessionControlStatus { id, sequence } => {
+                self.control_status(id, sequence).await
             }
             AgentRequest::Inspect { id } => Ok(AgentResponse::Execution(
                 self.job(id).await?.record.lock().await.clone(),
@@ -224,6 +193,72 @@ impl Agent {
         }
     }
 
+    async fn start_job(
+        self: &Arc<Self>,
+        id: Uuid,
+        session: SessionSpec,
+        interactive: bool,
+    ) -> Result<AgentResponse, ApiError> {
+        validate_session(&session)?;
+        if id.is_nil() {
+            return Err(ApiError::new(
+                ErrorCode::InvalidRequest,
+                "execution UUID must not be nil",
+            ));
+        }
+        self.workspace.cwd_handle(&session.command.cwd)?;
+        let spec = serde_json::to_vec(&(interactive, &session)).map_err(internal)?;
+        let mut jobs = self.jobs.lock().await;
+        if let Some(job) = jobs.get(&id) {
+            if job.spec != spec {
+                return Err(ApiError::new(
+                    ErrorCode::Conflict,
+                    "execution ID has different process content",
+                ));
+            }
+            return Ok(AgentResponse::Execution(job.record.lock().await.clone()));
+        }
+        if jobs.len() >= 256 {
+            return Err(ApiError::new(
+                ErrorCode::QuotaExceeded,
+                "sandbox execution history limit reached",
+            ));
+        }
+        let record = Execution {
+            id,
+            sandbox_id: Uuid::nil(),
+            state: ExecutionState::Pending,
+            exit_code: None,
+            created_at: Utc::now(),
+            started_at: None,
+            finished_at: None,
+            output_truncated: false,
+            cleanup: CleanupState::NotRequired,
+            reason: None,
+        };
+        let (send, receive) = oneshot::channel();
+        let job = Arc::new(Job {
+            spec,
+            record: Mutex::new(record.clone()),
+            events: Mutex::new(EventBuffer {
+                next: 1,
+                events: VecDeque::new(),
+            }),
+            cancel: Mutex::new(Some(send)),
+            output_used: AtomicU64::new(0),
+            truncated: AtomicBool::new(false),
+            input: interactive.then(|| Mutex::new(SessionInput::default())),
+        });
+        jobs.insert(id, job.clone());
+        let agent = self.clone();
+        tokio::spawn(async move {
+            agent
+                .run(job, session.command, session.terminal, receive)
+                .await;
+        });
+        Ok(AgentResponse::Execution(record))
+    }
+
     async fn job(&self, id: Uuid) -> Result<Arc<Job>, ApiError> {
         self.jobs
             .lock()
@@ -246,6 +281,7 @@ impl Agent {
                 Ok(0) => break,
                 Ok(n) => self.output(job, kind, &bytes[..n], limit).await,
                 Err(_) => {
+                    job.truncated.store(true, Ordering::Relaxed);
                     self.push(
                         job,
                         EventKind::Diagnostic,
@@ -262,6 +298,7 @@ impl Agent {
         self: Arc<Self>,
         job: Arc<Job>,
         spec: CommandSpec,
+        terminal: Option<TerminalSize>,
         mut cancel: oneshot::Receiver<()>,
     ) {
         let _permit = tokio::select! {
@@ -297,25 +334,8 @@ impl Agent {
             .env("HOME", "/workspace")
             .env("LANG", "C.UTF-8")
             .envs(&spec.env)
-            .process_group(0)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
             .kill_on_drop(true);
-        // SAFETY: the child hook only calls async-signal-safe libc functions.
-        unsafe {
-            command.pre_exec(|| {
-                if libc::setgroups(0, std::ptr::null()) != 0 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                if libc::setgid(WORKLOAD_UID) != 0 || libc::setuid(WORKLOAD_UID) != 0 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                libc::umask(0o002);
-                Ok(())
-            });
-        }
-        let mut child = match command.spawn() {
+        let (mut child, pty) = match process::spawn(&mut command, terminal, job.input.is_some()) {
             Ok(value) => value,
             Err(error) => {
                 self.finish(
@@ -329,7 +349,16 @@ impl Agent {
                 return;
             }
         };
+        // Release parent copies of slave descriptors before observing terminal EOF.
+        drop(command);
         drop(cwd);
+        if let Some(input) = &job.input {
+            input.lock().await.sink = Some(if let Some(pty) = &pty {
+                InputSink::Terminal(pty.clone())
+            } else {
+                InputSink::Pipe(child.stdin.take())
+            });
+        }
         {
             let mut record = job.record.lock().await;
             record.state = ExecutionState::Running;
@@ -337,23 +366,30 @@ impl Agent {
             record.cleanup = CleanupState::Pending;
         }
         self.push(&job, EventKind::Started, json!({})).await;
-        let stdout = child.stdout.take().expect("piped stdout");
-        let stderr = child.stderr.take().expect("piped stderr");
         let out_agent = self.clone();
         let out_job = job.clone();
         let limit = spec.max_output_bytes;
-        let out_task = tokio::spawn(async move {
-            out_agent
-                .read_output(&out_job, stdout, EventKind::Stdout, limit)
-                .await;
-        });
-        let err_agent = self.clone();
-        let err_job = job.clone();
-        let err_task = tokio::spawn(async move {
-            err_agent
-                .read_output(&err_job, stderr, EventKind::Stderr, limit)
-                .await;
-        });
+        let readers = if let Some(pty) = pty {
+            vec![tokio::spawn(async move {
+                out_agent.read_terminal(&out_job, pty, limit).await;
+            })]
+        } else {
+            let stdout = child.stdout.take().expect("piped stdout");
+            let stderr = child.stderr.take().expect("piped stderr");
+            let out = tokio::spawn(async move {
+                out_agent
+                    .read_output(&out_job, stdout, EventKind::Stdout, limit)
+                    .await;
+            });
+            let err_agent = self.clone();
+            let err_job = job.clone();
+            let err = tokio::spawn(async move {
+                err_agent
+                    .read_output(&err_job, stderr, EventKind::Stderr, limit)
+                    .await;
+            });
+            vec![out, err]
+        };
         let (state, code, reason) = tokio::select! {
             status = child.wait() => match status {
                 Ok(status) if status.success() => (ExecutionState::Succeeded, status.code(), None),
@@ -369,7 +405,10 @@ impl Agent {
         let clean = collect_workload_processes().await;
         let _ = child.start_kill();
         let _ = tokio::time::timeout(Duration::from_secs(2), child.wait()).await;
-        for mut reader in [out_task, err_task] {
+        if let Some(input) = &job.input {
+            input.lock().await.sink.take();
+        }
+        for mut reader in readers {
             if tokio::time::timeout(Duration::from_secs(2), &mut reader)
                 .await
                 .is_err()

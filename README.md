@@ -4,7 +4,7 @@ A Rust agent sandbox platform with explicit runtime capabilities, independent AP
 
 ## Project status
 
-**M0-M1 are implemented and verified; M2 is in progress. The agent, driver, API/worker, Rust/Python SDKs, Rust CLI and runtime diagnostics pass actual runc/gVisor contracts. Retained artifacts now pass local and S3-compatible API/client tests; their expanded Linux/gVisor CI is pending. Interactive sessions remain in progress.**
+**M0-M1 are implemented and verified; M2 is in progress. The agent, driver, API/worker, Rust/Python SDKs, Rust CLI, diagnostics and retained artifacts pass actual runc/gVisor contracts. Artifacts also pass the S3-compatible API/client suite on Linux. Interactive sessions remain in progress.**
 
 The full target includes local containers, Firecracker microVMs, and Kubernetes; command and file execution; terminals and code contexts; network policy and credential brokering; snapshots, templates, warm pools, batches, and diagnostics.
 
@@ -27,6 +27,7 @@ Runtime support is declared per profile and checked against the host. Missing is
 - [Rust/Python SDKs and client CLI](docs/clients.md)
 - [Runtime diagnostics](docs/diagnostics.md)
 - [Retained artifacts and storage](docs/artifacts.md)
+- [Interactive session transport and pending integration](docs/sessions.md)
 - [中文说明](README.zh-CN.md)
 
 ## License

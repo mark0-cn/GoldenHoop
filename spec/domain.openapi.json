@@ -908,6 +908,148 @@
           "unknown"
         ]
       },
+      "SessionAction": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "data_base64",
+              "kind"
+            ],
+            "properties": {
+              "data_base64": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "write"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "close_input"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "size",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "resize"
+                ]
+              },
+              "size": {
+                "$ref": "#/components/schemas/TerminalSize"
+              }
+            }
+          }
+        ]
+      },
+      "SessionControl": {
+        "type": "object",
+        "required": [
+          "sequence",
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/SessionAction"
+          },
+          "sequence": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "SessionControlReceipt": {
+        "type": "object",
+        "description": "Applied acknowledges delivery to the process/terminal, not code success.",
+        "required": [
+          "execution_id",
+          "sequence",
+          "state",
+          "observed_at"
+        ],
+        "properties": {
+          "error": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ApiError"
+              }
+            ]
+          },
+          "execution_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "observed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "sequence": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "state": {
+            "$ref": "#/components/schemas/SessionControlState"
+          }
+        }
+      },
+      "SessionControlState": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "applied",
+          "rejected",
+          "unknown"
+        ]
+      },
+      "SessionSpec": {
+        "type": "object",
+        "description": "An actual long-lived process. A terminal merges stdout and stderr.",
+        "required": [
+          "command"
+        ],
+        "properties": {
+          "command": {
+            "$ref": "#/components/schemas/CommandSpec"
+          },
+          "terminal": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TerminalSize"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
       "SnapshotKind": {
         "type": "string",
         "enum": [
@@ -973,6 +1115,26 @@
             "format": "uuid"
           }
         }
+      },
+      "TerminalSize": {
+        "type": "object",
+        "required": [
+          "rows",
+          "columns"
+        ],
+        "properties": {
+          "columns": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "rows": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
       },
       "WriteFile": {
         "type": "object",

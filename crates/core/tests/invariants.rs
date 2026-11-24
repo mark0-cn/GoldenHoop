@@ -167,3 +167,57 @@ fn malformed_commands_are_rejected_without_invoking_a_shell() {
     c.env.insert("BAD=KEY".into(), "value".into());
     assert!(validate_command(&c).is_err());
 }
+#[test]
+fn interactive_validation_bounds_input_sequence_and_terminal() {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    let mut session = SessionSpec::shell();
+    validate_session(&session).unwrap();
+    session.terminal = Some(TerminalSize {
+        rows: 0,
+        columns: 80,
+    });
+    assert_eq!(
+        validate_session(&session).unwrap_err().code,
+        ErrorCode::InvalidRequest
+    );
+    session.terminal = Some(TerminalSize {
+        rows: 1000,
+        columns: 1000,
+    });
+    validate_session(&session).unwrap();
+    let mut control = SessionControl {
+        sequence: 1,
+        action: SessionAction::Write {
+            data_base64: STANDARD.encode(vec![0; MAX_SESSION_INPUT_BYTES]),
+        },
+    };
+    assert_eq!(
+        validate_session_control(&control).unwrap(),
+        MAX_SESSION_INPUT_BYTES
+    );
+    control.action = SessionAction::Write {
+        data_base64: STANDARD.encode(vec![0; MAX_SESSION_INPUT_BYTES + 1]),
+    };
+    assert_eq!(
+        validate_session_control(&control).unwrap_err().code,
+        ErrorCode::QuotaExceeded
+    );
+    control.action = SessionAction::Write {
+        data_base64: "?".into(),
+    };
+    assert_eq!(
+        validate_session_control(&control).unwrap_err().code,
+        ErrorCode::InvalidRequest
+    );
+    control.sequence = 0;
+    control.action = SessionAction::CloseInput;
+    assert_eq!(
+        validate_session_control(&control).unwrap_err().code,
+        ErrorCode::InvalidRequest
+    );
+    control.sequence = MAX_SESSION_CONTROLS + 1;
+    assert_eq!(
+        validate_session_control(&control).unwrap_err().code,
+        ErrorCode::InvalidRequest
+    );
+}

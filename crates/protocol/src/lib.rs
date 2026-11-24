@@ -3,8 +3,10 @@ mod agent;
 mod artifacts;
 mod error;
 mod models;
+mod sessions;
 
 pub use agent::*;
 pub use artifacts::*;
 pub use error::*;
 pub use models::*;
+pub use sessions::*;

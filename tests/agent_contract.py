@@ -259,6 +259,113 @@ class Contract:
         request["command"]["argv"] = ["true"]
         self.reject(request, codes=("conflict",))
 
+    def start_session(self, argv, terminal=None, timeout=20):
+        identity = str(uuid.uuid4())
+        request = {"method": "start_session", "id": identity, "session": {
+            "command": {"argv": argv, "timeout_seconds": timeout}, "terminal": terminal,
+        }}
+        self.rpc(request)
+        self.rpc(request)
+        for _ in range(100):
+            if self.rpc({"method": "inspect", "id": identity})["value"]["state"] == "running":
+                return identity
+            time.sleep(0.05)
+        raise AssertionError("session did not become running")
+
+    def session_control(self, identity, sequence, action):
+        request = {"method": "session_control", "id": identity,
+                   "control": {"sequence": sequence, "action": action}}
+        receipt = self.rpc(request)["value"]
+        assert receipt["execution_id"] == identity and receipt["sequence"] == sequence
+        assert self.rpc(request)["value"] == receipt, "replay changed the receipt"
+        assert self.rpc({"method": "session_control_status", "id": identity,
+                         "sequence": sequence})["value"] == receipt
+        return receipt
+
+    def wait_output(self, identity, marker):
+        for _ in range(100):
+            events = self.rpc({"method": "events", "id": identity, "after": 0})["value"]
+            if marker in self.output(events):
+                return
+            time.sleep(0.05)
+        raise AssertionError(f"session output marker missing: {marker!r}")
+
+    @staticmethod
+    def input_action(data):
+        return {"kind": "write", "data_base64": base64.b64encode(data).decode()}
+
+    def shell_retains_state_and_controls_are_deduplicated(self):
+        identity = self.start_session(["/bin/sh"])
+        action = self.input_action(b"value=golden; mkdir -p /workspace/session-dir; cd /workspace/session-dir; printf 'READY\\n'\n")
+        assert self.session_control(identity, 1, action)["state"] == "applied"
+        self.wait_output(identity, b"READY\n")
+        queued = str(uuid.uuid4())
+        self.rpc({"method": "start", "id": queued, "command": {"argv": ["printf", "queued"]}})
+        assert self.rpc({"method": "inspect", "id": queued})["value"]["state"] == "pending"
+        action = self.input_action(b"printf '%s:%s\\n' \"$value\" \"$PWD\"; printf once >> /workspace/session-count\n")
+        assert self.session_control(identity, 2, action)["state"] == "applied"
+        self.reject({"method": "session_control", "id": identity, "control": {
+            "sequence": 2, "action": self.input_action(b"echo changed\n")}}, codes=("conflict",))
+        self.reject({"method": "session_control", "id": identity, "control": {
+            "sequence": 4, "action": {"kind": "close_input"}}}, codes=("conflict",))
+        assert self.session_control(identity, 3, {"kind": "close_input"})["state"] == "applied"
+        record, events = self.wait(identity)
+        assert record["state"] == "succeeded", record
+        assert b"golden:/workspace/session-dir\n" in self.output(events)
+        stored = self.rpc({"method": "read_file", "path": "session-count", "max_bytes": 32})
+        assert base64.b64decode(stored["value"]["data_base64"]) == b"once"
+        assert self.session_control(identity, 2, action)["state"] == "applied"
+        queued_record, queued_events = self.wait(queued)
+        assert queued_record["state"] == "succeeded" and self.output(queued_events) == b"queued"
+        self.assert_no_workload_processes()
+
+    def real_pty_binary_input_resize_and_controlling_terminal(self):
+        code = (
+            "import os,signal,sys,termios,tty,time; "
+            "assert all(os.isatty(fd) for fd in (0,1,2)); "
+            "assert os.getsid(0)==os.getpid(); assert os.getuid()==1000; "
+            "assert 'CapEff:\\t0000000000000000' in open('/proc/self/status').read(); "
+            "open('/dev/tty').close(); tty.setraw(0); "
+            "signal.signal(signal.SIGWINCH,lambda *_:print('SIZE:%d:%d'%termios.tcgetwinsize(0),flush=True)); "
+            "print('READY:%d:%d'%termios.tcgetwinsize(0),flush=True); "
+            "data=os.read(0,3); print('BIN:'+data.hex(),flush=True); time.sleep(.1)"
+        )
+        identity = self.start_session(["python3", "-c", code], {"rows": 24, "columns": 80})
+        self.wait_output(identity, b"READY:24:80\n")
+        resized = self.session_control(identity, 1, {"kind": "resize", "size": {"rows": 40, "columns": 100}})
+        assert resized["state"] == "applied", resized
+        self.wait_output(identity, b"SIZE:40:100\n")
+        half_close = self.session_control(identity, 2, {"kind": "close_input"})
+        assert half_close["state"] == "rejected" and half_close["error"]["code"] == "unsupported_capability"
+        assert self.session_control(identity, 3, self.input_action(b"\x00\xff\n"))["state"] == "applied"
+        record, events = self.wait(identity)
+        assert record["state"] == "succeeded", record
+        assert b"BIN:00ff0a\n" in self.output(events)
+        assert not self.output(events, "stderr"), "PTY must expose one merged stream"
+        self.assert_no_workload_processes()
+
+    def uncertain_input_is_not_retried(self):
+        code = "import fcntl,time; fcntl.fcntl(0,fcntl.F_SETPIPE_SZ,4096); print('READY',flush=True); time.sleep(30)"
+        identity = self.start_session(["python3", "-c", code])
+        self.wait_output(identity, b"READY\n")
+        receipt = self.session_control(identity, 1, self.input_action(b"x" * 65536))
+        assert receipt["state"] == "unknown", receipt
+        rejected = self.session_control(identity, 2, self.input_action(b"other"))
+        assert rejected["state"] == "rejected" and rejected["error"]["code"] == "invalid_state"
+        self.rpc({"method": "cancel", "id": identity})
+        record, _ = self.wait(identity)
+        assert record["state"] == "cancelled", record
+        self.assert_no_workload_processes()
+
+    def terminal_cancel_collects_escaped_descendants(self):
+        code = "import os,time; pid=os.fork(); os.setsid() if pid==0 else None; print('READY',flush=True); time.sleep(30)"
+        identity = self.start_session(["python3", "-c", code], {"rows": 24, "columns": 80})
+        self.wait_output(identity, b"READY")
+        self.rpc({"method": "cancel", "id": identity})
+        record, _ = self.wait(identity)
+        assert record["state"] == "cancelled", record
+        self.assert_no_workload_processes()
+
     def cleanup(self):
         if not self.container:
             return
@@ -292,6 +399,10 @@ class Contract:
                 "failure_and_launch_error", "files", "denied_network",
                 "timeout_and_descendants", "cancellation_collects_setsid_descendant",
                 "bounded_output", "idempotency",
+                "shell_retains_state_and_controls_are_deduplicated",
+                "real_pty_binary_input_resize_and_controlling_terminal",
+                "uncertain_input_is_not_retried",
+                "terminal_cancel_collects_escaped_descendants",
             ):
                 self.check(name, getattr(self, name))
             evidence["result"] = "passed"
@@ -306,7 +417,7 @@ class Contract:
                 evidence["cleanup"] = "complete"
             finally:
                 rendered = json.dumps(evidence, indent=2)
-                print(rendered)
+                print(json.dumps({key: evidence[key] for key in ("suite", "runtime", "result", "cleanup", "cases")})) if output else print(rendered)
                 if output:
                     Path(output).parent.mkdir(parents=True, exist_ok=True)
                     Path(output).write_text(rendered + "\n", encoding="utf-8")

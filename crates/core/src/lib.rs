@@ -209,3 +209,61 @@ pub fn validate_artifact(request: &CreateArtifact) -> Result<(), ApiError> {
     }
     Ok(())
 }
+
+pub const MAX_SESSION_CONTROLS: u64 = 1024;
+pub const MAX_SESSION_INPUT_BYTES: usize = 64 * 1024;
+pub const MAX_SESSION_TOTAL_INPUT_BYTES: usize = 1024 * 1024;
+
+pub fn validate_terminal(size: TerminalSize) -> Result<(), ApiError> {
+    if !(1..=1000).contains(&size.rows) || !(1..=1000).contains(&size.columns) {
+        return Err(ApiError::new(
+            ErrorCode::InvalidRequest,
+            "terminal dimensions must be 1..1000",
+        ));
+    }
+    Ok(())
+}
+
+pub fn validate_session(session: &SessionSpec) -> Result<(), ApiError> {
+    validate_command(&session.command)?;
+    if let Some(size) = session.terminal {
+        validate_terminal(size)?;
+    }
+    Ok(())
+}
+
+/// Returns the charged decoded input size. A control receipt never proves code success.
+pub fn validate_session_control(control: &SessionControl) -> Result<usize, ApiError> {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    if !(1..=MAX_SESSION_CONTROLS).contains(&control.sequence) {
+        return Err(ApiError::new(
+            ErrorCode::InvalidRequest,
+            "session control sequence must be 1..1024",
+        ));
+    }
+    match &control.action {
+        SessionAction::Write { data_base64 } => {
+            if data_base64.len() > MAX_SESSION_INPUT_BYTES.div_ceil(3) * 4 {
+                return Err(ApiError::new(
+                    ErrorCode::QuotaExceeded,
+                    "session input exceeds 64 KiB",
+                ));
+            }
+            let bytes = STANDARD.decode(data_base64).map_err(|_| {
+                ApiError::new(ErrorCode::InvalidRequest, "invalid session input encoding")
+            })?;
+            if bytes.len() > MAX_SESSION_INPUT_BYTES {
+                return Err(ApiError::new(
+                    ErrorCode::QuotaExceeded,
+                    "session input exceeds 64 KiB",
+                ));
+            }
+            Ok(bytes.len())
+        }
+        SessionAction::Resize { size } => {
+            validate_terminal(*size)?;
+            Ok(0)
+        }
+        SessionAction::CloseInput => Ok(0),
+    }
+}
