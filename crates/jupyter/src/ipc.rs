@@ -4,6 +4,7 @@ use std::{collections::BTreeMap, io, path::Path};
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use futures_util::{SinkExt, StreamExt};
+use tokio::time::{Duration, Instant};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::UnixStream,
@@ -14,6 +15,26 @@ use uuid::Uuid;
 use crate::{MAX_FRAMES, MAX_JSON_BYTES, MAX_MESSAGE_BYTES};
 
 const COMMAND_LIMIT: usize = 16 * 1024;
+
+async fn initial_stream(path: &Path, deadline: Instant) -> io::Result<UnixStream> {
+    loop {
+        match UnixStream::connect(path).await {
+            Ok(stream) => return Ok(stream),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused
+                ) && Instant::now() < deadline =>
+            {
+                // bind creates the pathname before listen is ready. No bytes
+                // have been sent on these failed initial connection attempts.
+                tokio::time::sleep_until(deadline.min(Instant::now() + Duration::from_millis(20)))
+                    .await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
 
 #[derive(Clone, Copy)]
 pub enum Role {
@@ -33,7 +54,7 @@ impl Socket {
     /// The path must be generated beneath a caller-owned private kernel directory.
     /// The deadline for the entire handshake is the caller's responsibility.
     pub async fn connect(path: &Path, role: Role, kernel_uid: u32) -> io::Result<Self> {
-        let mut stream = UnixStream::connect(path).await?;
+        let mut stream = initial_stream(path, Instant::now() + Duration::from_secs(2)).await?;
         if stream.peer_cred()?.uid() != kernel_uid {
             return Err(invalid("kernel IPC peer has an unexpected UID"));
         }
@@ -379,5 +400,64 @@ mod tests {
         property(&mut ready, b"socket-type", b"PUB");
         assert!(metadata(&ready).is_err());
         assert!(metadata(b"\x05READY\x0bS").is_err());
+    }
+
+    #[tokio::test]
+    async fn bound_socket_waits_for_listen_only_before_the_first_connection() {
+        use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+        let private = tempfile::tempdir().unwrap();
+        let path = private.path().join("starting");
+        // SAFETY: the returned descriptor is checked and then owned exactly once.
+        let raw = unsafe { libc::socket(libc::AF_UNIX, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0) };
+        assert!(raw >= 0);
+        let owned = unsafe { OwnedFd::from_raw_fd(raw) };
+        // SAFETY: zero is a valid initial representation for sockaddr_un.
+        let mut address: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+        address.sun_family = libc::AF_UNIX as libc::sa_family_t;
+        let bytes = path.as_os_str().as_encoded_bytes();
+        assert!(bytes.len() < address.sun_path.len());
+        for (target, byte) in address.sun_path.iter_mut().zip(bytes) {
+            *target = *byte as libc::c_char;
+        }
+        // SAFETY: address is initialized; its actual length is bounded above.
+        assert_eq!(
+            unsafe {
+                libc::bind(
+                    owned.as_raw_fd(),
+                    (&address as *const libc::sockaddr_un).cast(),
+                    (std::mem::size_of::<libc::sa_family_t>() + bytes.len() + 1) as libc::socklen_t,
+                )
+            },
+            0
+        );
+        assert!(path.exists());
+        assert_eq!(
+            UnixStream::connect(&path).await.unwrap_err().kind(),
+            io::ErrorKind::ConnectionRefused
+        );
+        let refused = initial_stream(&path, Instant::now() + Duration::from_millis(30)).await;
+        assert_eq!(
+            refused.unwrap_err().kind(),
+            io::ErrorKind::ConnectionRefused
+        );
+        let listening = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(80)).await;
+            // SAFETY: this owned descriptor is the bound stream socket above.
+            assert_eq!(unsafe { libc::listen(owned.as_raw_fd(), 4) }, 0);
+            let listener = std::os::unix::net::UnixListener::from(owned);
+            listener.set_nonblocking(true).unwrap();
+            tokio::net::UnixListener::from_std(listener)
+                .unwrap()
+                .accept()
+                .await
+                .unwrap()
+                .0
+        });
+        let connected = initial_stream(&path, Instant::now() + Duration::from_secs(1))
+            .await
+            .unwrap();
+        drop(listening.await.unwrap());
+        drop(connected);
+        private.close().unwrap();
     }
 }
