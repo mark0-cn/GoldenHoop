@@ -1,0 +1,37 @@
+name: Network prerequisites
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  host-netfilter:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the trusted base and disposable network fixture
+        run: |
+          docker build --label dev.goldenhoop.build=network-prerequisites -f images/agent/Dockerfile -t goldenhoop-agent:test .
+          docker build -f tests/fixtures/network.Dockerfile -t goldenhoop-network-fixture:test .
+      - name: Check host packet-filter primitives without publishing a policy
+        run: python3 -B tests/network_capabilities.py --output evidence/network-prerequisites.json --remove-image
+      - name: Verify all owned prerequisite resources are absent
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          remaining=$(docker ps -a --filter label=dev.goldenhoop.test=network-contract --format '{{.ID}}')
+          test -z "$remaining"
+          if docker image inspect goldenhoop-network-fixture:test >/dev/null 2>&1; then
+            label=$(docker image inspect goldenhoop-network-fixture:test --format '{{index .Config.Labels "dev.goldenhoop.fixture"}}')
+            test "$label" = network-interop
+            remaining=$(docker ps -a --filter ancestor=goldenhoop-network-fixture:test --format '{{.ID}}')
+            test -z "$remaining"
+            docker image rm --no-prune goldenhoop-network-fixture:test
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: network-prerequisites
+          path: evidence/
