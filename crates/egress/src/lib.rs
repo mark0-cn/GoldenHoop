@@ -2,12 +2,14 @@
 //! The caller must supply a journal-bound allocation over private stdio.
 pub mod dns;
 mod plan;
-pub use plan::{Allocation, Config, LEASE_SECONDS, Plan};
+pub use plan::{Allocation, Config, DnsBinding, LEASE_SECONDS, Plan};
+#[cfg(target_os = "linux")]
+pub mod frontend;
 
 #[cfg(target_os = "linux")]
 mod manager;
 #[cfg(target_os = "linux")]
-pub use manager::{Manager, Observation, Resolution};
+pub use manager::{Listening, Manager, Observation, Resolution};
 
 use goldenhoop_protocol::{ApiError, ErrorCode};
 

@@ -9,6 +9,9 @@ pub struct Upstream {
     endpoint: SocketAddr,
 }
 impl Upstream {
+    pub fn endpoint(&self) -> SocketAddr {
+        self.endpoint
+    }
     pub fn new(endpoint: SocketAddr) -> Result<Self, ApiError> {
         if endpoint.port() == 0 || endpoint.ip().is_unspecified() || endpoint.ip().is_multicast() {
             return Err(error(

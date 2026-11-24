@@ -358,6 +358,30 @@ fn encode(message: &Message) -> Result<Vec<u8>, ApiError> {
     Ok(bytes)
 }
 
+/// Bounded address-free errors for the workload transport. Never serialize
+/// private error messages or upstream/additional records to an untrusted peer.
+pub fn failure_wire(bytes: &[u8], code: ErrorCode) -> Option<Vec<u8>> {
+    if bytes.len() < 12 {
+        return None;
+    }
+    let response_code = match code {
+        ErrorCode::Forbidden | ErrorCode::UnsupportedCapability => ResponseCode::Refused,
+        ErrorCode::InvalidRequest => ResponseCode::FormErr,
+        _ => ResponseCode::ServFail,
+    };
+    let mut message = Message::response(u16::from_be_bytes([bytes[0], bytes[1]]), OpCode::Query);
+    message.metadata.response_code = response_code;
+    message.metadata.recursion_available = true;
+    if let Ok(query) = decode(bytes, MAX_QUERY)
+        && query.metadata.message_type == MessageType::Query
+        && query.metadata.op_code == OpCode::Query
+    {
+        message.metadata.recursion_desired = query.metadata.recursion_desired;
+        message.queries = query.queries;
+    }
+    encode(&message).ok()
+}
+
 fn chain(
     source: &Domain,
     kind: RecordType,

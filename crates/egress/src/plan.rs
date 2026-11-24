@@ -67,6 +67,33 @@ pub struct Config {
     pub tcp_cap: Option<Vec<u16>>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct DnsBinding {
+    pub(crate) address: std::net::Ipv4Addr,
+    pub(crate) port: u16,
+}
+impl DnsBinding {
+    pub fn new(address: std::net::Ipv4Addr, port: u16) -> Result<Self, ApiError> {
+        if address.is_unspecified()
+            || address.is_loopback()
+            || address.is_multicast()
+            || port < 1024
+        {
+            return Err(error(
+                ErrorCode::InvalidRequest,
+                "invalid owned DNS listener endpoint",
+            ));
+        }
+        Ok(Self { address, port })
+    }
+    pub fn address(&self) -> std::net::Ipv4Addr {
+        self.address
+    }
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+}
+
 impl Config {
     pub fn model(&self) -> Result<goldenhoop_policy::Model, ApiError> {
         if self.policies.is_empty() || self.policies.len() > 5 {
@@ -97,13 +124,21 @@ pub struct Plan {
 
 impl Plan {
     pub fn quarantine(allocation: Allocation, revision: u64) -> Result<Self, ApiError> {
+        Self::quarantine_with_binding(allocation, revision, None)
+    }
+
+    pub fn quarantine_with_binding(
+        allocation: Allocation,
+        revision: u64,
+        binding: Option<&DnsBinding>,
+    ) -> Result<Self, ApiError> {
         allocation.validate()?;
         let mut p = Self {
             allocation,
             revision,
             batch: String::new(),
         };
-        p.base();
+        p.base(binding, false);
         p.line("add rule", "guard counter drop");
         Ok(p)
     }
@@ -113,7 +148,7 @@ impl Plan {
         revision: u64,
         config: &Config,
     ) -> Result<Self, ApiError> {
-        Self::compile_mode(allocation, revision, config, None)
+        Self::compile_mode(allocation, revision, config, None, None)
     }
 
     /// Explicit trusted DNS mode; callers must provide the concrete installer.
@@ -121,8 +156,15 @@ impl Plan {
         allocation: Allocation,
         revision: u64,
         config: &Config,
+        binding: Option<&DnsBinding>,
     ) -> Result<Self, ApiError> {
-        Self::compile_mode(allocation, revision, config, Some(SetNames::bootstrap()))
+        Self::compile_mode(
+            allocation,
+            revision,
+            config,
+            Some(SetNames::bootstrap()),
+            binding,
+        )
     }
 
     fn compile_mode(
@@ -130,6 +172,7 @@ impl Plan {
         revision: u64,
         config: &Config,
         dns: Option<SetNames>,
+        binding: Option<&DnsBinding>,
     ) -> Result<Self, ApiError> {
         allocation.validate()?;
         config.model()?;
@@ -138,7 +181,7 @@ impl Plan {
             revision,
             batch: String::new(),
         };
-        p.base();
+        p.base(binding, true);
         if let Some(names) = &dns {
             p.batch.push_str(&names.declarations(&p.allocation)?);
         }
@@ -297,7 +340,7 @@ impl Plan {
         Ok(())
     }
 
-    fn base(&mut self) {
+    fn base(&mut self, binding: Option<&DnsBinding>, ready: bool) {
         let table = self.allocation.table();
         self.batch.push_str(&format!("add table inet {table}\n"));
         self.line("add chain", &self.allocation.owner_chain());
@@ -310,6 +353,48 @@ impl Plan {
             "add chain",
             "input { type filter hook input priority -190; policy accept; }",
         );
+        if let Some(listener) = binding {
+            for protocol in ["udp", "tcp"] {
+                let endpoint = format!(
+                    "ip daddr {} {protocol} dport {}",
+                    listener.address, listener.port
+                );
+                if ready {
+                    self.line(
+                        "add rule",
+                        &format!(
+                            "input meta iif {} {endpoint} counter accept",
+                            self.allocation.ifindex
+                        ),
+                    );
+                    self.line(
+                        "add rule",
+                        &format!("input iifname \"lo\" {endpoint} counter accept"),
+                    );
+                }
+                self.line("add rule", &format!("input {endpoint} counter drop"));
+            }
+            if ready {
+                self.line(
+                    "add chain",
+                    "dns_pre { type nat hook prerouting priority -110; policy accept; }",
+                );
+                self.line(
+                    "add chain",
+                    "dns_out { type nat hook output priority -110; policy accept; }",
+                );
+                for protocol in ["udp", "tcp"] {
+                    self.line("add rule",&format!("dns_pre meta nfproto ipv4 meta iif {} {protocol} dport 53 dnat ip to {}:{}",self.allocation.ifindex,listener.address,listener.port));
+                    self.line(
+                        "add rule",
+                        &format!(
+                            "dns_out ip daddr {} {protocol} dport 53 dnat ip to {}:{}",
+                            listener.address, listener.address, listener.port
+                        ),
+                    );
+                }
+            }
+        }
         self.line(
             "add rule",
             &format!("input meta iif {} counter drop", self.allocation.ifindex),

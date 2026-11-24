@@ -1,4 +1,6 @@
-use goldenhoop_egress::dns::{GrantInstaller, GrantReceipt, GrantRequest, Request, Upstream};
+use goldenhoop_egress::dns::{
+    GrantInstaller, GrantReceipt, GrantRequest, Request, Upstream, failure_wire,
+};
 use goldenhoop_policy::{Model, Overlays, Policy};
 use goldenhoop_protocol::{ApiError, ErrorCode, NetworkAction, NetworkPolicy, NetworkRule};
 use hickory_proto::{
@@ -89,6 +91,54 @@ fn query_bounds_policy_and_protocol_shape_are_checked_before_forwarding() {
     let mut message = Message::from_vec(&good).unwrap();
     message.metadata.message_type = MessageType::Response;
     assert!(Request::parse(&message.to_vec().unwrap(), &model(), 9).is_err());
+}
+
+#[test]
+fn workload_errors_preserve_only_bounded_questions_and_never_echo_records() {
+    let good = query("good.example.test.", RecordType::A);
+    let mut supplied = Message::from_vec(&good).unwrap();
+    supplied
+        .answers
+        .push(a("good.example.test.", 60, "192.0.2.20"));
+    supplied.authorities = supplied.answers.clone();
+    supplied.additionals = supplied.answers.clone();
+    let mut malformed = good.clone();
+    malformed[4..6].copy_from_slice(&u16::MAX.to_be_bytes());
+    let mut oversized = good.clone();
+    oversized.resize(4097, 0);
+    for (wire, code, expected, questions) in [
+        (good, ErrorCode::Forbidden, ResponseCode::Refused, 1),
+        (
+            supplied.to_vec().unwrap(),
+            ErrorCode::BackendUnavailable,
+            ResponseCode::ServFail,
+            1,
+        ),
+        (
+            malformed,
+            ErrorCode::InvalidRequest,
+            ResponseCode::FormErr,
+            0,
+        ),
+        (
+            oversized,
+            ErrorCode::QuotaExceeded,
+            ResponseCode::ServFail,
+            0,
+        ),
+    ] {
+        let reply = failure_wire(&wire, code).unwrap();
+        assert!(reply.len() <= 512);
+        let decoded = Message::from_vec(&reply).unwrap();
+        assert_eq!(decoded.metadata.id, 77);
+        assert_eq!(decoded.metadata.message_type, MessageType::Response);
+        assert_eq!(decoded.metadata.response_code, expected);
+        assert_eq!(decoded.queries.len(), questions);
+        assert!(decoded.answers.is_empty());
+        assert!(decoded.authorities.is_empty());
+        assert!(decoded.additionals.is_empty());
+    }
+    assert!(failure_wire(&[0; 11], ErrorCode::InvalidRequest).is_none());
 }
 
 #[derive(Clone, Copy)]

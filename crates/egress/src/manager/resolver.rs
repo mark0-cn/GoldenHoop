@@ -15,6 +15,13 @@ pub struct Resolution {
     pub wire: Vec<u8>,
 }
 
+#[derive(Serialize)]
+pub struct Listening {
+    #[serde(flatten)]
+    pub state: Observation,
+    pub binding: crate::DnsBinding,
+}
+
 pub(super) struct DnsState {
     upstream: Upstream,
     pub(super) deadline: Instant,
@@ -22,6 +29,7 @@ pub(super) struct DnsState {
     pub(super) config: Option<Config>,
     pub(super) book: Option<LeaseBook>,
     pub(super) active: SetNames,
+    pub(super) binding: Option<crate::DnsBinding>,
 }
 impl DnsState {
     pub(super) fn invalidate(&mut self, revision: u64) {
@@ -33,6 +41,67 @@ impl DnsState {
 }
 
 impl Manager {
+    pub async fn listen_dns(
+        &mut self,
+        expected: u64,
+    ) -> Result<(Listening, crate::frontend::BoundSockets), ApiError> {
+        self.check_lifetime()?;
+        if self.uncertain || self.can_renew || self.revision != Some(expected) {
+            return Err(error(
+                ErrorCode::InvalidState,
+                "bind DNS only after known quarantine",
+            ));
+        }
+        let state = self.dns.as_ref().ok_or_else(|| {
+            error(
+                ErrorCode::InvalidState,
+                "configure DNS before binding a listener",
+            )
+        })?;
+        if state.binding.is_some() || state.model.is_some() {
+            return Err(error(
+                ErrorCode::Conflict,
+                "DNS listener is already bound or policy is active",
+            ));
+        }
+        self.expected(expected).await?;
+        let gateway = crate::frontend::bridge_address(&self.allocation.bridge)?;
+        if state.upstream.endpoint() == IpEndpoint::new(gateway.into(), 53) {
+            return Err(error(
+                ErrorCode::InvalidRequest,
+                "upstream would recurse into the owned DNS listener",
+            ));
+        }
+        let first = crate::frontend::BoundSockets::bind(gateway, 0).await?;
+        let binding = first.binding.clone();
+        self.check_bridge()?;
+        let next = expected
+            .checked_add(1)
+            .ok_or_else(|| error(ErrorCode::Conflict, "egress revision exhausted"))?;
+        self.dns.as_mut().expect("configured DNS").binding = Some(binding.clone());
+        let plan = Plan::quarantine_with_binding(self.allocation.clone(), next, Some(&binding))?;
+        let observed = self.commit(plan, true, false).await?;
+        self.dns.as_mut().expect("configured DNS").invalidate(next);
+        // Quarantine now protects the endpoint. Close both initial sockets so
+        // data queued before the filter existed cannot borrow a later policy.
+        drop(first);
+        let sockets = match crate::frontend::BoundSockets::bind(gateway, binding.port()).await {
+            Ok(sockets) => sockets,
+            Err(error) => {
+                self.uncertain = true;
+                self.can_renew = false;
+                return Err(error);
+            }
+        };
+        self.check_bridge()?;
+        Ok((
+            Listening {
+                state: observed,
+                binding,
+            },
+            sockets,
+        ))
+    }
     pub(super) fn check_lifetime(&self) -> Result<(), ApiError> {
         if self
             .dns
@@ -77,6 +146,7 @@ impl Manager {
             config: None,
             book: None,
             active: SetNames::bootstrap(),
+            binding: None,
         });
         self.inspect().await
     }

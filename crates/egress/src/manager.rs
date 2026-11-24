@@ -23,7 +23,7 @@ use tokio::{
 const NFT: &str = "/usr/sbin/nft";
 const MAX_OUTPUT: u64 = 4 * 1024 * 1024;
 mod resolver;
-pub use resolver::Resolution;
+pub use resolver::{Listening, Resolution};
 
 #[derive(Debug, Serialize)]
 pub struct Observation {
@@ -239,7 +239,12 @@ impl Manager {
             .ok_or_else(|| error(ErrorCode::Conflict, "egress revision exhausted"))?;
         let model = self.dns.as_ref().map(|_| config.model()).transpose()?;
         let plan = if self.dns.is_some() {
-            Plan::compile_with_dns(self.allocation.clone(), next, config)?
+            Plan::compile_with_dns(
+                self.allocation.clone(),
+                next,
+                config,
+                self.dns.as_ref().and_then(|state| state.binding.as_ref()),
+            )?
         } else {
             Plan::compile(self.allocation.clone(), next, config)?
         };
@@ -263,7 +268,11 @@ impl Manager {
         self.expected(expected).await?;
         let observed = self
             .commit(
-                Plan::quarantine(self.allocation.clone(), next)?,
+                Plan::quarantine_with_binding(
+                    self.allocation.clone(),
+                    next,
+                    self.dns.as_ref().and_then(|state| state.binding.as_ref()),
+                )?,
                 true,
                 false,
             )
