@@ -23,6 +23,8 @@ use utoipa::OpenApi;
     ExecutionState,
     EventKind,
     ExecutionEvent,
+    FileInfo,
+    FileKind,
     SnapshotKind,
     SnapshotManifest,
     Operation,

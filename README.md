@@ -4,7 +4,7 @@ A Rust agent sandbox platform with explicit runtime capabilities, independent AP
 
 ## Project status
 
-**M0 contracts and runtime boundaries are implemented. No execution backend is released yet.**
+**M0 is implemented; M1 is in progress. The Rust agent passes an actual Docker/runc contract. No complete execution backend is released yet.**
 
 The full target includes local containers, Firecracker microVMs, and Kubernetes; command and file execution; terminals and code contexts; network policy and credential brokering; snapshots, templates, warm pools, batches, and diagnostics.
 
@@ -21,6 +21,7 @@ Runtime support is declared per profile and checked against the host. Missing is
 - [Milestones and acceptance](docs/roadmap.md)
 - [Verification policy](docs/verification.md)
 - [Implementation progress](docs/progress.md)
+- [Agent execution and actual-runtime tests](docs/agent.md)
 - [中文说明](README.zh-CN.md)
 
 ## License

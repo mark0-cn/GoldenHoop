@@ -1,0 +1,48 @@
+name: Agent runtime contract
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  agent:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [runc, runsc]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install gVisor on the disposable CI runner
+        if: matrix.runtime == 'runsc'
+        shell: bash
+        run: |
+          set -euo pipefail
+          scratch=$(mktemp -d)
+          trap 'rm -rf "$scratch"' EXIT
+          base="https://storage.googleapis.com/gvisor/releases/release/latest/$(uname -m)"
+          cd "$scratch"
+          curl --fail --location --retry 3 "$base/gvisor.tar.zstd" -o gvisor.tar.zstd
+          curl --fail --location --retry 3 "$base/gvisor.tar.zstd.sha512" -o gvisor.tar.zstd.sha512
+          sha512sum -c gvisor.tar.zstd.sha512
+          sudo tar --zstd -xf gvisor.tar.zstd -C /usr/local/bin
+          sudo /usr/local/bin/runsc install
+          sudo systemctl reload docker
+          runsc --version
+      - name: Build and validate Linux Rust code
+        run: docker build --label dev.goldenhoop.build=ci-agent -f images/agent/Dockerfile -t goldenhoop-agent:test .
+      - name: Exercise the actual runtime
+        run: python3 -B tests/agent_contract.py --runtime ${{ matrix.runtime }} --output evidence/agent-${{ matrix.runtime }}.json
+      - name: Verify no test containers remain
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          remaining=$(docker ps -a --filter label=dev.goldenhoop.test=agent-contract --format '{{.ID}}')
+          test -z "$remaining"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: agent-${{ matrix.runtime }}
+          path: evidence/

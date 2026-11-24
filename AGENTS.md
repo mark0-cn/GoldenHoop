@@ -7,6 +7,7 @@
 - Do not place host secrets, daemon sockets, or API credentials inside a workload.
 - Use actual runtime observations for recovery and cleanup evidence.
 - Scope Docker resources with GoldenHoop ownership labels. Never delete unrelated resources.
+- Clean task-owned temporary files, containers and failed-run leftovers promptly, including failure paths. Verify their absence; retain source, useful development caches and validation evidence.
 - Run cargo fmt --all --check, cargo clippy --workspace --all-targets -- -D warnings, and cargo test --workspace for Rust changes.
 - Real-backend tests are separate release gates. Skipped hardware tests must remain unverified.
 - Update docs/progress.md with concrete implementation and validation evidence before a milestone commit.
