@@ -470,9 +470,10 @@ impl Agent {
             .path()
             .join(context.id.simple().to_string());
         let mut child = None;
+        let mut startup_log = None;
         let startup = tokio::select! { biased;
             _ = context.close.cancelled() => Err(Stop::closed()),
-            value = tokio::time::timeout(Duration::from_secs(30), kernel::start(&self, &context, &directory, &mut child)) =>
+            value = tokio::time::timeout(Duration::from_secs(30), kernel::start(&self, &context, &directory, &mut child, &mut startup_log)) =>
                 value.map_err(|_| Stop::failed("kernel startup timed out".into())).and_then(|value| value.map_err(Stop::failed)),
         };
         let mut active = None;
@@ -577,6 +578,9 @@ impl Agent {
         } else {
             true
         };
+        if let Some(log) = startup_log {
+            log.stop().await;
+        }
         let files_removed = kernel::remove_private(&directory);
         let clean = collected && waited && files_removed;
         if let Some(job) = active {

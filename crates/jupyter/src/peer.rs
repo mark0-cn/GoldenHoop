@@ -36,13 +36,25 @@ impl Peer {
             Role::Subscriber,
             uid,
         )
-        .await?;
+        .await
+        .map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!("kernel output IPC connection: {error}"),
+            )
+        })?;
         let shell = Socket::connect(
             Path::new(&format!("{}-1", prefix.display())),
             Role::Dealer,
             uid,
         )
-        .await?;
+        .await
+        .map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!("kernel shell IPC connection: {error}"),
+            )
+        })?;
         let codec = Codec::new(key, Uuid::new_v4()).map_err(invalid)?;
         Ok(Self {
             codec,
