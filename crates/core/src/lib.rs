@@ -25,6 +25,20 @@ pub fn validate_create(profile: &RuntimeProfile, request: &CreateSandbox) -> Res
             "image is required",
         ));
     }
+    if request.image.len() > 1024
+        || request.metadata.len() > 64
+        || request
+            .metadata
+            .iter()
+            .map(|(key, value)| key.len() + value.len())
+            .sum::<usize>()
+            > 16 * 1024
+    {
+        return Err(ApiError::new(
+            ErrorCode::QuotaExceeded,
+            "image reference or metadata exceeds request limits",
+        ));
+    }
     if request.ttl_seconds == 0 || request.ttl_seconds > profile.max_ttl_seconds {
         return Err(ApiError::new(
             ErrorCode::InvalidRequest,
@@ -100,6 +114,22 @@ pub fn expired(sandbox: &Sandbox, now: DateTime<Utc>) -> bool {
 }
 
 pub fn validate_command(command: &CommandSpec) -> Result<(), ApiError> {
+    if command.argv.len() > 1024
+        || command.env.len() > 128
+        || command.cwd.len() > 4096
+        || command.argv.iter().map(String::len).sum::<usize>() > 128 * 1024
+        || command
+            .env
+            .iter()
+            .map(|(key, value)| key.len() + value.len())
+            .sum::<usize>()
+            > 64 * 1024
+    {
+        return Err(ApiError::new(
+            ErrorCode::QuotaExceeded,
+            "command arguments or environment exceed request limits",
+        ));
+    }
     if command.argv.is_empty()
         || command.argv[0].is_empty()
         || command.argv.iter().any(|s| s.contains('\0'))

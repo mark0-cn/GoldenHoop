@@ -99,6 +99,7 @@ fn sandbox(request: &CreateSandbox) -> Sandbox {
         profile: request.profile.clone(),
         image: request.image.clone(),
         state: SandboxState::Starting,
+        desired_state: DesiredState::Running,
         cleanup: CleanupState::Pending,
         created_at: now,
         expires_at: now + chrono::Duration::seconds(request.ttl_seconds as i64),

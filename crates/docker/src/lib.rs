@@ -639,6 +639,7 @@ impl DockerDriver {
             profile: request.profile.clone(),
             image: request.image.clone(),
             state: SandboxState::Starting,
+            desired_state: DesiredState::Running,
             cleanup: CleanupState::Pending,
             created_at: Utc::now(),
             expires_at: Utc::now() + chrono::Duration::seconds(60),

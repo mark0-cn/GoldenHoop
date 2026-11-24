@@ -1,0 +1,378 @@
+use super::*;
+use goldenhoop_core::{expired, request_fingerprint, transition, validate_create};
+
+impl Store {
+    pub async fn sandbox(&self, id: Uuid) -> Result<StoredSandbox, ApiError> {
+        let row = sqlx::query("SELECT * FROM sandboxes WHERE id=?")
+            .bind(id.to_string())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(db)?
+            .ok_or_else(|| not_found("sandbox"))?;
+        sandbox_row(&row)
+    }
+
+    pub async fn created(&self, id: Uuid) -> Result<SandboxCreated, ApiError> {
+        let stored = self.sandbox(id).await?;
+        Ok(SandboxCreated {
+            sandbox: stored.sandbox,
+            operation: self.operation(stored.create_operation).await?,
+        })
+    }
+
+    pub async fn operation(&self, id: Uuid) -> Result<Operation, ApiError> {
+        let value: Option<String> = sqlx::query_scalar("SELECT payload FROM operations WHERE id=?")
+            .bind(id.to_string())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(db)?;
+        decode(&value.ok_or_else(|| not_found("operation"))?)
+    }
+
+    pub async fn create_sandbox(
+        &self,
+        profile: &RuntimeProfile,
+        request: &CreateSandbox,
+        key: &str,
+    ) -> Result<SandboxCreated, ApiError> {
+        let id = Uuid::new_v4();
+        let fingerprint = request_fingerprint(request)?;
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+        if let Some(existing) = reserve(&mut tx, "sandboxes:create", key, &fingerprint, id).await? {
+            tx.commit().await.map_err(db)?;
+            return self.created(existing).await;
+        }
+        validate_create(profile, request)?;
+        if request.ttl_seconds > 86_400 || request.resources.memory_bytes > 32 * 1024 * 1024 * 1024
+        {
+            return Err(ApiError::new(
+                ErrorCode::QuotaExceeded,
+                "installation lifetime or memory quota exceeded",
+            ));
+        }
+        let used = sqlx::query("SELECT COUNT(*) AS count,COALESCE(SUM(cpu_millis),0) AS cpu,COALESCE(SUM(memory_bytes),0) AS memory,COALESCE(SUM(pids),0) AS pids FROM sandboxes WHERE cleanup<>'complete'").fetch_one(&mut *tx).await.map_err(db)?;
+        if used.try_get::<i64, _>("count").map_err(db)? >= 16
+            || used.try_get::<i64, _>("cpu").map_err(db)? + i64::from(request.resources.cpu_millis)
+                > 16_000
+            || used.try_get::<i64, _>("memory").map_err(db)? + request.resources.memory_bytes as i64
+                > 32 * 1024 * 1024 * 1024
+            || used.try_get::<i64, _>("pids").map_err(db)? + i64::from(request.resources.pids)
+                > 4096
+        {
+            return Err(ApiError::new(
+                ErrorCode::QuotaExceeded,
+                "installation resource quota exceeded",
+            ));
+        }
+        let now = Utc::now();
+        let sandbox = Sandbox {
+            id,
+            profile: request.profile.clone(),
+            image: request.image.clone(),
+            state: SandboxState::Pending,
+            desired_state: DesiredState::Running,
+            cleanup: CleanupState::Pending,
+            created_at: now,
+            expires_at: now + chrono::Duration::seconds(request.ttl_seconds as i64),
+            observed_at: None,
+            resources: request.resources.clone(),
+            metadata: request.metadata.clone(),
+            reason: None,
+        };
+        let operation = Operation {
+            id: Uuid::new_v4(),
+            resource_id: id,
+            state: OperationState::Pending,
+            created_at: now,
+            finished_at: None,
+            error: None,
+        };
+        sqlx::query("INSERT INTO sandboxes(id,desired,state,cleanup,payload,request,cpu_millis,memory_bytes,pids,create_operation) VALUES(?,'running','pending','pending',?,?,?,?,?,?)")
+            .bind(id.to_string()).bind(encode(&sandbox)?).bind(encode(request)?)
+            .bind(i64::from(request.resources.cpu_millis)).bind(request.resources.memory_bytes as i64).bind(i64::from(request.resources.pids)).bind(operation.id.to_string())
+            .execute(&mut *tx).await.map_err(db)?;
+        sqlx::query("INSERT INTO operations(id,resource_id,kind,state,payload) VALUES(?,?,'create','pending',?)")
+            .bind(operation.id.to_string()).bind(id.to_string()).bind(encode(&operation)?).execute(&mut *tx).await.map_err(db)?;
+        tx.commit().await.map_err(db)?;
+        Ok(SandboxCreated { sandbox, operation })
+    }
+
+    pub async fn list_sandboxes(
+        &self,
+        after: Option<Uuid>,
+        limit: u32,
+    ) -> Result<SandboxPage, ApiError> {
+        if !(1..=1000).contains(&limit) {
+            return Err(ApiError::new(
+                ErrorCode::InvalidRequest,
+                "page limit must be 1..1000",
+            ));
+        }
+        let rows = sqlx::query("SELECT * FROM sandboxes WHERE id>? ORDER BY id LIMIT ?")
+            .bind(after.map(|id| id.to_string()).unwrap_or_default())
+            .bind(i64::from(limit) + 1)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(db)?;
+        let more = rows.len() > limit as usize;
+        let items = rows
+            .iter()
+            .take(limit as usize)
+            .map(|row| sandbox_row(row).map(|stored| stored.sandbox))
+            .collect::<Result<Vec<_>, _>>()?;
+        let next_cursor = if more {
+            items.last().map(|sandbox| sandbox.id)
+        } else {
+            None
+        };
+        Ok(SandboxPage { items, next_cursor })
+    }
+
+    pub async fn work(&self) -> Result<Vec<StoredSandbox>, ApiError> {
+        sqlx::query("SELECT * FROM sandboxes WHERE cleanup<>'complete' ORDER BY id")
+            .fetch_all(&self.pool)
+            .await
+            .map_err(db)?
+            .iter()
+            .map(sandbox_row)
+            .collect()
+    }
+
+    /// Update only observed state. A concurrent API desired-state update is preserved.
+    pub async fn observe(&self, mut stored: StoredSandbox) -> Result<(), ApiError> {
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+        let row = sqlx::query("SELECT * FROM sandboxes WHERE id=?")
+            .bind(stored.sandbox.id.to_string())
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(db)?;
+        let previous = sandbox_row(&row)?;
+        if previous.sandbox.state != stored.sandbox.state {
+            transition(previous.sandbox.state, stored.sandbox.state)?;
+        }
+        if stored.sandbox.cleanup == CleanupState::Complete
+            && !matches!(
+                stored.sandbox.state,
+                SandboxState::Terminated | SandboxState::Failed
+            )
+        {
+            return Err(ApiError::new(
+                ErrorCode::InvalidState,
+                "a live sandbox cannot have completed cleanup",
+            ));
+        }
+        if stored.sandbox.state == SandboxState::Terminated
+            && stored.sandbox.cleanup != CleanupState::Complete
+        {
+            return Err(ApiError::new(
+                ErrorCode::InvalidState,
+                "termination requires confirmed cleanup",
+            ));
+        }
+        // The worker only supplies observations; request identity and absolute TTL
+        // remain the values committed by the API, even when its snapshot is stale.
+        let reported = stored.sandbox;
+        stored.sandbox = previous.sandbox;
+        stored.sandbox.state = reported.state;
+        stored.sandbox.cleanup = reported.cleanup;
+        stored.sandbox.observed_at = reported.observed_at;
+        stored.sandbox.reason = reported.reason;
+        if stored.handle.as_ref().is_some_and(|handle| {
+            handle.sandbox_id != stored.sandbox.id || handle.profile != stored.sandbox.profile
+        }) {
+            return Err(ApiError::new(
+                ErrorCode::Conflict,
+                "runtime handle has a different sandbox identity",
+            ));
+        }
+        let ever_running = previous.ever_running || stored.sandbox.state == SandboxState::Running;
+        sqlx::query(
+            "UPDATE sandboxes SET state=?,cleanup=?,payload=?,handle=?,ever_running=? WHERE id=?",
+        )
+        .bind(tag(&stored.sandbox.state)?)
+        .bind(tag(&stored.sandbox.cleanup)?)
+        .bind(encode(&stored.sandbox)?)
+        .bind(stored.handle.as_ref().map(encode).transpose()?)
+        .bind(ever_running)
+        .bind(stored.sandbox.id.to_string())
+        .execute(&mut *tx)
+        .await
+        .map_err(db)?;
+        tx.commit().await.map_err(db)?;
+        Ok(())
+    }
+
+    pub async fn set_desired(
+        &self,
+        id: Uuid,
+        desired: DesiredState,
+        key: &str,
+    ) -> Result<Operation, ApiError> {
+        let kind = match desired {
+            DesiredState::Running => "resume",
+            DesiredState::Paused => "pause",
+            DesiredState::Terminated => "terminate",
+        };
+        let scope = format!("sandboxes:{id}:{kind}");
+        let operation_id = Uuid::new_v4();
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+        if let Some(existing) =
+            reserve(&mut tx, &scope, key, &fingerprint(&desired)?, operation_id).await?
+        {
+            tx.commit().await.map_err(db)?;
+            return self.operation(existing).await;
+        }
+        let row = sqlx::query("SELECT * FROM sandboxes WHERE id=?")
+            .bind(id.to_string())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(db)?
+            .ok_or_else(|| not_found("sandbox"))?;
+        let mut stored = sandbox_row(&row)?;
+        if stored.sandbox.desired_state == desired {
+            let pending: Option<String> = sqlx::query_scalar("SELECT payload FROM operations WHERE resource_id=? AND kind=? AND state IN('pending','running') LIMIT 1")
+                .bind(id.to_string()).bind(kind).fetch_optional(&mut *tx).await.map_err(db)?;
+            if let Some(payload) = pending {
+                let operation: Operation = decode(&payload)?;
+                sqlx::query("UPDATE idempotency SET resource_id=? WHERE scope=? AND client_key=?")
+                    .bind(operation.id.to_string())
+                    .bind(&scope)
+                    .bind(key)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(db)?;
+                tx.commit().await.map_err(db)?;
+                return Ok(operation);
+            }
+        }
+        if desired != DesiredState::Terminated
+            && (stored.sandbox.desired_state == DesiredState::Terminated
+                || matches!(
+                    stored.sandbox.state,
+                    SandboxState::Pending
+                        | SandboxState::Starting
+                        | SandboxState::Stopping
+                        | SandboxState::Failed
+                        | SandboxState::Terminated
+                        | SandboxState::Unknown
+                )
+                || expired(&stored.sandbox, Utc::now()))
+        {
+            return Err(ApiError::new(
+                ErrorCode::InvalidState,
+                "sandbox cannot change to requested live state",
+            ));
+        }
+        let satisfied = match desired {
+            DesiredState::Running => {
+                stored.sandbox.desired_state == desired
+                    && stored.sandbox.state == SandboxState::Running
+            }
+            DesiredState::Paused => {
+                stored.sandbox.desired_state == desired
+                    && stored.sandbox.state == SandboxState::Paused
+            }
+            DesiredState::Terminated => stored.sandbox.cleanup == CleanupState::Complete,
+        };
+        let now = Utc::now();
+        let operation = Operation {
+            id: operation_id,
+            resource_id: id,
+            state: if satisfied {
+                OperationState::Succeeded
+            } else {
+                OperationState::Pending
+            },
+            created_at: now,
+            finished_at: satisfied.then_some(now),
+            error: None,
+        };
+        let pending = sqlx::query("SELECT id,kind,payload FROM operations WHERE resource_id=? AND state IN('pending','running')").bind(id.to_string()).fetch_all(&mut *tx).await.map_err(db)?;
+        for row in pending {
+            if row.try_get::<&str, _>("kind").map_err(db)? == "create"
+                && desired != DesiredState::Terminated
+            {
+                continue;
+            }
+            let mut previous: Operation = decode(row.try_get("payload").map_err(db)?)?;
+            previous.state = OperationState::Cancelled;
+            previous.finished_at = Some(now);
+            previous.error = Some(ApiError::new(
+                ErrorCode::Conflict,
+                "operation superseded by desired-state request",
+            ));
+            sqlx::query("UPDATE operations SET state='cancelled',payload=? WHERE id=?")
+                .bind(encode(&previous)?)
+                .bind(previous.id.to_string())
+                .execute(&mut *tx)
+                .await
+                .map_err(db)?;
+        }
+        stored.sandbox.desired_state = desired;
+        sqlx::query("UPDATE sandboxes SET desired=?,payload=? WHERE id=?")
+            .bind(tag(&desired)?)
+            .bind(encode(&stored.sandbox)?)
+            .bind(id.to_string())
+            .execute(&mut *tx)
+            .await
+            .map_err(db)?;
+        sqlx::query("INSERT INTO operations(id,resource_id,kind,state,payload) VALUES(?,?,?,?,?)")
+            .bind(operation.id.to_string())
+            .bind(id.to_string())
+            .bind(kind)
+            .bind(tag(&operation.state)?)
+            .bind(encode(&operation)?)
+            .execute(&mut *tx)
+            .await
+            .map_err(db)?;
+        tx.commit().await.map_err(db)?;
+        Ok(operation)
+    }
+
+    pub async fn finish_operations(
+        &self,
+        id: Uuid,
+        kind: &str,
+        state: OperationState,
+        error: Option<ApiError>,
+    ) -> Result<(), ApiError> {
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+        let sandbox = sandbox_row(
+            &sqlx::query("SELECT * FROM sandboxes WHERE id=?")
+                .bind(id.to_string())
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(db)?,
+        )?
+        .sandbox;
+        if state == OperationState::Succeeded
+            && !match kind {
+                "create" | "resume" => sandbox.state == SandboxState::Running,
+                "pause" => sandbox.state == SandboxState::Paused,
+                "terminate" => sandbox.cleanup == CleanupState::Complete,
+                _ => false,
+            }
+        {
+            return Err(ApiError::new(
+                ErrorCode::InvalidState,
+                "operation success lacks the required observation",
+            ));
+        }
+        let rows = sqlx::query("SELECT payload FROM operations WHERE resource_id=? AND kind=? AND state IN('pending','running')").bind(id.to_string()).bind(kind).fetch_all(&mut *tx).await.map_err(db)?;
+        for row in rows {
+            let mut operation: Operation = decode(row.try_get("payload").map_err(db)?)?;
+            operation.state = state;
+            operation.error = error.clone();
+            operation.finished_at = state.is_terminal().then(Utc::now);
+            sqlx::query("UPDATE operations SET state=?,payload=? WHERE id=?")
+                .bind(tag(&state)?)
+                .bind(encode(&operation)?)
+                .bind(operation.id.to_string())
+                .execute(&mut *tx)
+                .await
+                .map_err(db)?;
+        }
+        tx.commit().await.map_err(db)?;
+        Ok(())
+    }
+}

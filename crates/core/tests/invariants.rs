@@ -102,6 +102,7 @@ fn paused_and_unknown_sandboxes_still_expire_at_absolute_deadline() {
             profile: "docker-gvisor".into(),
             image: "image".into(),
             state,
+            desired_state: DesiredState::Running,
             cleanup: CleanupState::Unknown,
             created_at: now - Duration::seconds(30),
             expires_at: now,
@@ -117,6 +118,25 @@ fn paused_and_unknown_sandboxes_still_expire_at_absolute_deadline() {
 }
 fn uuid_placeholder() -> uuid::Uuid {
     uuid::Uuid::nil()
+}
+
+#[test]
+fn oversized_control_requests_are_rejected_before_runtime_or_storage() {
+    let mut create = request();
+    create
+        .metadata
+        .insert("large".into(), "x".repeat(16 * 1024 + 1));
+    assert_eq!(
+        validate_create(&profile(), &create).unwrap_err().code,
+        ErrorCode::QuotaExceeded
+    );
+    let command =
+        serde_json::from_value(serde_json::json!({"argv":["printf", "x".repeat(128 * 1024 + 1)]}))
+            .unwrap();
+    assert_eq!(
+        validate_command(&command).unwrap_err().code,
+        ErrorCode::QuotaExceeded
+    );
 }
 #[test]
 fn idempotency_distinguishes_resources_and_has_bounded_keys() {

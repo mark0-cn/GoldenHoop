@@ -163,6 +163,8 @@ pub struct Sandbox {
     pub profile: String,
     pub image: String,
     pub state: SandboxState,
+    #[serde(default)]
+    pub desired_state: DesiredState,
     pub cleanup: CleanupState,
     pub created_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
@@ -170,6 +172,39 @@ pub struct Sandbox {
     pub resources: ResourceLimits,
     pub metadata: BTreeMap<String, String>,
     pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DesiredState {
+    #[default]
+    Running,
+    Paused,
+    Terminated,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SandboxCreated {
+    pub sandbox: Sandbox,
+    pub operation: Operation,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SandboxPage {
+    pub items: Vec<Sandbox>,
+    pub next_cursor: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WriteFile {
+    pub path: String,
+    pub data_base64: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct FileData {
+    pub data_base64: String,
 }
 
 fn default_cwd() -> String {
@@ -291,4 +326,10 @@ pub enum OperationState {
     Succeeded,
     Failed,
     Cancelled,
+}
+
+impl OperationState {
+    pub fn is_terminal(self) -> bool {
+        matches!(self, Self::Succeeded | Self::Failed | Self::Cancelled)
+    }
 }
