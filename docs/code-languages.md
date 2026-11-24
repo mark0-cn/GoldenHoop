@@ -41,6 +41,8 @@ Workers leave CodeContexts and `code_languages` empty unless configured with an 
 
 A failed candidate grants no language. An uncertain cleanup aborts the entire optional probe, including other successful candidates. Only after all candidate sandboxes are collected does an Available profile gain CodeContexts and its successful language set. New context/run requests and worker dispatch require that specific language as well as the capability. A positive fixture observation does not guarantee another workload image has the same dependency; missing or mismatched system specs fail before native context allocation.
 
+Public-fixture tests can explicitly enable `GOLDENHOOP_TEST_BACKEND_DIAGNOSTICS=1` to retain per-language phase, elapsed time, failure and collection observations. Failed fixed-source runs additionally retain bounded kernel records/events. This switch is for administrator-selected public test images: normal worker runs do not print kernel data. The API contract fingerprints source, binaries and images before execution, including attempts that later fail, and retains these opt-in observations across worker restarts.
+
 Each context retains its own interpreter state but shares its sandbox workspace and resource budget. Four agent-assigned UIDs scope collection and protect private connection material. These contexts are not separate sandboxes; use [isolated child sandboxes](isolated-sessions.md) for a separate runtime boundary.
 
 ## Kernel interoperability details

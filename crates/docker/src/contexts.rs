@@ -76,35 +76,56 @@ impl DockerDriver {
             reason: None,
         };
         let mut handle = None;
+        let started = std::time::Instant::now();
+        let mut phase = "provision";
         let outcome = tokio::time::timeout(Duration::from_secs(45), async {
             let actual = self.create(&sandbox, &request).await?;
             handle = Some(actual.clone());
-            self.kernel_loop(&actual, language).await
+            self.kernel_loop(&actual, language, &mut phase).await
         })
         .await
         .map_err(|_| unavailable("code-context probe timed out"))
         .and_then(|result| result);
-        if let Some(handle) = &handle {
-            self.remove(handle).await?;
+        let cleanup = async {
+            if let Some(handle) = &handle {
+                self.remove(handle).await?;
+            }
+            // Covers a provisioning error after Docker created an owned container but
+            // before a handle was returned. Only this fresh sandbox UUID is in scope.
+            for owned in self
+                .discover()
+                .await?
+                .into_iter()
+                .filter(|owned| owned.sandbox_id == sandbox.id)
+            {
+                self.remove(&owned).await?;
+            }
+            if self
+                .discover()
+                .await?
+                .iter()
+                .any(|owned| owned.sandbox_id == sandbox.id)
+            {
+                return Err(unavailable("code-context probe cleanup is unconfirmed"));
+            }
+            Ok::<_, ApiError>(())
         }
-        // Covers a provisioning error after Docker created an owned container but
-        // before a handle was returned. Only this fresh sandbox UUID is in scope.
-        for owned in self
-            .discover()
-            .await?
-            .into_iter()
-            .filter(|owned| owned.sandbox_id == sandbox.id)
-        {
-            self.remove(&owned).await?;
+        .await;
+        // Opt-in diagnostics are only for public, administrator-selected test
+        // fixtures. Kernel errors/output can contain workload data, so normal
+        // production runs never print them.
+        if std::env::var("GOLDENHOOP_TEST_BACKEND_DIAGNOSTICS").as_deref() == Ok("1") {
+            eprintln!(
+                "{}",
+                serde_json::json!({
+                    "event":"code_language_probe", "sandbox_id":sandbox.id,
+                    "profile":profile.id, "language":language, "phase":phase,
+                    "elapsed_ms":started.elapsed().as_millis(),
+                    "error":outcome.as_ref().err(), "cleanup_error":cleanup.as_ref().err()
+                })
+            );
         }
-        if self
-            .discover()
-            .await?
-            .iter()
-            .any(|owned| owned.sandbox_id == sandbox.id)
-        {
-            return Err(unavailable("code-context probe cleanup is unconfirmed"));
-        }
+        cleanup?;
         // A failure grants no language. Cleanup errors above abort the whole
         // optional probe, including otherwise successful candidates.
         Ok(outcome.is_ok())
@@ -114,7 +135,9 @@ impl DockerDriver {
         &self,
         handle: &RuntimeHandle,
         language: CodeLanguage,
+        phase: &mut &'static str,
     ) -> Result<(), ApiError> {
+        *phase = "startup";
         let context = Uuid::new_v4();
         let response = self
             .bridge(
@@ -147,6 +170,7 @@ impl DockerDriver {
         }
         let mut cursor = 0;
         let (first_source, second_source, error_source) = probes::sources(language);
+        *phase = "identity_and_replay";
         let first_spec = CodeRunSpec::new(first_source);
         let first = Uuid::new_v4();
         let request = AgentRequest::CodeRunStart {
@@ -156,13 +180,17 @@ impl DockerDriver {
         };
         self.bridge(handle, &request).await?;
         self.bridge(handle, &request).await?;
-        let (first_record, _) = self
+        let (first_record, first_events) = self
             .wait_kernel_run(handle, context, first, &mut cursor)
             .await?;
         if first_record.state != CodeRunState::KernelSucceeded
             || first_record.kernel_status.as_deref() != Some("ok")
         {
-            return Err(unavailable("kernel identity/state probe failed"));
+            return Err(probe_failure(
+                "kernel identity/state probe failed",
+                &first_record,
+                &first_events,
+            ));
         }
         match self.bridge(handle, &request).await? {
             AgentResponse::CodeRun(replay)
@@ -177,6 +205,7 @@ impl DockerDriver {
             ));
         }
         let second = Uuid::new_v4();
+        *phase = "retained_state";
         self.bridge(
             handle,
             &AgentRequest::CodeRunStart {
@@ -205,11 +234,14 @@ impl DockerDriver {
                         && event.data["content"]["data"]["text/plain"] == "42"
                 }))
         {
-            return Err(unavailable(
+            return Err(probe_failure(
                 "kernel retained-state/output/result probe failed",
+                &record,
+                &events,
             ));
         }
         let exception = Uuid::new_v4();
+        *phase = "expected_exception";
         self.bridge(
             handle,
             &AgentRequest::CodeRunStart {
@@ -219,14 +251,19 @@ impl DockerDriver {
             },
         )
         .await?;
-        let (record, _) = self
+        let (record, events) = self
             .wait_kernel_run(handle, context, exception, &mut cursor)
             .await?;
         if record.state != CodeRunState::KernelFailed
             || record.kernel_status.as_deref() != Some("error")
         {
-            return Err(unavailable("kernel exception probe failed"));
+            return Err(probe_failure(
+                "kernel exception probe failed",
+                &record,
+                &events,
+            ));
         }
+        *phase = "context_collection";
         self.bridge(handle, &AgentRequest::CodeContextClose { id: context })
             .await?;
         let closed = self
@@ -371,4 +408,16 @@ impl DockerDriver {
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
     }
+}
+
+fn probe_failure(message: &str, record: &CodeRun, events: &[CodeContextEvent]) -> ApiError {
+    if std::env::var("GOLDENHOOP_TEST_BACKEND_DIAGNOSTICS").as_deref() == Ok("1") {
+        let detail = serde_json::json!({"record":record,"events":events}).to_string();
+        let detail: String = detail.chars().take(8192).collect();
+        eprintln!(
+            "{}",
+            serde_json::json!({"event":"code_probe_failure", "message":message, "detail":detail})
+        );
+    }
+    unavailable(message)
 }

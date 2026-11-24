@@ -810,6 +810,32 @@ assert not alive,alive
                     "result": "failed", "cleanup": "unknown"}
         failure = None
         try:
+            root = Path(__file__).resolve().parents[1]
+            sources = [root / "Cargo.toml", root / "Cargo.lock", Path(__file__).resolve()]
+            sources.extend((root / "crates").rglob("*.rs"))
+            sources.extend((root / "crates").rglob("*.sql"))
+            sources.extend((root / "crates").rglob("Cargo.toml"))
+            sources.append(root / "tests" / "artifact_contract.py")
+            sources.append(root / "tests" / "api_context_contract.py")
+            sources.append(root / "tests" / "api_isolated_contract.py")
+            sources.append(root / "tests" / "language_samples.py")
+            sources.extend(p for p in (root / "images" / "languages").rglob('*') if p.is_file())
+            if self.args.rust_client:
+                sources.extend((root / "sdk").rglob("*.py"))
+                sources.extend((root / "sdk").rglob("pyproject.toml"))
+                sources.append(root / "tests" / "client_contract.py")
+                sources.append(root / "tests" / "code_client_contract.py")
+                sources.append(root / "tests" / "isolated_client_contract.py")
+                sources.append(root / "tests" / "language_client_contract.py")
+                evidence["client_binary_sha256"] = {name: hashlib.sha256(Path(path).read_bytes()).hexdigest()
+                                                     for name, path in (("rust", self.args.rust_client), ("cli", self.args.cli))}
+            evidence["source_files_sha256"] = {p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(sources)}
+            with Path(self.args.binary).open("rb") as binary:
+                evidence["binary_sha256"] = hashlib.file_digest(binary, "sha256").hexdigest()
+            evidence["agent_image_id"] = docker("image", "inspect", "--format", "{{.Id}}", self.args.image)
+            if self.args.kernel_image:
+                evidence["kernel_image_id"] = docker("image", "inspect", "--format", "{{.Id}}", self.args.kernel_image)
+            evidence["docker"] = json.loads(docker("version", "--format", "{{json .Server}}"))
             if self.args.artifact_backend == "s3":
                 self.artifact_fixture = ArtifactFixture(argparse.Namespace(remove_image=self.args.remove_artifact_fixture_image))
                 self.artifact_fixture.start()
@@ -849,32 +875,6 @@ assert not alive,alive
                 assert not keys, keys
                 self.artifact_fixture.admin("DELETE")
                 evidence["remaining_backend_objects"] = keys
-            root = Path(__file__).resolve().parents[1]
-            sources = [root / "Cargo.toml", root / "Cargo.lock", Path(__file__).resolve()]
-            sources.extend((root / "crates").rglob("*.rs"))
-            sources.extend((root / "crates").rglob("*.sql"))
-            sources.extend((root / "crates").rglob("Cargo.toml"))
-            sources.append(root / "tests" / "artifact_contract.py")
-            sources.append(root / "tests" / "api_context_contract.py")
-            sources.append(root / "tests" / "api_isolated_contract.py")
-            sources.append(root / "tests" / "language_samples.py")
-            sources.extend(p for p in (root / "images" / "languages").rglob('*') if p.is_file())
-            if self.args.rust_client:
-                sources.extend((root / "sdk").rglob("*.py"))
-                sources.extend((root / "sdk").rglob("pyproject.toml"))
-                sources.append(root / "tests" / "client_contract.py")
-                sources.append(root / "tests" / "code_client_contract.py")
-                sources.append(root / "tests" / "isolated_client_contract.py")
-                sources.append(root / "tests" / "language_client_contract.py")
-                evidence["client_binary_sha256"] = {name: hashlib.sha256(Path(path).read_bytes()).hexdigest()
-                                                     for name, path in (("rust", self.args.rust_client), ("cli", self.args.cli))}
-            evidence["source_files_sha256"] = {p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(sources)}
-            with Path(self.args.binary).open("rb") as binary:
-                evidence["binary_sha256"] = hashlib.file_digest(binary, "sha256").hexdigest()
-            evidence["agent_image_id"] = docker("image", "inspect", "--format", "{{.Id}}", self.args.image)
-            if self.args.kernel_image:
-                evidence["kernel_image_id"] = docker("image", "inspect", "--format", "{{.Id}}", self.args.kernel_image)
-            evidence["docker"] = json.loads(docker("version", "--format", "{{json .Server}}"))
             evidence["result"] = "passed"
         except BaseException as error:
             failure = error
@@ -900,6 +900,15 @@ assert not alive,alive
                     evidence["result"] = "failed"
                     failure = failure or error
             evidence["installation_id"] = self.installation
+            evidence["kernel_probe_diagnostics"] = []
+            for path in self.logs:
+                for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+                    try:
+                        record = json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(record, dict) and record.get("event") in ("code_language_probe", "code_probe_failure"):
+                        evidence["kernel_probe_diagnostics"].append({"log": path.name, **record})
             if failure:
                 evidence["service_logs"] = {p.name: p.read_text(encoding="utf-8", errors="replace")[-20000:] for p in self.logs}
             assert self.root.is_relative_to(self.work)
