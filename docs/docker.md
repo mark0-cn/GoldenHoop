@@ -4,6 +4,8 @@ The Rust driver uses Bollard over the local Docker socket or Windows named pipe.
 
 Profiles are `local-gvisor` (runsc) and `local-runc-dev` (runc). Ordinary containers require explicit development opt-in. Probe verifies the installed runtime, provisions an actual sandbox, checks effective runtime/resource settings, executes a non-root command with no capabilities and no external network, then pauses, resumes and removes it. A failed probe yields no available capabilities. It never selects another runtime.
 
+The optional native `probe_code_contexts(image)` gate must follow the mandatory probe. It uses an administrator-selected cached kernel image in a fresh owned sandbox, checks the kernel UID, state across snippets, non-duplicated replay, stdout/rich result, expected exception and matching completion/collection events, then confirms whole-sandbox absence. Missing images/dependencies, ambiguous results or incomplete collection leave CodeContexts absent. A failed re-probe withdraws the prior optional capability while preserving independently verified mandatory capabilities. Probes serialize per driver; `profile_snapshot` reads cached observations without running a new check. The current worker does not invoke this optional gate or expose public context routes yet.
+
 The agent image is an administrator-trusted build input. Its static musl agent is copied through a short-lived, labeled bootstrap container into a versioned bundle volume. Workloads mount that volume read-only. The worker overrides image entrypoints, commands and environment values. Image health checks are explicitly disabled; inheriting them would execute image-provided commands as the supervisor identity. Workload image-declared volumes are rejected until an explicit volume policy is supported. Workloads receive no Docker socket, worker credentials or public agent listener.
 
 Every owned resource carries an installation UUID, profile and role. Sandboxes also carry the sandbox UUID, absolute expiration and create-request fingerprint. Inspect/delete/transport verify ownership; create retries verify request identity and cannot restart exited sandboxes. Discovered resources and serialized runtime handles allow worker reconnect without recreating the workload.
@@ -25,6 +27,13 @@ Bootstrap containers are removed after successful and failed runs. Bundle volume
 Sandbox deletion is serialized per resource within a driver and uses its canonical Docker ID after checking labels. Docker can transiently report a zombie runtime process or concurrent removal during gVisor destruction. The driver makes at most four removal attempts for 404/409/500 responses and confirms actual absence after each attempt. It does not resume a paused guest to delete it and does not treat an error as successful cleanup.
 
 ## Actual contract
+
+The optional gate has a separate actual contract:
+
+    docker build -f images/kernel/Dockerfile -t goldenhoop-kernel-fixture:test .
+    cargo run --locked -p goldenhoop-docker --example context_probe
+
+Its five cases cover the default unadvertised state, missing cached image without pulling/fallback, missing dependencies with cleanup, an actual state/result/error loop, and withdrawal after failed re-probe. The local runc suite passes with owned containers/bundle volumes removed; its task-created fixture image was separately removed after verifying its label and absence of consumers. Actual gVisor optional-probe CI is a separate pending gate. The fixture is an administrator-side test dependency; the library does not delete caller-selected cached images.
 
     docker build --label dev.goldenhoop.build=local-agent -f images/agent/Dockerfile -t goldenhoop-agent:test .
     docker pull debian:bookworm-slim

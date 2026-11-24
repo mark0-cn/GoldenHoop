@@ -15,6 +15,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
 
+mod contexts;
 mod sessions;
 struct ProbeSupport {
     diagnostics: bool,
@@ -66,6 +67,7 @@ pub struct DockerDriver {
     config: DockerConfig,
     profile: Arc<RwLock<RuntimeProfile>>,
     bundle: Arc<Mutex<Option<String>>>,
+    probes: Arc<Mutex<()>>,
     removals: Arc<Mutex<HashMap<Uuid, Weak<Mutex<()>>>>>,
 }
 
@@ -127,6 +129,7 @@ impl DockerDriver {
             config,
             profile: Arc::new(RwLock::new(profile)),
             bundle: Arc::new(Mutex::new(None)),
+            probes: Arc::new(Mutex::new(())),
             removals: Arc::new(Mutex::new(HashMap::new())),
         })
     }
@@ -807,6 +810,7 @@ impl DockerDriver {
 #[async_trait]
 impl RuntimeDriver for DockerDriver {
     async fn probe(&self) -> RuntimeProfile {
+        let _probe = self.probes.lock().await;
         let result = if self.config.profile == DockerProfile::RuncDevelopment
             && !self.config.allow_runc_development
         {

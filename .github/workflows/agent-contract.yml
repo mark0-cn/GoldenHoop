@@ -59,6 +59,11 @@ jobs:
         run: python -B tests/api_contract.py --binary target/debug/goldenhoopd --rust-client target/debug/examples/sdk_contract --cli target/debug/goldenhoop --runtime ${{ matrix.runtime }} --work-dir .test-work --output evidence/api-${{ matrix.runtime }}.json
       - name: Build the disposable actual-kernel fixture
         run: docker build -f images/kernel/Dockerfile -t goldenhoop-kernel-fixture:test .
+      - name: Verify the driver's explicit optional kernel capability probe
+        env:
+          GOLDENHOOP_TEST_RUNTIME: ${{ matrix.runtime }}
+          GOLDENHOOP_EVIDENCE: evidence/context-probe-${{ matrix.runtime }}.json
+        run: cargo run --locked --quiet -p goldenhoop-docker --example context_probe
       - name: Refuse missing kernel dependencies without fallback
         run: python -B tests/context_contract.py --image goldenhoop-agent:test --missing-kernel --runtime ${{ matrix.runtime }} --output evidence/contexts-missing-${{ matrix.runtime }}.json
       - name: Exercise actual agent code contexts and scoped collection
