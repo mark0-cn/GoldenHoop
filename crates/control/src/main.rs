@@ -105,6 +105,8 @@ enum Role {
             default_value = "goldenhoop-agent:local"
         )]
         agent_image: String,
+        #[arg(long, env = "GOLDENHOOP_KERNEL_PROBE_IMAGE")]
+        kernel_probe_image: Option<String>,
         #[arg(long)]
         allow_runc_development: bool,
         #[command(flatten)]
@@ -141,6 +143,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Role::Worker {
             agent_image,
+            kernel_probe_image,
             allow_runc_development,
             artifacts,
         } => {
@@ -161,6 +164,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let worker = Worker::new(
                 store.clone(),
                 agent_image,
+                kernel_probe_image,
                 allow_runc_development,
                 format!("http://{}", listener.local_addr()?),
                 artifacts,

@@ -16,4 +16,4 @@
 
 制品保留、下载、恢复与清理语义见 [制品说明](docs/artifacts.md)。
 
-持久 shell、真实 PTY、终端重连与输入确认见 [会话说明](docs/sessions.md)。公开接口、Rust SDK、Python 同步/异步 SDK 和 CLI 已通过实际 runc/gVisor 与 S3 兼容后端 CI。Rust agent 已实现私有 Python 代码上下文，公开持久化操作、客户端与隔离子沙箱仍在实现中，见 [代码上下文实现与待办](docs/code-contexts.md)。
+持久 shell、真实 PTY、终端重连与输入确认见 [会话说明](docs/sessions.md)，其公开接口和四个客户端已通过实际 runc/gVisor 与 S3 兼容后端 CI。Python 代码上下文现已接入持久化公开 API、Rust SDK、Python 同步／异步 SDK 和 CLI，四个客户端的本地 runc 实测通过；原生内核探测也已通过 runc/gVisor。新增公开调用的 gVisor/S3 集成仍须单独验证。启用时须显式配置缓存的内核探测镜像。隔离子沙箱继续实现，见 [代码上下文](docs/code-contexts.md)。

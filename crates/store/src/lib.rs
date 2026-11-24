@@ -62,6 +62,7 @@ pub struct StoredCodeContext {
     pub ever_ready: bool,
     /// Agent acknowledgement cursor, distinct from the public event cursor.
     pub cursor: u64,
+    pub events_cursor: u64,
 }
 
 #[derive(Debug, Clone)]

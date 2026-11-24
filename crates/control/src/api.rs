@@ -19,12 +19,14 @@ use uuid::Uuid;
 use crate::{InternalArtifactCall, InternalFileCall, InternalSandboxCall, http::*};
 use base64::{Engine, engine::general_purpose::STANDARD};
 
+mod contexts;
 mod sessions;
 
 struct App {
     store: Store,
     worker_client: reqwest::Client,
     session_sockets: Arc<tokio::sync::Semaphore>,
+    context_streams: Arc<tokio::sync::Semaphore>,
 }
 type AppState = Arc<App>;
 
@@ -46,6 +48,7 @@ pub fn router(store: Store, token: &str) -> Result<Router, ApiError> {
         store,
         worker_client,
         session_sockets: Arc::new(tokio::sync::Semaphore::new(64)),
+        context_streams: Arc::new(tokio::sync::Semaphore::new(16)),
     });
     Ok(Router::new()
         .route("/healthz", get(health))
@@ -80,6 +83,19 @@ pub fn router(store: Store, token: &str) -> Result<Router, ApiError> {
             get(sessions::control_status),
         )
         .route("/v1/sessions/{id}/socket", get(sessions::socket))
+        .route("/v1/sandboxes/{id}/code-contexts", post(contexts::create))
+        .route("/v1/code-contexts", get(contexts::list))
+        .route(
+            "/v1/code-contexts/{id}",
+            get(contexts::inspect).delete(contexts::close),
+        )
+        .route(
+            "/v1/code-contexts/{id}/runs",
+            get(contexts::runs).post(contexts::start),
+        )
+        .route("/v1/code-contexts/{id}/events", get(contexts::events))
+        .route("/v1/code-runs/{id}", get(contexts::run))
+        .route("/v1/code-runs/{id}/cancel", post(contexts::cancel))
         .fallback(not_found)
         .layer(DefaultBodyLimit::max(24 * 1024 * 1024))
         .layer(ConcurrencyLimitLayer::new(64))

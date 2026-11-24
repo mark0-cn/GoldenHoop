@@ -1,6 +1,25 @@
 use super::*;
 
 impl Worker {
+    fn runtime_request(&self, stored: &StoredSandbox) -> Result<CreateSandbox, ApiError> {
+        let profile = self
+            .registration
+            .profiles
+            .iter()
+            .find(|profile| profile.id == stored.request.profile)
+            .ok_or_else(|| {
+                ApiError::new(
+                    ErrorCode::UnsupportedCapability,
+                    "runtime profile is not registered",
+                )
+            })?;
+        goldenhoop_core::validate_create(profile, &stored.request)?;
+        let mut native = stored.request.clone();
+        // Artifact retention is implemented by the probed host storage worker.
+        // Its availability is checked above; the native driver owns file capture.
+        native.required_capabilities.remove(&Capability::Artifacts);
+        Ok(native)
+    }
     pub(super) async fn recovered_handle(
         &self,
         stored: &StoredSandbox,
@@ -64,7 +83,9 @@ impl Worker {
                 self.store
                     .finish_operations(id, "create", OperationState::Running, None)
                     .await?;
-                let handle = driver.create(&stored.sandbox, &stored.request).await?;
+                let handle = driver
+                    .create(&stored.sandbox, &self.runtime_request(&stored)?)
+                    .await?;
                 stored.handle = Some(handle);
                 self.save(stored, SandboxState::Running, CleanupState::Pending, None)
                     .await?;
@@ -89,7 +110,9 @@ impl Worker {
                 stored = self
                     .save(stored, SandboxState::Starting, CleanupState::Pending, None)
                     .await?;
-                let handle = driver.create(&stored.sandbox, &stored.request).await?;
+                let handle = driver
+                    .create(&stored.sandbox, &self.runtime_request(&stored)?)
+                    .await?;
                 stored.handle = Some(handle);
                 self.save(stored, SandboxState::Running, CleanupState::Pending, None)
                     .await?;
@@ -161,6 +184,9 @@ impl Worker {
         self.store
             .finish_operations(id, "resume", OperationState::Succeeded, None)
             .await?;
+        if !self.sync_contexts(&handle, driver).await? {
+            return Ok(());
+        }
         for execution in self.store.execution_work(id).await?.into_iter().take(16) {
             let latest = self.store.sandbox(id).await?.sandbox;
             if latest.desired_state != DesiredState::Running || expired(&latest, Utc::now()) {
@@ -213,6 +239,27 @@ impl Worker {
             Some(reason.into()),
         )
         .await?;
+        for context in self.store.code_context_work(id).await? {
+            if expired || !failed {
+                self.store
+                    .close_code_context(context.context.id, &format!("source-stop-{id}"))
+                    .await?;
+            }
+            let outcome = if expired {
+                CodeRunState::TimedOut
+            } else if failed {
+                CodeRunState::Unknown
+            } else {
+                CodeRunState::Cancelled
+            };
+            self.store
+                .finish_code_context_absent_with_state(context.context.id, reason, outcome)
+                .await?;
+            self.context_closures
+                .lock()
+                .await
+                .remove(&context.context.id);
+        }
         for execution in self.store.execution_work(id).await? {
             self.store
                 .finish_execution(

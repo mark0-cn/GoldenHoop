@@ -197,6 +197,63 @@ enum Command {
         #[arg(long, default_value_t = 0)]
         after: u64,
     },
+    ContextCreate {
+        sandbox: Uuid,
+        #[arg(long, default_value = "/workspace")]
+        cwd: String,
+        #[arg(long)]
+        idempotency_key: Option<String>,
+    },
+    ContextGet {
+        id: Uuid,
+    },
+    ContextList {
+        #[arg(long)]
+        sandbox: Option<Uuid>,
+        #[arg(long)]
+        after: Option<Uuid>,
+        #[arg(long, default_value_t = 100)]
+        limit: u32,
+    },
+    ContextClose {
+        id: Uuid,
+        #[arg(long)]
+        idempotency_key: Option<String>,
+    },
+    /// Read literal UTF-8 source from a file, or - for stdin; emits a JSON result.
+    CodeRun {
+        context: Uuid,
+        local: PathBuf,
+        #[arg(long, default_value_t = 60)]
+        timeout: u64,
+        #[arg(long, default_value_t = 1048576)]
+        output_limit: u64,
+        #[arg(long)]
+        idempotency_key: Option<String>,
+        /// Return durable acceptance without waiting for kernel completion.
+        #[arg(long)]
+        no_wait: bool,
+    },
+    CodeGet {
+        id: Uuid,
+    },
+    CodeList {
+        context: Uuid,
+        #[arg(long)]
+        after: Option<Uuid>,
+        #[arg(long, default_value_t = 100)]
+        limit: u32,
+    },
+    /// Cancel the entire interpreter context and wait for collection.
+    CodeCancel {
+        id: Uuid,
+    },
+    /// Emit durable JSON events until explicit context collection.
+    ContextEvents {
+        id: Uuid,
+        #[arg(long, default_value_t = 0)]
+        after: u64,
+    },
 }
 
 type CliResult<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -438,6 +495,154 @@ async fn run(args: Args) -> CliResult<u8> {
             print_json(&client.session_control_status(id, sequence).await?)?
         }
         Command::SessionEvents { id, after } => session_events(&client, id, after).await?,
+        Command::ContextCreate {
+            sandbox,
+            cwd,
+            idempotency_key,
+        } => {
+            let key = key(idempotency_key);
+            eprintln!("idempotency_key={key}");
+            let context = client
+                .create_code_context(
+                    sandbox,
+                    &CodeContextSpec {
+                        cwd,
+                        ..Default::default()
+                    },
+                    &key,
+                )
+                .await?;
+            eprintln!("context_id={}", context.id);
+            print_json(
+                &client
+                    .wait_code_context_ready(context.id, Duration::from_secs(60))
+                    .await?,
+            )?;
+        }
+        Command::ContextGet { id } => print_json(&client.code_context(id).await?)?,
+        Command::ContextList {
+            sandbox,
+            after,
+            limit,
+        } => print_json(&client.list_code_contexts(sandbox, after, limit).await?)?,
+        Command::ContextClose {
+            id,
+            idempotency_key,
+        } => {
+            let key = key(idempotency_key);
+            eprintln!("context_id={id} idempotency_key={key}");
+            client.close_code_context(id, &key).await?;
+            print_json(
+                &client
+                    .wait_code_context_closed(id, Duration::from_secs(60))
+                    .await?,
+            )?;
+        }
+        Command::CodeGet { id } => print_json(&client.code_run(id).await?)?,
+        Command::CodeList {
+            context,
+            after,
+            limit,
+        } => print_json(&client.list_code_runs(context, after, limit).await?)?,
+        Command::CodeRun {
+            context,
+            local,
+            timeout,
+            output_limit,
+            idempotency_key,
+            no_wait,
+        } => {
+            let mut bytes = Vec::new();
+            if local == std::path::Path::new("-") {
+                std::io::stdin().take(65537).read_to_end(&mut bytes)?;
+            } else {
+                std::fs::File::open(local)?
+                    .take(65537)
+                    .read_to_end(&mut bytes)?;
+            }
+            if bytes.is_empty() || bytes.len() > 65536 {
+                return Err("code source must contain 1..65536 UTF-8 bytes".into());
+            }
+            let spec = CodeRunSpec {
+                code: String::from_utf8(bytes)?,
+                timeout_seconds: timeout,
+                max_output_bytes: output_limit,
+            };
+            let key = key(idempotency_key);
+            eprintln!("context_id={context} idempotency_key={key}");
+            if no_wait {
+                let accepted = client.start_code(context, &spec, &key).await?;
+                eprintln!("code_run_id={}", accepted.id);
+                print_json(&accepted)?;
+            } else {
+                let result = client.run_code_with_key(context, &spec, &key).await?;
+                eprintln!("code_run_id={}", result.run.id);
+                let status = match result.run.state {
+                    CodeRunState::KernelSucceeded => 0,
+                    CodeRunState::KernelFailed => 1,
+                    CodeRunState::TimedOut => 124,
+                    CodeRunState::Cancelled => 130,
+                    _ => 125,
+                };
+                print_json(&result)?;
+                return Ok(status);
+            }
+        }
+        Command::CodeCancel { id } => {
+            let accepted = client.cancel_code_run(id).await?;
+            if !accepted.state.is_terminal() {
+                client
+                    .wait_code_context_closed(accepted.context_id, Duration::from_secs(60))
+                    .await?;
+            }
+            let result = client.code_run(id).await?;
+            let status = if result.state == CodeRunState::Unknown {
+                125
+            } else {
+                0
+            };
+            print_json(&result)?;
+            return Ok(status);
+        }
+        Command::ContextEvents { id, after } => {
+            let mut cursor = after;
+            eprintln!("context_id={id} after={cursor}");
+            for attempt in 0..3 {
+                let mut stream = match client.code_context_events(id, cursor).await {
+                    Ok(value) => value,
+                    Err(Error::Transport) if attempt < 2 => continue,
+                    Err(error) => return Err(error.into()),
+                };
+                let mut interrupted = false;
+                while let Some(event) = stream.next().await {
+                    let event = match event {
+                        Ok(value) => value,
+                        Err(Error::Transport) => {
+                            interrupted = true;
+                            break;
+                        }
+                        Err(error) => return Err(error.into()),
+                    };
+                    cursor = event.sequence;
+                    let closed = event.kind == CodeContextEventKind::Closed;
+                    print_json(&event)?;
+                    if closed {
+                        return Ok(0);
+                    }
+                }
+                let context = client.code_context(id).await?;
+                if !interrupted
+                    && context.cleanup == CleanupState::Complete
+                    && matches!(
+                        context.state,
+                        CodeContextState::Closed | CodeContextState::Failed
+                    )
+                {
+                    return Ok(0);
+                }
+            }
+            return Err(format!("context {id} stream ended without collection; resume after={cursor}; the context was not cancelled").into());
+        }
         Command::Exec {
             sandbox,
             timeout,

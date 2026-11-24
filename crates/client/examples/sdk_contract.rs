@@ -5,6 +5,8 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use futures_util::{FutureExt, StreamExt};
 use goldenhoop_client::*;
 use uuid::Uuid;
+#[path = "sdk_contract/contexts.rs"]
+mod contexts;
 
 fn append_session_output(bytes: &mut Vec<u8>, event: &ExecutionEvent) {
     if event.kind == EventKind::Stdout {
@@ -324,7 +326,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             .iter()
             .any(|p| p.id == profile && p.availability == Availability::Available)
     );
-    let request = CreateSandbox::new(profile, std::env::var("GOLDENHOOP_TEST_IMAGE")?);
+    let request = CreateSandbox::new(profile.clone(), std::env::var("GOLDENHOOP_TEST_IMAGE")?);
     let mut lease = client.lease(&request).await?;
     let id = lease.id();
     let result = std::panic::AssertUnwindSafe(tokio::time::timeout(
@@ -370,10 +372,15 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         Ok(result) => result?,
         Err(panic) => std::panic::resume_unwind(panic),
     }
+    let code_contexts = if let Ok(image) = std::env::var("GOLDENHOOP_TEST_KERNEL_IMAGE") {
+        Some(contexts::run(&client, &profile, &image).await?)
+    } else {
+        None
+    };
     println!(
         "{}",
         serde_json::json!({"client":"rust","result":"passed","sandbox_id":id,"cleanup":"complete",
-        "cases":["profiles","lease","binary_files","traversal_refusal","literal_argv","nonzero_binary_output","idempotency","timeout","cancel","sse_resume","pause_resume","confirmed_cleanup","retained_artifact_and_confirmed_delete"]})
+        "cases":["profiles","lease","binary_files","traversal_refusal","literal_argv","nonzero_binary_output","idempotency","timeout","cancel","sse_resume","pause_resume","confirmed_cleanup","retained_artifact_and_confirmed_delete"],"code_contexts":code_contexts})
     );
     Ok(())
 }

@@ -84,6 +84,50 @@ Python exports SessionSpec and SessionControl.write/close_input/resize. Both cli
 
 The CLI supports session-create/get/list/write/close-input/resize/receipt/events. session-create accepts --pty, --rows, --columns, --timeout, --cwd and literal argv after --. session-write takes a caller-managed sequence and a bounded binary file or stdin. Input commands wait for delivery and return 125 for rejected/unknown delivery; they do not report a shell statement's exit code. session-events emits JSON lines, supports --after and refuses EOF without completion. Use cancel with the session execution ID and close the source lease/sandbox to confirm full cleanup.
 
+## Python code contexts
+
+The worker must have an explicitly successful kernel-image probe. Use a cached workload image containing Python and ipykernel, and keep the source sandbox lease alive. Contexts share its filesystem and resource limits.
+
+```python
+from uuid import uuid4
+from goldenhoop import Client, CreateSandbox, CodeContextSpec, CodeRunSpec
+
+with Client(endpoint, token) as client:
+    request = CreateSandbox("local-gvisor", "my-python-kernel:local",
+                            required_capabilities=["code_contexts"])
+    with client.lease(request) as sandbox:
+        context = client.create_code_context(sandbox.id, CodeContextSpec(), str(uuid4()))
+        client.wait_code_context_ready(context["id"])
+        client.run_code(context["id"], CodeRunSpec("value = 40"))
+        output = client.run_code(context["id"], CodeRunSpec("print(value + 2)\nvalue + 2"))
+        assert output.run["state"] == "kernel_succeeded"
+        print(output.stdout, output.results)
+        client.close_code_context(context["id"], str(uuid4()))
+        client.wait_code_context_closed(context["id"])
+```
+
+AsyncClient exposes the same methods with await, and code_context_events is an async iterator. Rust Client provides create_code_context, code_context, list_code_contexts, close_code_context, wait_code_context_ready/closed, start_code, code_run, list_code_runs, cancel_code_run, run_code and run_code_with_key. Python uses an optional explicit `key` on run_code. CodeRunOutput contains the run record, text stdout/stderr, MIME result/display content and kernel errors.
+
+KernelSucceeded/KernelFailed are interpreter observations. A successful code result leaves the context alive; an exception can also leave it usable. Unknown becomes `Error::CodeObservation(run_id, ...)` in Rust or CodeObservationError with run_id in Python. Inspect that ID rather than submitting new work under a different key. Interrupted acceptance retains the original key, and async Python cancellation notes preserve a known run ID or possibly accepted key. Neither observation cancellation nor SSE drop cancels the interpreter.
+
+A run retains `events_after`, the context's public cursor when accepted. Reusing a create key retains that cursor so a collector can recover the previous result. Context events use `code_context_events(context_id, after)` and include optional originating run IDs and late/background provenance. Context streams end only with confirmed closure (or an already collected context snapshot); run collectors return on a matching completion. Rich frames, output and receive buffers are bounded. Binary-buffer protocol extensions are refused; use workspace files and retained artifacts for larger outputs.
+
+Cancelling a run closes its whole context, cancels its queued code and discards interpreter state. cancel_code_run records intent; wait_code_context_closed confirms collection. An SDK wait deadline does not cancel work. Source pause defers context RPC; host TTL still expires and collects the source. [Public routes, quotas and recovery](code-contexts.md).
+
+The CLI adds context-create/get/list/close/events and code-run/get/list/cancel:
+
+```text
+goldenhoop context-create <sandbox-uuid>
+goldenhoop code-run <context-uuid> snippet.py --idempotency-key <saved-key>
+goldenhoop code-run <context-uuid> snippet.py --no-wait
+goldenhoop code-get <run-uuid>
+goldenhoop code-cancel <run-uuid>
+goldenhoop context-close <context-uuid>
+goldenhoop context-events <context-uuid> --after <saved-sequence>
+```
+
+code-run reads at most 64 KiB of literal UTF-8 source, using `-` for stdin, and emits structured JSON. It returns 0 for kernel success, 1 for a kernel exception, 124 for timeout, 130 for cancellation and 125 for rejected/uncertain/client observations. `--no-wait` only confirms acceptance. Context creation/closure wait for readiness/collection, and recovery IDs/keys are printed before waiting. Context events emit resumable JSON lines; EOF alone is insufficient.
+
 ## Actual validation
 
 The API harness can launch both services, the Rust SDK example, the Python sync/async SDK and the Rust CLI against a fresh installation:

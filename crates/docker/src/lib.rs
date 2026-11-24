@@ -554,6 +554,14 @@ impl DockerDriver {
         handle: &RuntimeHandle,
         request: &AgentRequest,
     ) -> Result<AgentResponse, ApiError> {
+        self.bridge_reply(handle, request).await?.into_result()
+    }
+
+    async fn bridge_reply(
+        &self,
+        handle: &RuntimeHandle,
+        request: &AgentRequest,
+    ) -> Result<AgentReply, ApiError> {
         self.owned(handle)
             .await?
             .ok_or_else(|| ApiError::new(ErrorCode::NotFound, "sandbox not found"))?;
@@ -624,8 +632,7 @@ impl DockerDriver {
                 ));
             }
             serde_json::from_slice::<AgentReply>(&reply)
-                .map_err(|_| unavailable("invalid agent reply"))?
-                .into_result()
+                .map_err(|_| unavailable("invalid agent reply"))
         })
         .await
         .map_err(|_| unavailable("agent bridge timed out"))?
@@ -1145,6 +1152,13 @@ impl RuntimeDriver for DockerDriver {
 
 #[async_trait]
 impl AgentTransport for DockerDriver {
+    async fn rpc_reply(
+        &self,
+        handle: &RuntimeHandle,
+        request: &AgentRequest,
+    ) -> Result<AgentReply, ApiError> {
+        self.bridge_reply(handle, request).await
+    }
     async fn rpc(
         &self,
         handle: &RuntimeHandle,

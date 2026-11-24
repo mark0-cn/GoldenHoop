@@ -104,7 +104,7 @@ impl CodeRunSpec {
     }
 }
 
-/// These are kernel observations, with no OS process-exit or correctness claim.
+/// Code acceptance and kernel observations. These do not prove application correctness.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CodeRunState {
@@ -114,13 +114,18 @@ pub enum CodeRunState {
     KernelFailed,
     Cancelled,
     TimedOut,
+    Rejected,
     Unknown,
 }
 impl CodeRunState {
     pub fn is_terminal(self) -> bool {
         matches!(
             self,
-            Self::KernelSucceeded | Self::KernelFailed | Self::Cancelled | Self::TimedOut
+            Self::KernelSucceeded
+                | Self::KernelFailed
+                | Self::Cancelled
+                | Self::TimedOut
+                | Self::Rejected
         )
     }
 }
@@ -129,6 +134,9 @@ impl CodeRunState {
 pub struct CodeRun {
     pub id: Uuid,
     pub context_id: Uuid,
+    /// Public context cursor at acceptance, retained when a create key is replayed.
+    #[serde(default)]
+    pub events_after: u64,
     pub state: CodeRunState,
     pub created_at: DateTime<Utc>,
     pub started_at: Option<DateTime<Utc>>,

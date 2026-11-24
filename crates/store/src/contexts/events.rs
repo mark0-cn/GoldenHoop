@@ -70,6 +70,7 @@ fn proposal(raw: &serde_json::Value, stored: &StoredCodeRun) -> Result<CodeRun, 
         ));
     }
     value.created_at = stored.run.created_at;
+    value.events_after = stored.run.events_after;
     value.output_truncated |= stored.run.output_truncated;
     if value
         .reason
@@ -111,6 +112,7 @@ async fn settle_runs(
     cursor: &mut u64,
     time: DateTime<Utc>,
     reason: &str,
+    fallback: Option<CodeRunState>,
 ) -> Result<(), ApiError> {
     let rows = sqlx::query("SELECT * FROM code_runs WHERE context_id=? AND settled=0 ORDER BY id")
         .bind(context.id.to_string())
@@ -124,7 +126,11 @@ async fn settle_runs(
             decode::<CodeRun>(&pending)?
         } else {
             let mut run = stored.run.clone();
-            run.state = if stored.cancel_requested || !stored.dispatched {
+            run.state = if !stored.dispatched {
+                CodeRunState::Cancelled
+            } else if let Some(fallback) = fallback {
+                fallback
+            } else if stored.cancel_requested {
                 CodeRunState::Cancelled
             } else {
                 CodeRunState::Unknown
@@ -178,6 +184,71 @@ async fn settle_runs(
 }
 
 impl Store {
+    /// A typed agent rejection or a local refusal before dispatch proves this run
+    /// was never accepted. A transport failure must never call this method.
+    pub async fn reject_code_run(&self, id: Uuid, error: &ApiError) -> Result<(), ApiError> {
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+        let row = sqlx::query("SELECT * FROM code_runs WHERE id=?")
+            .bind(id.to_string())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(db)?
+            .ok_or_else(|| not_found("code run"))?;
+        let mut run = run_row(&row)?.run;
+        if row.try_get::<bool, _>("settled").map_err(db)? {
+            tx.commit().await.map_err(db)?;
+            return Ok(());
+        }
+        if run.started_at.is_some()
+            || row
+                .try_get::<Option<String>, _>("pending_result")
+                .map_err(db)?
+                .is_some()
+        {
+            return Err(invalid("an observed run cannot be relabeled as unaccepted"));
+        }
+        let context = load(&mut tx, run.context_id).await?.context;
+        let mut cursor: u64 =
+            sqlx::query_scalar::<_, i64>("SELECT event_cursor FROM code_contexts WHERE id=?")
+                .bind(context.id.to_string())
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(db)?
+                .try_into()
+                .map_err(|_| internal())?;
+        let now = Utc::now();
+        run.state = CodeRunState::Rejected;
+        run.finished_at = Some(now);
+        run.kernel_status = None;
+        let mut reason = error.to_string();
+        if reason.len() > 4096 {
+            let mut end = 4096;
+            while !reason.is_char_boundary(end) {
+                end -= 1;
+            }
+            reason.truncate(end);
+        }
+        run.reason = Some(reason);
+        save_run(&mut tx, &run, true).await?;
+        emit(
+            &mut tx,
+            &mut cursor,
+            context.id,
+            Some(id),
+            CodeContextEventKind::RunCompleted,
+            json!(run),
+            now,
+        )
+        .await?;
+        sqlx::query("UPDATE code_contexts SET event_cursor=? WHERE id=?")
+            .bind(cursor as i64)
+            .bind(context.id.to_string())
+            .execute(&mut *tx)
+            .await
+            .map_err(db)?;
+        tx.commit().await.map_err(db)?;
+        Ok(())
+    }
     pub async fn code_context_events(
         &self,
         id: Uuid,
@@ -193,8 +264,10 @@ impl Store {
         if after > current {
             return Err(invalid("context cursor is ahead of durable events"));
         }
-        sqlx::query("SELECT payload FROM code_context_events WHERE context_id=? AND sequence>? ORDER BY sequence LIMIT 256")
-            .bind(id.to_string()).bind(after).fetch_all(&self.pool).await.map_err(db)?.iter().map(|row|decode(row.try_get("payload").map_err(db)?)).collect()
+        // Bound bytes as well as count. The window scans lengths, so fetching a
+        // batch of rich results never materializes 256 maximum-sized payloads.
+        sqlx::query("WITH sizes AS (SELECT sequence,length(CAST(payload AS BLOB)) AS bytes FROM code_context_events WHERE context_id=? AND sequence>? ORDER BY sequence LIMIT 256), running AS (SELECT sequence,SUM(bytes) OVER (ORDER BY sequence ROWS UNBOUNDED PRECEDING) AS bytes FROM sizes) SELECT payload FROM code_context_events WHERE context_id=? AND sequence>? AND sequence<=(SELECT MAX(sequence) FROM running WHERE bytes<=16777216) ORDER BY sequence LIMIT 256")
+            .bind(id.to_string()).bind(after).bind(id.to_string()).bind(after).fetch_all(&self.pool).await.map_err(db)?.iter().map(|row|decode(row.try_get("payload").map_err(db)?)).collect()
     }
 
     /// Apply agent events and advance their acknowledgement atomically. Public
@@ -260,6 +333,8 @@ impl Store {
                         || stored.context.cleanup != CleanupState::Pending
                         || event.run_id.is_some()
                         || observed.id != id
+                        || (observed.sandbox_id != Uuid::nil()
+                            && observed.sandbox_id != stored.context.sandbox_id)
                         || fingerprint(&observed.spec)? != fingerprint(&stored.context.spec)?
                         || observed.state != CodeContextState::Ready
                         || observed.cleanup != CleanupState::Pending
@@ -313,6 +388,7 @@ impl Store {
                         return Err(invalid("code start has invalid identity or state"));
                     }
                     run.created_at = previous.run.created_at;
+                    run.events_after = previous.run.events_after;
                     save_run(&mut tx, &run, false).await?;
                     emit(
                         &mut tx,
@@ -374,6 +450,8 @@ impl Store {
                         .map_err(|_| invalid("invalid context close record"))?;
                     if event.run_id.is_some()
                         || observed.id != id
+                        || (observed.sandbox_id != Uuid::nil()
+                            && observed.sandbox_id != stored.context.sandbox_id)
                         || fingerprint(&observed.spec)? != fingerprint(&stored.context.spec)?
                         || observed.finished_at.is_none()
                         || observed.ready_at != stored.context.ready_at
@@ -402,6 +480,7 @@ impl Store {
                             &mut cursor,
                             event.timestamp,
                             "context collected before an execution result was confirmed",
+                            None,
                         )
                         .await?;
                         emit(
@@ -565,6 +644,34 @@ impl Store {
     /// Worker-only reconciliation after actual runtime absence or a proven never-
     /// dispatched context. This cannot synthesize kernel success or an interpreter error.
     pub async fn finish_code_context_absent(&self, id: Uuid, reason: &str) -> Result<(), ApiError> {
+        self.finish_code_context_absent_fallback(id, reason, None)
+            .await
+    }
+
+    /// Preserve the observed cause of whole-sandbox removal. Unexpected runtime
+    /// loss cannot be relabeled as successful cancellation of a dispatched run.
+    pub async fn finish_code_context_absent_with_state(
+        &self,
+        id: Uuid,
+        reason: &str,
+        state: CodeRunState,
+    ) -> Result<(), ApiError> {
+        if !matches!(
+            state,
+            CodeRunState::Cancelled | CodeRunState::TimedOut | CodeRunState::Unknown
+        ) {
+            return Err(invalid("absence cannot synthesize a kernel result"));
+        }
+        self.finish_code_context_absent_fallback(id, reason, Some(state))
+            .await
+    }
+
+    async fn finish_code_context_absent_fallback(
+        &self,
+        id: Uuid,
+        reason: &str,
+        fallback: Option<CodeRunState>,
+    ) -> Result<(), ApiError> {
         if reason.len() > 4096 {
             return Err(invalid("context absence reason exceeds limit"));
         }
@@ -583,7 +690,9 @@ impl Store {
                 .try_into()
                 .map_err(|_| internal())?;
         let now = Utc::now();
-        stored.context.state = if stored.context.desired_state == CodeContextDesiredState::Closed {
+        stored.context.state = if fallback == Some(CodeRunState::Unknown) {
+            CodeContextState::Failed
+        } else if stored.context.desired_state == CodeContextDesiredState::Closed {
             CodeContextState::Closed
         } else {
             CodeContextState::Failed
@@ -591,7 +700,7 @@ impl Store {
         stored.context.cleanup = CleanupState::Complete;
         stored.context.finished_at = Some(now);
         stored.context.reason = Some(reason.into());
-        settle_runs(&mut tx, &stored.context, &mut cursor, now, reason).await?;
+        settle_runs(&mut tx, &stored.context, &mut cursor, now, reason, fallback).await?;
         emit(
             &mut tx,
             &mut cursor,

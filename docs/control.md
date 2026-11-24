@@ -65,6 +65,13 @@ All requests require `Authorization: Bearer <token>`. JSON DTO schemas are in sp
 | POST | /v1/sessions/{id}/cancel | Persist cancellation intent |
 | GET | /v1/sessions/{id}/events | Resumable execution SSE |
 | GET | /v1/sessions/{id}/socket?after=SEQUENCE | Authenticated duplex WebSocket |
+| POST | /v1/sandboxes/{id}/code-contexts | 202 private interpreter context |
+| GET | /v1/code-contexts?sandbox_id=UUID&after=UUID&limit=100 | Context metadata page |
+| GET / DELETE | /v1/code-contexts/{id} | Context / 202 durable close intent |
+| GET / POST | /v1/code-contexts/{id}/runs | Run page / 202 code run |
+| GET | /v1/code-runs/{id} | Durable kernel run observation |
+| POST | /v1/code-runs/{id}/cancel | Close the context and cancel queued work |
+| GET | /v1/code-contexts/{id}/events | Durable context SSE with optional run IDs |
 
 Typed errors distinguish invalid input, authentication, forbidden access, conflict/state, unsupported capabilities, quotas and unavailable backends. Public errors do not expose raw runtime payloads. Input decoding failures use the same error envelope.
 
@@ -73,6 +80,10 @@ Diagnostics use a separately authenticated private worker route; they never forw
 Retained artifacts use a separate UUID-only private content route. Capture reads an authorized workspace file and prepares immutable length/digest before uploading. The storage credentials remain in the worker. Source expiration does not delete captured output; explicit artifact deletion is required. Configure the private local root or explicit S3 backend on the worker; see [configuration, recovery and cleanup](artifacts.md). Artifact create/delete requests also require Idempotency-Key.
 
 Interactive sessions share execution IDs/events/cancellation. The API durably queues ordered controls and the worker reconciles delivery receipts before acknowledging them. A delivered input is not a code-success verdict. The same bearer authentication protects WebSocket upgrades; closing an observer does not cancel the session. See [session sequencing, limits and reconnect](sessions.md). Session create requires Idempotency-Key; controls use their sequence and content as their identity.
+
+Code contexts are optional. Start the worker with `--kernel-probe-image <cached-image>` (or `GOLDENHOOP_KERNEL_PROBE_IMAGE`) to run an actual kernel gate per available runtime; the default worker leaves this capability disabled. There is no image pull or runtime/interpreter fallback. A positive probe verifies a selected administrator fixture, not that every requested workload image contains a kernel. Missing workload dependencies produce a failed context with confirmed collection. Context/run creation and context deletion require Idempotency-Key. Existing requests replay before worker freshness checks; close/cancel intent and historical reads work during worker downtime. See [context execution and collection](code-contexts.md).
+
+Code-context event IDs use `context-UUID:sequence`. A run's `events_after` is its public context cursor at acceptance and remains unchanged on create-key replay. Use that cursor to collect a previous result without missing its completion. Context events include late/background provenance; output after a completed run does not change that result. Reads are capped at 256 events and 16 MiB per store batch, and at most 16 context SSE connections remain open per API instance. Disconnecting a stream does not cancel the interpreter. EOF cannot establish kernel success or context collection.
 
 ## Execution and recovery
 
@@ -89,3 +100,5 @@ Worker heartbeat freshness is ten seconds. New operations requiring runtime supp
     python -B tests/api_contract.py --binary target/debug/goldenhoopd --runtime runc --work-dir .test-work --output evidence/api-runc.json
 
 The suite launches separate services with a fresh installation and private random credentials. It exercises refusal, create/commands/files/events, stream resume, failures, timeout, cancellation, idempotency, real worker crashes, API restarts, paused expiration without the API, PID exhaustion, failed provisioning, diagnostics, retained artifacts and repeated deletion. Supplying the Rust client and CLI binaries also exercises four actual clients. The S3 option adds actual backend interruption and explicit committed/late-write fault injection. It removes its labeled containers and volumes, stops service processes, closes database/log handles and verifies temporary-directory removal. Failed cleanup is a failed test and retains a failure record rather than claiming a pass.
+
+Supply `--kernel-image goldenhoop-kernel-fixture:test` after building `images/kernel/Dockerfile` to add six actual public-context groups. `--contexts-only` runs those groups independently for diagnosis; it does not count as the full API/client suite. CI runs the full suite with this option on both runtimes and the S3-compatible backend.

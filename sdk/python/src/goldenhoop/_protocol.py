@@ -56,6 +56,12 @@ class ObservationError(Error):
         super().__init__(f"execution {execution_id} observation failed: {error}")
 
 
+class CodeObservationError(Error):
+    def __init__(self, run_id: str, error: Error):
+        self.run_id, self.error = run_id, error
+        super().__init__(f"code run {run_id} observation failed: {error}")
+
+
 class ArtifactError(Error):
     def __init__(self, artifact_id: str, error: Error):
         self.artifact_id, self.error = artifact_id, error
@@ -131,8 +137,31 @@ class RunOutput:
     stderr: bytes
 
 
-def body(value: CreateSandbox | Command | CreateArtifact | SessionSpec | SessionControl | Json) -> Json:
-    return asdict(value) if isinstance(value, (CreateSandbox, Command, CreateArtifact, SessionSpec, SessionControl)) else dict(value)
+@dataclass(frozen=True)
+class CodeContextSpec:
+    language: str = "python"
+    cwd: str = "/workspace"
+
+
+@dataclass(frozen=True)
+class CodeRunSpec:
+    code: str
+    timeout_seconds: int = 60
+    max_output_bytes: int = 1024 * 1024
+
+
+@dataclass(frozen=True)
+class CodeRunOutput:
+    run: Json
+    stdout: str
+    stderr: str
+    results: list[Json]
+    displays: list[Json]
+    errors: list[Json]
+
+
+def body(value: CreateSandbox | Command | CreateArtifact | SessionSpec | SessionControl | CodeContextSpec | CodeRunSpec | Json) -> Json:
+    return asdict(value) if isinstance(value, (CreateSandbox, Command, CreateArtifact, SessionSpec, SessionControl, CodeContextSpec, CodeRunSpec)) else dict(value)
 
 
 def check_session(value: Any, execution_id: str | None = None, sandbox_id: str | None = None, request: Json | None = None) -> Json:
@@ -262,20 +291,25 @@ def binary(data: str, maximum: int) -> bytes:
 
 class SseDecoder:
     """Bounded incremental decoder. Commit a cursor only after a whole frame."""
-    def __init__(self, execution_id: str, after: int = 0):
+    def __init__(self, execution_id: str, after: int = 0, *, event_type: str = "execution", identity_field: str = "execution_id", maximum: int = MAX_FRAME):
         self.execution_id, self.cursor = execution_id, after
+        self.event_type, self.identity_field, self.maximum = event_type, identity_field, maximum
         self.pending = bytearray()
         self.data: list[str] = []
         self.data_size = 0
         self.kind = self.event_id = ""
 
     def feed(self, chunk: bytes):
+        for start in range(0, len(chunk), 65536):
+            yield from self._feed_chunk(chunk[start:start+65536])
+
+    def _feed_chunk(self, chunk: bytes):
         self.pending.extend(chunk)
         while True:
             end = self.pending.find(b"\n")
             if end < 0:
                 break
-            if end > MAX_FRAME:
+            if end > self.maximum:
                 raise ProtocolError("SSE line exceeds limit")
             raw = self.pending[:end]
             del self.pending[:end + 1]
@@ -287,11 +321,11 @@ class SseDecoder:
                 if self.data:
                     if self.kind == "error":
                         decode_json(503, "\n".join(self.data).encode())
-                    if self.kind != "execution":
+                    if self.kind != self.event_type:
                         raise ProtocolError("unexpected SSE event type")
                     value = decode_json(200, "\n".join(self.data).encode())
-                    if (not isinstance(value, dict) or value.get("execution_id") != self.execution_id
-                            or value.get("sequence") != self.cursor + 1
+                    if (not isinstance(value, dict) or value.get(self.identity_field) != self.execution_id
+                            or type(value.get("sequence")) is not int or value.get("sequence") != self.cursor + 1
                             or self.event_id != f"{self.execution_id}:{self.cursor + 1}"):
                         raise ProtocolError("event identity or sequence mismatch")
                     self.cursor += 1
@@ -307,9 +341,9 @@ class SseDecoder:
                 self.event_id = line[3:].lstrip(" ")
             elif line.startswith("event:"):
                 self.kind = line[6:].lstrip(" ")
-            if self.data_size > MAX_FRAME:
+            if self.data_size > self.maximum:
                 raise ProtocolError("SSE frame exceeds limit")
-        if len(self.pending) + self.data_size > MAX_FRAME:
+        if len(self.pending) + self.data_size > self.maximum:
             raise ProtocolError("SSE frame exceeds limit")
 
     def finish(self):

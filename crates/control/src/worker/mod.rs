@@ -1,4 +1,5 @@
 mod artifacts;
+mod contexts;
 mod executions;
 mod lifecycle;
 mod sessions;
@@ -37,6 +38,7 @@ pub struct Worker {
     locks: Mutex<HashMap<Uuid, Weak<Mutex<()>>>>,
     concurrency: Arc<Semaphore>,
     cancellations: Mutex<HashMap<Uuid, Instant>>,
+    context_closures: Mutex<HashMap<Uuid, Instant>>,
     artifacts: goldenhoop_artifacts::BlobStore,
     artifact_concurrency: Arc<Semaphore>,
 }
@@ -45,6 +47,7 @@ impl Worker {
     pub async fn new(
         store: Store,
         agent_image: String,
+        kernel_probe_image: Option<String>,
         allow_runc_development: bool,
         endpoint: String,
         artifacts: goldenhoop_artifacts::BlobStore,
@@ -68,7 +71,19 @@ impl Worker {
                 })
                 .await?,
             );
-            profiles.push(driver.probe().await);
+            let mut observed = driver.probe().await;
+            if observed.availability == Availability::Available
+                && let Some(image) = &kernel_probe_image
+            {
+                observed = match driver.probe_code_contexts(image).await {
+                    Ok(profile) => profile,
+                    Err(error) => {
+                        report("kernel_probe_failed", &error);
+                        driver.profile_snapshot().await
+                    }
+                };
+            }
+            profiles.push(observed);
             drivers.insert(profile.id().into(), driver);
         }
         let artifact_support = match artifacts.probe().await {
@@ -102,6 +117,7 @@ impl Worker {
             locks: Mutex::new(HashMap::new()),
             concurrency: Arc::new(Semaphore::new(4)),
             cancellations: Mutex::new(HashMap::new()),
+            context_closures: Mutex::new(HashMap::new()),
             artifacts,
             artifact_concurrency: Arc::new(Semaphore::new(2)),
         }))

@@ -17,6 +17,11 @@ fn context_row(row: &sqlx::sqlite::SqliteRow) -> Result<StoredCodeContext, ApiEr
             .map_err(db)?
             .try_into()
             .map_err(|_| internal())?,
+        events_cursor: row
+            .try_get::<i64, _>("event_cursor")
+            .map_err(db)?
+            .try_into()
+            .map_err(|_| internal())?,
     })
 }
 fn run_row(row: &sqlx::sqlite::SqliteRow) -> Result<StoredCodeRun, ApiError> {
@@ -248,9 +253,16 @@ impl Store {
                 "sandbox code history/context queue budget is exhausted",
             ));
         }
+        let events_after: i64 =
+            sqlx::query_scalar("SELECT event_cursor FROM code_contexts WHERE id=?")
+                .bind(context.to_string())
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(db)?;
         let run = CodeRun {
             id,
             context_id: context,
+            events_after: events_after.try_into().map_err(|_| internal())?,
             state: CodeRunState::Pending,
             created_at: Utc::now(),
             started_at: None,
@@ -329,14 +341,17 @@ impl Store {
             .bind(sandbox.to_string()).fetch_all(&self.pool).await.map_err(db)?.iter().map(context_row).collect()
     }
     pub async fn code_run_work(&self, context: Uuid) -> Result<Vec<StoredCodeRun>, ApiError> {
-        sqlx::query("SELECT * FROM code_runs WHERE context_id=? AND settled=0 ORDER BY id LIMIT 64")
-            .bind(context.to_string())
-            .fetch_all(&self.pool)
-            .await
-            .map_err(db)?
-            .iter()
-            .map(run_row)
-            .collect()
+        // Row insertion order is the durable FIFO, independent of random UUIDs.
+        sqlx::query(
+            "SELECT * FROM code_runs WHERE context_id=? AND settled=0 ORDER BY rowid LIMIT 64",
+        )
+        .bind(context.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db)?
+        .iter()
+        .map(run_row)
+        .collect()
     }
     pub async fn list_code_contexts(
         &self,

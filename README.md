@@ -6,6 +6,8 @@ A Rust agent sandbox platform with explicit runtime capabilities, independent AP
 
 **M0-M1 are implemented and verified; M2 is in progress. Commands, files, diagnostics, retained artifacts, persistent shells and PTYs pass actual runc/gVisor contracts through the API, Rust/Python SDKs and CLI. S3-compatible API/client tests also pass on Linux. Code contexts and isolated child sandboxes remain in progress.**
 
+Python code contexts now have durable public APIs and Rust/Python/CLI bindings, with actual local runc client loops passing. Native optional kernel gates pass on runc and gVisor; the new public gVisor/S3 integration remains a separate CI gate. Enable contexts with an explicit cached kernel-probe image. Isolated child sandboxes remain the next M2 increment.
+
 The full target includes local containers, Firecracker microVMs, and Kubernetes; command and file execution; terminals and code contexts; network policy and credential brokering; snapshots, templates, warm pools, batches, and diagnostics.
 
 Runtime support is declared per profile and checked against the host. Missing isolation must fail closed. A successful unit test is not evidence of a working isolation boundary.

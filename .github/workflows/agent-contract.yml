@@ -55,10 +55,10 @@ jobs:
         with:
           python-version: '3.11'
       - run: python -m pip install httpx==0.28.1
-      - name: Exercise API restart, worker recovery and cleanup
-        run: python -B tests/api_contract.py --binary target/debug/goldenhoopd --rust-client target/debug/examples/sdk_contract --cli target/debug/goldenhoop --runtime ${{ matrix.runtime }} --work-dir .test-work --output evidence/api-${{ matrix.runtime }}.json
       - name: Build the disposable actual-kernel fixture
         run: docker build -f images/kernel/Dockerfile -t goldenhoop-kernel-fixture:test .
+      - name: Exercise API restart, worker recovery and cleanup
+        run: python -B tests/api_contract.py --binary target/debug/goldenhoopd --rust-client target/debug/examples/sdk_contract --cli target/debug/goldenhoop --runtime ${{ matrix.runtime }} --kernel-image goldenhoop-kernel-fixture:test --work-dir .test-work --output evidence/api-${{ matrix.runtime }}.json
       - name: Verify the driver's explicit optional kernel capability probe
         env:
           GOLDENHOOP_TEST_RUNTIME: ${{ matrix.runtime }}

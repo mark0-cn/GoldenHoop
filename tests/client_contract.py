@@ -297,4 +297,8 @@ if __name__ == "__main__":
     parser.add_argument("--cli", required=True)
     args = parser.parse_args()
     results = [sync_contract(), asyncio.run(async_contract()), cli_contract(args.cli)]
+    if os.environ.get("GOLDENHOOP_TEST_KERNEL_IMAGE"):
+        from code_client_contract import sync_code_contract, async_code_contract, cli_code_contract
+        for result,code in zip(results,[sync_code_contract(),asyncio.run(async_code_contract()),cli_code_contract(args.cli)],strict=True):
+            result["code_contexts"]=code
     print(json.dumps({"clients": results, "httpx": httpx.__version__, "result": "passed"}))

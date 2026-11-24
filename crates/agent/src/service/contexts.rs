@@ -221,6 +221,7 @@ impl Agent {
         let record = CodeRun {
             id,
             context_id,
+            events_after: 0,
             state: CodeRunState::Pending,
             created_at: Utc::now(),
             started_at: None,

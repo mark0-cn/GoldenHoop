@@ -1,7 +1,9 @@
 //! Cross-platform client. Waiting and observing never imply cancellation.
 mod artifacts;
+mod contexts;
 mod events;
 mod sessions;
+pub use contexts::{CodeContextEventStream, CodeRunOutput};
 pub use events::{EventStream, RunOutput};
 pub use sessions::SessionSocket;
 
@@ -29,6 +31,7 @@ pub enum Error {
     Timeout(Uuid),
     UncertainRequest(String),
     Observation(Uuid, Box<Error>),
+    CodeObservation(Uuid, Box<Error>),
     Artifact(Uuid, Box<Error>),
     SessionControl(Uuid, u64, Box<Error>),
     Cleanup(Uuid, Box<Error>, Box<Error>),
@@ -48,6 +51,9 @@ impl std::fmt::Display for Error {
                 "request outcome is unknown; retry the same request with idempotency key {key}"
             ),
             Self::Observation(id, error) => write!(f, "execution {id} observation failed: {error}"),
+            Self::CodeObservation(id, error) => {
+                write!(f, "code run {id} observation failed: {error}")
+            }
             Self::Artifact(id, error) => write!(f, "artifact {id} operation failed: {error}"),
             Self::SessionControl(id, sequence, error) => write!(
                 f,

@@ -75,6 +75,14 @@ pub trait AgentTransport: Send + Sync {
         handle: &RuntimeHandle,
         request: &AgentRequest,
     ) -> Result<AgentResponse, ApiError>;
+    /// Preserve a definite agent rejection separately from transport uncertainty.
+    async fn rpc_reply(
+        &self,
+        handle: &RuntimeHandle,
+        request: &AgentRequest,
+    ) -> Result<AgentReply, ApiError> {
+        self.rpc(handle, request).await.map(AgentReply::Success)
+    }
 }
 
 pub trait SandboxRuntime: RuntimeDriver + AgentTransport {}

@@ -17,9 +17,10 @@ from ._protocol import (
 )
 from ._protocol import ArtifactError, CreateArtifact, check_artifact_bytes, check_artifact_created
 from ._protocol import SessionSpec, SessionControl, SessionControlError, check_session, check_session_receipt
+from ._code_sync import CodeClientMixin
 
 
-class Client:
+class Client(CodeClientMixin):
     def __init__(self, base_url: str, token: str):
         self._http = httpx.Client(base_url=endpoint(base_url, token),
                                   headers={"authorization": "Bearer " + token},

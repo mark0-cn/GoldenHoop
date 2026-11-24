@@ -99,6 +99,7 @@ async fn started(
     assert!(store.dispatch_code_run(run.id).await.unwrap());
     assert!(!store.dispatch_code_run(run.id).await.unwrap());
     run.created_at += chrono::Duration::seconds(2);
+    run.events_after = 0; // The private agent uses its own cursor domain.
     run.state = CodeRunState::Running;
     run.started_at = Some(Utc::now());
     store
@@ -225,6 +226,8 @@ async fn identities_dispatch_and_replay_keep_completed_code_immutable_but_allow_
         let final_run = store.code_run(run.id).await.unwrap().run;
         assert_eq!(final_run.state, CodeRunState::KernelSucceeded);
         assert_eq!(final_run.created_at, accepted.created_at);
+        assert_eq!(final_run.events_after, accepted.events_after);
+        assert_eq!(accepted.events_after, 1);
         store
             .append_code_context_events(context.id, &batch)
             .await
@@ -695,6 +698,78 @@ async fn queue_reservation_rollback_and_close_of_undispatched_work() {
 }
 
 #[tokio::test]
+async fn runtime_loss_is_not_cancellation_and_source_expiry_can_confirm_timeout() {
+    checked(|store| async move {
+        let sandbox = source(&store).await;
+        let lost = ready(&store, sandbox, "lost").await;
+        let active = started(&store, lost.id, "active", CodeRunSpec::new("maybe()"), 2).await;
+        let queued = store
+            .create_code_run(lost.id, &CodeRunSpec::new("not_sent()"), "queued")
+            .await
+            .unwrap();
+        store.cancel_code_run(active.id).await.unwrap();
+        store
+            .finish_code_context_absent_with_state(
+                lost.id,
+                "fixture observed runtime exit",
+                CodeRunState::Unknown,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            store.code_context(lost.id).await.unwrap().context.state,
+            CodeContextState::Failed
+        );
+        assert_eq!(
+            store.code_run(active.id).await.unwrap().run.state,
+            CodeRunState::Unknown
+        );
+        assert_eq!(
+            store.code_run(queued.id).await.unwrap().run.state,
+            CodeRunState::Cancelled
+        );
+        let expired = ready(&store, sandbox, "expired").await;
+        let run = started(&store, expired.id, "run", CodeRunSpec::new("work()"), 2).await;
+        assert!(
+            store
+                .finish_code_context_absent_with_state(
+                    expired.id,
+                    "invalid",
+                    CodeRunState::KernelSucceeded
+                )
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            store
+                .code_context(expired.id)
+                .await
+                .unwrap()
+                .context
+                .cleanup,
+            CleanupState::Pending
+        );
+        store
+            .close_code_context(expired.id, "source-expiry")
+            .await
+            .unwrap();
+        store
+            .finish_code_context_absent_with_state(
+                expired.id,
+                "fixture confirmed expired runtime absence",
+                CodeRunState::TimedOut,
+            )
+            .await
+            .unwrap();
+        let result = store.code_run(run.id).await.unwrap().run;
+        assert_eq!(result.state, CodeRunState::TimedOut);
+        assert!(result.kernel_status.is_none() && result.finished_at.is_some());
+        assert_eq!(result.events_after, 1);
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn schema_three_migration_and_reopen_preserve_sessions_artifacts_and_ambiguous_dispatch() {
     use sqlx::{
         Connection,
@@ -763,4 +838,143 @@ async fn schema_three_migration_and_reopen_preserve_sessions_artifacts_and_ambig
     if let Err(error) = result {
         std::panic::resume_unwind(error);
     }
+}
+
+#[tokio::test]
+async fn definitive_rejection_preserves_fifo_and_collected_parent_does_not_hide_child_work() {
+    checked(|store| async move {
+        let sandbox = source(&store).await;
+        let context = ready(&store, sandbox, "context").await;
+        let mut ids = Vec::new();
+        for index in 0..4 {
+            ids.push(
+                store
+                    .create_code_run(
+                        context.id,
+                        &CodeRunSpec::new(format!("{index}")),
+                        &format!("run-{index}"),
+                    )
+                    .await
+                    .unwrap()
+                    .id,
+            );
+        }
+        assert_eq!(
+            store
+                .code_run_work(context.id)
+                .await
+                .unwrap()
+                .iter()
+                .map(|run| run.run.id)
+                .collect::<Vec<_>>(),
+            ids
+        );
+        store.dispatch_code_run(ids[0]).await.unwrap();
+        let refusal = ApiError::new(ErrorCode::QuotaExceeded, "native queue is full");
+        store.reject_code_run(ids[0], &refusal).await.unwrap();
+        store.reject_code_run(ids[0], &refusal).await.unwrap();
+        let rejected = store.code_run(ids[0]).await.unwrap().run;
+        assert_eq!(rejected.state, CodeRunState::Rejected);
+        assert!(rejected.started_at.is_none() && rejected.kernel_status.is_none());
+        assert_eq!(rejected.events_after, 1);
+        let snapshot = store.code_context(context.id).await.unwrap();
+        assert_eq!((snapshot.cursor, snapshot.events_cursor), (1, 2));
+        let run = started(
+            &store,
+            context.id,
+            "observed",
+            CodeRunSpec::new("observed()"),
+            2,
+        )
+        .await;
+        assert!(store.reject_code_run(run.id, &refusal).await.is_err());
+        store
+            .set_desired(sandbox, DesiredState::Terminated, "terminate")
+            .await
+            .unwrap();
+        let mut parent = store.sandbox(sandbox).await.unwrap();
+        parent.sandbox.state = SandboxState::Stopping;
+        store.observe(parent.clone()).await.unwrap();
+        parent.sandbox.state = SandboxState::Terminated;
+        parent.sandbox.cleanup = CleanupState::Complete;
+        store.observe(parent).await.unwrap();
+        assert_eq!(store.work().await.unwrap().len(), 1);
+        store
+            .close_code_context(context.id, "parent-absent")
+            .await
+            .unwrap();
+        store
+            .finish_code_context_absent_with_state(
+                context.id,
+                "fixture observed whole runtime absence",
+                CodeRunState::Cancelled,
+            )
+            .await
+            .unwrap();
+        assert!(store.work().await.unwrap().is_empty());
+        assert_eq!(
+            store.code_run(ids[0]).await.unwrap().run.state,
+            CodeRunState::Rejected
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn rich_history_batches_are_byte_bounded_and_resume_without_gaps() {
+    checked(|store| async move {
+        let sandbox = source(&store).await;
+        let context = ready(&store, sandbox, "context").await;
+        let mut next = 2;
+        for index in 0..2 {
+            let mut spec = CodeRunSpec::new("rich_output()");
+            spec.max_output_bytes = 16 * 1024 * 1024;
+            let run = started(&store, context.id, &format!("run-{index}"), spec, next).await;
+            next += 1;
+            let mut events = Vec::new();
+            for _ in 0..10 {
+                events.push(event(
+                    context.id,
+                    next,
+                    Some(run.id),
+                    CodeContextEventKind::Stdout,
+                    json!({"late":false,"content":{"text":"x".repeat(1024*1024)}}),
+                ));
+                next += 1;
+            }
+            events.push(event(
+                context.id,
+                next,
+                Some(run.id),
+                CodeContextEventKind::RunCompleted,
+                json!(completed(run, CodeRunState::KernelSucceeded)),
+            ));
+            next += 1;
+            store
+                .append_code_context_events(context.id, &events)
+                .await
+                .unwrap();
+        }
+        let first = store.code_context_events(context.id, 0).await.unwrap();
+        let cursor = first.last().unwrap().sequence;
+        assert!(cursor < next - 1);
+        assert!(
+            first
+                .iter()
+                .map(|event| serde_json::to_vec(event).unwrap().len())
+                .sum::<usize>()
+                <= 16 * 1024 * 1024
+        );
+        let second = store.code_context_events(context.id, cursor).await.unwrap();
+        assert_eq!(second.last().unwrap().sequence, next - 1);
+        assert_eq!(
+            first
+                .iter()
+                .chain(second.iter())
+                .map(|event| event.sequence)
+                .collect::<Vec<_>>(),
+            (1..next).collect::<Vec<_>>()
+        );
+    })
+    .await;
 }
