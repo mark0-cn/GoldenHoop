@@ -1,0 +1,302 @@
+{
+  "suite": "ipv4-routed-filter-prototype",
+  "runtime": "runsc",
+  "scope": "fixture mechanism only; production policy/DNS/IPv6/L2/TLS and flow collection are not established",
+  "timestamp": "2026-11-24T18:59:35.668564+00:00",
+  "attempt": "ca50547b8cd04918b9241c89c6460cf9",
+  "result": "failed",
+  "cleanup": "complete",
+  "cases": [
+    "default_deny_is_installed_before_unprivileged_workload_start",
+    "owned_filter_table_networks_and_containers_confirmed_absent"
+  ],
+  "resources": [
+    {
+      "role": "helper",
+      "container_id": "7d5a74f4d76be8a5e1769a8f264ac826d2c8d32055ba71ec2fdafff2152a5741",
+      "boundary": {
+        "Runtime": "runc",
+        "NetworkMode": "host",
+        "ReadonlyRootfs": true,
+        "CapDrop": [
+          "ALL"
+        ],
+        "CapAdd": [
+          "CAP_NET_ADMIN"
+        ],
+        "SecurityOpt": [
+          "no-new-privileges:true"
+        ],
+        "Memory": 134217728,
+        "MemorySwap": 134217728,
+        "NanoCpus": 250000000,
+        "PidsLimit": 32
+      }
+    },
+    {
+      "role": "guest-net",
+      "network_id": "c4b6ec8f22f61328486cbf25b9b15c15cca5cdf4d4beff8e6f42af1ad500e47b",
+      "options": {
+        "com.docker.network.bridge.enable_ip_masquerade": "false",
+        "com.docker.network.bridge.name": "ghnpca50547b8cd"
+      },
+      "ipam": {
+        "Driver": "default",
+        "Options": {},
+        "Config": [
+          {
+            "Subnet": "172.18.0.0/16",
+            "Gateway": "172.18.0.1"
+          }
+        ]
+      }
+    },
+    {
+      "role": "target-net",
+      "network_id": "3e8214c92c3def515284391ad262bee96dfc0990cfe444c182e2b13effb9ee58",
+      "options": {
+        "com.docker.network.bridge.gateway_mode_ipv4": "routed"
+      },
+      "ipam": {
+        "Driver": "default",
+        "Options": {},
+        "Config": [
+          {
+            "Subnet": "172.19.0.0/16",
+            "Gateway": "172.19.0.1"
+          }
+        ]
+      }
+    },
+    {
+      "role": "target",
+      "container_id": "de3afe59184c82dafea4bf694a628b77776744a78d053ed74ebf90ae3ab1a06b",
+      "boundary": {
+        "Runtime": "runc",
+        "NetworkMode": "3e8214c92c3def515284391ad262bee96dfc0990cfe444c182e2b13effb9ee58",
+        "ReadonlyRootfs": true,
+        "CapDrop": [
+          "ALL"
+        ],
+        "CapAdd": null,
+        "SecurityOpt": [
+          "no-new-privileges:true"
+        ],
+        "Memory": 134217728,
+        "MemorySwap": 134217728,
+        "NanoCpus": 250000000,
+        "PidsLimit": 32
+      }
+    },
+    {
+      "role": "guest",
+      "container_id": "c711508b4c46d0bb0410574274deda2597810abb81987345033ce7d1ce508555",
+      "boundary": {
+        "Runtime": "runsc",
+        "NetworkMode": "c4b6ec8f22f61328486cbf25b9b15c15cca5cdf4d4beff8e6f42af1ad500e47b",
+        "ReadonlyRootfs": true,
+        "CapDrop": [
+          "ALL"
+        ],
+        "CapAdd": null,
+        "SecurityOpt": [
+          "no-new-privileges:true"
+        ],
+        "Memory": 1073741824,
+        "MemorySwap": 1073741824,
+        "NanoCpus": 1000000000,
+        "PidsLimit": 256
+      }
+    }
+  ],
+  "observations": [
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a63613530353437623863643034393138623932343163383963363436306366390a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": true,
+      "reply_hex": "6f6b3a63613530353437623863643034393138623932343163383963363436306366390a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": true,
+      "reply_hex": "6f6b3a63613530353437623863643034393138623932343163383963363436306366390a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.18.0.1",
+      "port": 45981,
+      "ok": true,
+      "reply_hex": "6f6b3a63613530353437623863643034393138623932343163383963363436306366390a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": false,
+      "error": "TimeoutError"
+    },
+    {
+      "origin": "workload",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": false,
+      "error": "TimeoutError"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a63613530353437623863643034393138623932343163383963363436306366390a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": true,
+      "reply_hex": "6f6b3a63613530353437623863643034393138623932343163383963363436306366390a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": true,
+      "reply_hex": "6f6b3a63613530353437623863643034393138623932343163383963363436306366390a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.18.0.1",
+      "port": 45981,
+      "ok": true,
+      "reply_hex": "6f6b3a63613530353437623863643034393138623932343163383963363436306366390a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": false,
+      "error": "TimeoutError"
+    }
+  ],
+  "source_files_sha256": {
+    "tests/network_contract.py": "35e9b10c01fc94bb9ce6426296352dbfa1da715225db32100294abbae3f9c3c8",
+    "tests/network_samples.py": "7a776745a3d328313470c240207f726b540a2787562dda2367d19cae26da0a45",
+    "tests/fixtures/network.Dockerfile": "c23ec5a63dd2d12652ea9d003b0fd8cef446b66868582fbe6a31f3f69cd4e873"
+  },
+  "image_id": "sha256:35d562a40010e7d0100f0ab716db8d5d5535e7b0de95fc73049296d94fd65d3b",
+  "docker": {
+    "Platform": {
+      "Name": "Docker Engine - Community"
+    },
+    "Version": "29.4.2",
+    "ApiVersion": "1.54",
+    "MinAPIVersion": "1.40",
+    "Os": "linux",
+    "Arch": "amd64",
+    "Components": [
+      {
+        "Name": "Engine",
+        "Version": "29.4.2",
+        "Details": {
+          "ApiVersion": "1.54",
+          "Arch": "amd64",
+          "BuildTime": "Fri May  1 10:24:04 2026",
+          "Experimental": "false",
+          "GitCommit": "d329809",
+          "GoVersion": "go1.26.2",
+          "KernelVersion": "7.0.0-1020-azure",
+          "MinAPIVersion": "1.40",
+          "Module": "github.com/moby/moby/v2",
+          "ModuleVersion": "v2.0.0+unknown",
+          "Os": "linux"
+        }
+      },
+      {
+        "Name": "containerd",
+        "Version": "v2.4.2",
+        "Details": {
+          "GitCommit": "b7a25261e029d68978bbf290df0a62fc819b3c51"
+        }
+      },
+      {
+        "Name": "runc",
+        "Version": "1.5.3",
+        "Details": {
+          "GitCommit": "v1.5.3-0-g46365c62"
+        }
+      },
+      {
+        "Name": "docker-init",
+        "Version": "0.19.0",
+        "Details": {
+          "GitCommit": "de40ad0"
+        }
+      }
+    ],
+    "GitCommit": "d329809",
+    "GoVersion": "go1.26.2",
+    "KernelVersion": "7.0.0-1020-azure",
+    "BuildTime": "2026-05-01T10:24:04.000000000+00:00"
+  },
+  "target_port_bindings": {
+    "19001/tcp": [
+      {
+        "HostIp": "0.0.0.0",
+        "HostPort": ""
+      }
+    ],
+    "19002/udp": [
+      {
+        "HostIp": "0.0.0.0",
+        "HostPort": ""
+      }
+    ],
+    "19003/tcp": [
+      {
+        "HostIp": "0.0.0.0",
+        "HostPort": ""
+      }
+    ]
+  },
+  "owner_marker_validation": "nft-text-table-comment",
+  "transactions": [
+    "add table inet ghnp_ca50547b8cd04918b9241c89c6460cf9 { comment \"goldenhoop-network-prototype:ca50547b8cd04918b9241c89c6460cf9\"; }\nadd chain inet ghnp_ca50547b8cd04918b9241c89c6460cf9 input { type filter hook input priority -190; policy accept; }\nadd rule inet ghnp_ca50547b8cd04918b9241c89c6460cf9 input iifname \"ghnpca50547b8cd\" counter drop\nadd chain inet ghnp_ca50547b8cd04918b9241c89c6460cf9 egress\nadd chain inet ghnp_ca50547b8cd04918b9241c89c6460cf9 forward { type filter hook forward priority -190; policy accept; }\nadd rule inet ghnp_ca50547b8cd04918b9241c89c6460cf9 forward iifname \"ghnpca50547b8cd\" jump egress\nadd rule inet ghnp_ca50547b8cd04918b9241c89c6460cf9 egress counter drop\n",
+    "flush chain inet ghnp_ca50547b8cd04918b9241c89c6460cf9 egress\nadd rule inet ghnp_ca50547b8cd04918b9241c89c6460cf9 egress ip daddr 172.19.0.2 tcp dport 19001 counter accept\nadd rule inet ghnp_ca50547b8cd04918b9241c89c6460cf9 egress counter drop\n"
+  ],
+  "workload_identity": {
+    "uid": 1000,
+    "gid": 1000,
+    "groups": [
+      1000
+    ],
+    "credentials": {
+      "CapEff": "0000000000000000",
+      "NoNewPrivs": "1"
+    },
+    "nft_exit_code": 3
+  },
+  "error": "",
+  "owned_filter_table_absent": true,
+  "image_removed": true
+}
