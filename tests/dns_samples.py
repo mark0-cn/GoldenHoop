@@ -1,7 +1,7 @@
 """Public controlled DNS upstream fixture; never used by production services."""
 DNS = r'''
 import json,socket,struct,sys,threading
-target=sys.argv[1]
+target=sys.argv[1];target6=sys.argv[2] if len(sys.argv)>2 else None
 udp_ready=threading.Event();tcp_ready=threading.Event()
 def answer(data):
  if len(data)<12 or data[4:6]!=b'\x00\x01': raise ValueError('bad fixture query')
@@ -13,9 +13,11 @@ def answer(data):
   labels.append(data[cursor:cursor+size].decode('ascii'));cursor+=size
  kind,cls=struct.unpack('!HH',data[cursor:cursor+4]);cursor+=4
  name='.'.join(labels).lower();print(json.dumps({'query':name,'kind':kind}),flush=True)
- question=data[12:cursor];header=struct.pack('!HHHHHH',int.from_bytes(data[:2],'big'),0x8180,1,int(kind==1),0,0)
- ttl={'short.test':4,'long.test':30}.get(name,10)
+ has6=kind==28 and target6 is not None and name.startswith('ipv6-')
+ question=data[12:cursor];header=struct.pack('!HHHHHH',int.from_bytes(data[:2],'big'),0x8180,1,int(kind==1 or has6),0,0)
+ ttl={'short.test':4,'long.test':30,'ipv6-short.test':4,'ipv6-long.test':30}.get(name,10)
  record=b'\xc0\x0c'+struct.pack('!HHIH',1,1,ttl,4)+socket.inet_aton(target) if kind==1 else b''
+ if has6:record=b'\xc0\x0c'+struct.pack('!HHIH',28,1,ttl,16)+socket.inet_pton(socket.AF_INET6,target6)
  return header+question+record
 def udp():
  server=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);server.bind(('0.0.0.0',19004))

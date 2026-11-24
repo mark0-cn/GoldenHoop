@@ -244,7 +244,7 @@ class RustContract(Contract):
             self.ensure_helper()
             if self.controller is None:
                 self.open()
-            observed = self.rpc("inspect")["result"]
+            observed = self.rpc("inspect", allow_uncertain=True)["result"]
             self.rpc("remove", expected_revision=observed["revision"] or 0)
             self.evidence["rust_table_collection_confirmed"] = True
         if self.controller:

@@ -20,6 +20,8 @@ pub struct Listening {
     #[serde(flatten)]
     pub state: Observation,
     pub binding: crate::DnsBinding,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ipv6_binding: Option<crate::DnsBinding>,
 }
 
 pub(super) struct DnsState {
@@ -29,7 +31,7 @@ pub(super) struct DnsState {
     pub(super) config: Option<Config>,
     pub(super) book: Option<LeaseBook>,
     pub(super) active: SetNames,
-    pub(super) binding: Option<crate::DnsBinding>,
+    pub(super) binding: Option<crate::DnsBindings>,
 }
 impl DnsState {
     pub(super) fn invalidate(&mut self, revision: u64) {
@@ -44,7 +46,7 @@ impl Manager {
     pub async fn listen_dns(
         &mut self,
         expected: u64,
-    ) -> Result<(Listening, crate::frontend::BoundSockets), ApiError> {
+    ) -> Result<(Listening, crate::frontend::BoundListeners), ApiError> {
         self.check_lifetime()?;
         if self.uncertain || self.can_renew || self.revision != Some(expected) {
             return Err(error(
@@ -65,15 +67,20 @@ impl Manager {
             ));
         }
         self.expected(expected).await?;
-        let gateway = crate::frontend::bridge_address(&self.allocation.bridge)?;
-        if state.upstream.endpoint() == IpEndpoint::new(gateway.into(), 53) {
+        let gateways = crate::frontend::bridge_addresses(&self.allocation.bridge)?;
+        if state.upstream.endpoint().port() == 53
+            && (state.upstream.endpoint().ip() == std::net::IpAddr::V4(gateways.v4)
+                || gateways
+                    .v6
+                    .is_some_and(|v6| state.upstream.endpoint().ip() == std::net::IpAddr::V6(v6)))
+        {
             return Err(error(
                 ErrorCode::InvalidRequest,
                 "upstream would recurse into the owned DNS listener",
             ));
         }
-        let first = crate::frontend::BoundSockets::bind(gateway, 0).await?;
-        let binding = first.binding.clone();
+        let first = crate::frontend::BoundListeners::bind(&gateways).await?;
+        let binding = first.bindings.clone();
         self.check_bridge()?;
         let next = expected
             .checked_add(1)
@@ -82,10 +89,10 @@ impl Manager {
         let plan = Plan::quarantine_with_binding(self.allocation.clone(), next, Some(&binding))?;
         let observed = self.commit(plan, true, false).await?;
         self.dns.as_mut().expect("configured DNS").invalidate(next);
-        // Quarantine now protects the endpoint. Close both initial sockets so
+        // Quarantine now protects all endpoints. Close the initial sockets so
         // data queued before the filter existed cannot borrow a later policy.
         drop(first);
-        let sockets = match crate::frontend::BoundSockets::bind(gateway, binding.port()).await {
+        let sockets = match crate::frontend::BoundListeners::rebind(&binding).await {
             Ok(sockets) => sockets,
             Err(error) => {
                 self.uncertain = true;
@@ -97,7 +104,8 @@ impl Manager {
         Ok((
             Listening {
                 state: observed,
-                binding,
+                binding: binding.v4,
+                ipv6_binding: binding.v6,
             },
             sockets,
         ))

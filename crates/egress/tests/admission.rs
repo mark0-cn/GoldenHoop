@@ -1,4 +1,4 @@
-use goldenhoop_egress::{Allocation, Config, Plan};
+use goldenhoop_egress::{Allocation, Config, DnsBinding, DnsBindings, Plan};
 use goldenhoop_protocol::{ErrorCode, NetworkAction, NetworkPolicy, NetworkRule};
 use uuid::Uuid;
 
@@ -89,4 +89,30 @@ fn ownership_is_bound_to_every_allocation_field() {
         }
         assert_ne!(owner, altered.owner());
     }
+}
+
+#[test]
+fn dns_endpoint_families_and_ambiguous_local_addresses_cannot_widen_a_binding() {
+    for address in [
+        "0.0.0.0",
+        "127.0.0.1",
+        "255.255.255.255",
+        "224.0.0.1",
+        "::",
+        "::1",
+        "ff02::1",
+        "fe80::1",
+        "::ffff:192.0.2.1",
+    ] {
+        assert!(
+            DnsBinding::new(address.parse::<std::net::IpAddr>().unwrap(), 32000).is_err(),
+            "{address}"
+        );
+    }
+    let v4 = DnsBinding::new("192.0.2.1".parse::<std::net::Ipv4Addr>().unwrap(), 32000).unwrap();
+    let v6 = DnsBinding::new("fd42::1".parse::<std::net::Ipv6Addr>().unwrap(), 32001).unwrap();
+    assert!(DnsBindings::new(v6.clone(), None).is_err());
+    assert!(DnsBindings::new(v4.clone(), Some(v4.clone())).is_err());
+    let bindings = DnsBindings::new(v4, Some(v6)).unwrap();
+    assert_eq!(bindings.iter().count(), 2);
 }

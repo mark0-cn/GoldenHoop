@@ -79,7 +79,7 @@ if mode=="tcp":
  except OSError as error: result={"ok":False,"error":type(error).__name__}
  print(json.dumps(result),flush=True)
 elif mode=="udp":
- with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as sock:
+ with socket.socket(socket.AF_INET6 if ':' in ip else socket.AF_INET,socket.SOCK_DGRAM) as sock:
   sock.settimeout(1.2)
   try:
    sock.sendto(request,(ip,port)); reply,_=sock.recvfrom(128)

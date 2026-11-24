@@ -1,9 +1,9 @@
 //! Bounded workload DNS transport. Identity is its verified bridge binding and
 //! scoped kernel input rules, never a name/header supplied by the workload.
-use crate::{DnsBinding, error};
+use crate::{DnsBinding, DnsBindings, error};
 use goldenhoop_protocol::{ApiError, ErrorCode};
 use std::{
-    net::{Ipv4Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::Arc,
     time::Duration,
 };
@@ -27,13 +27,21 @@ pub struct BoundSockets {
     tcp: TcpListener,
     udp: UdpSocket,
 }
+pub struct BridgeAddresses {
+    pub v4: Ipv4Addr,
+    pub v6: Option<Ipv6Addr>,
+}
+pub struct BoundListeners {
+    pub bindings: DnsBindings,
+    sockets: Vec<BoundSockets>,
+}
 pub struct Frontend {
     tasks: Vec<JoinHandle<()>>,
     stop: tokio_util::sync::CancellationToken,
 }
 
 impl BoundSockets {
-    pub async fn bind(address: Ipv4Addr, port: u16) -> Result<Self, ApiError> {
+    pub async fn bind(address: IpAddr, port: u16) -> Result<Self, ApiError> {
         if port != 0 && port < 1024 {
             return Err(error(
                 ErrorCode::InvalidRequest,
@@ -81,11 +89,14 @@ impl BoundSockets {
         ))
     }
 
-    pub fn serve(self, queries: mpsc::Sender<QueryRequest>) -> Frontend {
-        let stop = tokio_util::sync::CancellationToken::new();
+    fn spawn(
+        self,
+        queries: mpsc::Sender<QueryRequest>,
+        permits: Arc<Semaphore>,
+        stop: &tokio_util::sync::CancellationToken,
+    ) -> Vec<JoinHandle<()>> {
         let udp_stop = stop.clone();
         let tcp_stop = stop.clone();
-        let permits = Arc::new(Semaphore::new(MAX_PENDING));
         let udp = Arc::new(self.udp);
         let tcp = self.tcp;
         let udp_queries = queries.clone();
@@ -102,11 +113,11 @@ impl BoundSockets {
                         let wire=buffer[..count].to_vec();
                         let permit=udp_permits.clone().try_acquire_owned();
                         if count>MAX_QUERY || permit.is_err(){
-                            if let Some(reply)=crate::dns::failure_wire(&wire,ErrorCode::QuotaExceeded){let _=udp.send_to(&reply,peer).await;}
+                            if let Some(reply)=crate::dns::failure_wire(&wire,ErrorCode::QuotaExceeded){send_datagram(&udp,&reply,peer).await;}
                             continue;
                         }
                         let permit=permit.expect("checked permit");let socket=udp.clone();let tx=udp_queries.clone();
-                        workers.spawn(async move{let _permit=permit;if let Some(reply)=ask(&tx,wire,false).await{let _=socket.send_to(&reply,peer).await;}});
+                        workers.spawn(async move{let _permit=permit;if let Some(reply)=ask(&tx,wire,false).await{send_datagram(&socket,&reply,peer).await;}});
                     }
                 }
             }
@@ -127,11 +138,51 @@ impl BoundSockets {
             }
             workers.shutdown().await;
         });
-        Frontend {
-            tasks: vec![udp_task, tcp_task],
-            stop,
-        }
+        vec![udp_task, tcp_task]
     }
+}
+
+impl BoundListeners {
+    pub async fn bind(addresses: &BridgeAddresses) -> Result<Self, ApiError> {
+        let first = BoundSockets::bind(addresses.v4.into(), 0).await?;
+        let second = if let Some(v6) = addresses.v6 {
+            Some(BoundSockets::bind(v6.into(), 0).await?)
+        } else {
+            None
+        };
+        let bindings = DnsBindings::new(
+            first.binding.clone(),
+            second.as_ref().map(|s| s.binding.clone()),
+        )?;
+        Ok(Self {
+            bindings,
+            sockets: std::iter::once(first).chain(second).collect(),
+        })
+    }
+    pub async fn rebind(bindings: &DnsBindings) -> Result<Self, ApiError> {
+        let mut sockets = Vec::new();
+        for binding in bindings.iter() {
+            sockets.push(BoundSockets::bind(binding.address(), binding.port()).await?);
+        }
+        Ok(Self {
+            bindings: bindings.clone(),
+            sockets,
+        })
+    }
+    pub fn serve(self, queries: mpsc::Sender<QueryRequest>) -> Frontend {
+        let stop = tokio_util::sync::CancellationToken::new();
+        let permits = Arc::new(Semaphore::new(MAX_PENDING));
+        let tasks = self
+            .sockets
+            .into_iter()
+            .flat_map(|socket| socket.spawn(queries.clone(), permits.clone(), &stop))
+            .collect();
+        Frontend { tasks, stop }
+    }
+}
+
+async fn send_datagram(socket: &UdpSocket, reply: &[u8], peer: SocketAddr) {
+    let _ = tokio::time::timeout(Duration::from_millis(250), socket.send_to(reply, peer)).await;
 }
 
 impl Frontend {
@@ -198,10 +249,10 @@ async fn connection(mut stream: TcpStream, queries: mpsc::Sender<QueryRequest>) 
     }
 }
 
-/// Read the address of exactly the already-verified bridge. No route, alias or
-/// host setting is changed. The kernel selects the sockaddr union member.
-pub(crate) fn bridge_address(bridge: &str) -> Result<Ipv4Addr, ApiError> {
-    use std::os::fd::AsRawFd;
+/// Read only the already-verified bridge. Multiple application addresses in
+/// either family refuse rather than choosing an ambiguous policy endpoint.
+pub(crate) fn bridge_addresses(bridge: &str) -> Result<BridgeAddresses, ApiError> {
+    use std::{collections::BTreeSet, ffi::CStr};
     if bridge.is_empty()
         || bridge.len() >= libc::IFNAMSIZ
         || !bridge
@@ -213,51 +264,86 @@ pub(crate) fn bridge_address(bridge: &str) -> Result<Ipv4Addr, ApiError> {
             "invalid bridge address query",
         ));
     }
-    let socket = std::net::UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).map_err(|_| {
-        error(
-            ErrorCode::BackendUnavailable,
-            "cannot open bridge address query",
-        )
-    })?;
-    // SAFETY: ifreq consists of C integer/byte/pointer fields; zero initializes
-    // a terminated name and a valid output buffer for SIOCGIFADDR.
-    let mut request: libc::ifreq = unsafe { std::mem::zeroed() };
-    for (dest, byte) in request.ifr_name.iter_mut().zip(bridge.bytes()) {
-        *dest = byte as libc::c_char;
+    struct Addresses(*mut libc::ifaddrs);
+    impl Drop for Addresses {
+        fn drop(&mut self) {
+            // SAFETY: this pointer is the successful getifaddrs allocation,
+            // exclusively owned here and released once after all reads end.
+            unsafe { libc::freeifaddrs(self.0) };
+        }
     }
-    // SAFETY: the live datagram descriptor and full writable ifreq buffer match
-    // the ioctl contract. This operation only reads one interface address.
-    // musl declares ioctl's operation as int, while glibc uses unsigned long.
-    // This fixed Linux operation (0x8915) fits both ABIs.
-    #[cfg(target_env = "musl")]
-    let operation = libc::SIOCGIFADDR as libc::c_int;
-    #[cfg(not(target_env = "musl"))]
-    let operation = libc::SIOCGIFADDR;
-    if unsafe { libc::ioctl(socket.as_raw_fd(), operation, &mut request) } != 0 {
+    let mut pointer = std::ptr::null_mut();
+    // SAFETY: getifaddrs initializes this output pointer; on success the libc
+    // owns every linked node, name and family-specific sockaddr until freed.
+    if unsafe { libc::getifaddrs(&mut pointer) } != 0 {
         return Err(error(
             ErrorCode::BackendUnavailable,
-            "owned bridge has no readable IPv4 address",
+            "cannot read owned bridge addresses",
         ));
     }
-    // SAFETY: the successful SIOCGIFADDR filled ifru_addr. Read a copied AF_INET
-    // sockaddr with unaligned access, then check the returned family.
-    let address = unsafe {
-        std::ptr::read_unaligned(
-            (&request.ifr_ifru.ifru_addr as *const libc::sockaddr).cast::<libc::sockaddr_in>(),
-        )
-    };
-    if i32::from(address.sin_family) != libc::AF_INET {
+    let _allocation = Addresses(pointer);
+    let mut v4 = BTreeSet::new();
+    let mut v6 = BTreeSet::new();
+    let mut count = 0;
+    while !pointer.is_null() {
+        count += 1;
+        if count > 16384 {
+            return Err(error(
+                ErrorCode::QuotaExceeded,
+                "interface address inventory exceeds limit",
+            ));
+        }
+        // SAFETY: pointer is a live node in the libc-owned linked list.
+        let node = unsafe { &*pointer };
+        if !node.ifa_name.is_null() && !node.ifa_addr.is_null()
+            // SAFETY: libc provides a terminated live interface name.
+            && unsafe { CStr::from_ptr(node.ifa_name) }.to_bytes() == bridge.as_bytes()
+        {
+            // SAFETY: a nonnull address has a readable family. The matching
+            // family guarantees a complete sockaddr_in/sockaddr_in6 buffer.
+            match i32::from(unsafe { (*node.ifa_addr).sa_family }) {
+                libc::AF_INET => {
+                    // SAFETY: the family is AF_INET; copy before list release.
+                    let address = unsafe {
+                        std::ptr::read_unaligned(node.ifa_addr.cast::<libc::sockaddr_in>())
+                    };
+                    v4.insert(Ipv4Addr::from(address.sin_addr.s_addr.to_ne_bytes()));
+                }
+                libc::AF_INET6 => {
+                    // SAFETY: the family is AF_INET6; copy before list release.
+                    let address = unsafe {
+                        std::ptr::read_unaligned(node.ifa_addr.cast::<libc::sockaddr_in6>())
+                    };
+                    let ip = Ipv6Addr::from(address.sin6_addr.s6_addr);
+                    if !ip.is_unicast_link_local()
+                        && !ip.is_unspecified()
+                        && !ip.is_loopback()
+                        && !ip.is_multicast()
+                        && ip.to_ipv4_mapped().is_none()
+                    {
+                        v6.insert(ip);
+                    }
+                }
+                _ => {}
+            }
+        }
+        pointer = node.ifa_next;
+    }
+    if v4.len() != 1 || v6.len() > 1 {
         return Err(error(
-            ErrorCode::BackendUnavailable,
-            "owned bridge address family differs",
+            ErrorCode::Conflict,
+            "owned bridge addresses are missing or ambiguous",
         ));
     }
-    Ok(Ipv4Addr::from(address.sin_addr.s_addr.to_ne_bytes()))
+    Ok(BridgeAddresses {
+        v4: v4.into_iter().next().expect("one IPv4 address"),
+        v6: v6.into_iter().next(),
+    })
 }
 
 pub fn channel() -> (mpsc::Sender<QueryRequest>, mpsc::Receiver<QueryRequest>) {
     mpsc::channel(MAX_PENDING)
 }
 pub fn endpoint(binding: &DnsBinding) -> SocketAddr {
-    SocketAddr::new(binding.address().into(), binding.port())
+    SocketAddr::new(binding.address(), binding.port())
 }

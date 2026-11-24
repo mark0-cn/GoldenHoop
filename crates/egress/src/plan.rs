@@ -69,14 +69,18 @@ pub struct Config {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct DnsBinding {
-    pub(crate) address: std::net::Ipv4Addr,
+    pub(crate) address: std::net::IpAddr,
     pub(crate) port: u16,
 }
 impl DnsBinding {
-    pub fn new(address: std::net::Ipv4Addr, port: u16) -> Result<Self, ApiError> {
+    pub fn new(address: impl Into<std::net::IpAddr>, port: u16) -> Result<Self, ApiError> {
+        let address = address.into();
         if address.is_unspecified()
             || address.is_loopback()
             || address.is_multicast()
+            || address.to_canonical() != address
+            || matches!(address, std::net::IpAddr::V4(ip) if ip.is_broadcast())
+            || matches!(address, std::net::IpAddr::V6(ip) if ip.is_unicast_link_local())
             || port < 1024
         {
             return Err(error(
@@ -86,11 +90,31 @@ impl DnsBinding {
         }
         Ok(Self { address, port })
     }
-    pub fn address(&self) -> std::net::Ipv4Addr {
+    pub fn address(&self) -> std::net::IpAddr {
         self.address
     }
     pub fn port(&self) -> u16 {
         self.port
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DnsBindings {
+    pub(crate) v4: DnsBinding,
+    pub(crate) v6: Option<DnsBinding>,
+}
+impl DnsBindings {
+    pub fn new(v4: DnsBinding, v6: Option<DnsBinding>) -> Result<Self, ApiError> {
+        if !v4.address.is_ipv4() || v6.as_ref().is_some_and(|b| !b.address.is_ipv6()) {
+            return Err(error(
+                ErrorCode::InvalidRequest,
+                "DNS listener families differ",
+            ));
+        }
+        Ok(Self { v4, v6 })
+    }
+    pub fn iter(&self) -> impl Iterator<Item = &DnsBinding> {
+        std::iter::once(&self.v4).chain(self.v6.iter())
     }
 }
 
@@ -130,7 +154,7 @@ impl Plan {
     pub fn quarantine_with_binding(
         allocation: Allocation,
         revision: u64,
-        binding: Option<&DnsBinding>,
+        binding: Option<&DnsBindings>,
     ) -> Result<Self, ApiError> {
         allocation.validate()?;
         let mut p = Self {
@@ -156,7 +180,7 @@ impl Plan {
         allocation: Allocation,
         revision: u64,
         config: &Config,
-        binding: Option<&DnsBinding>,
+        binding: Option<&DnsBindings>,
     ) -> Result<Self, ApiError> {
         Self::compile_mode(
             allocation,
@@ -172,7 +196,7 @@ impl Plan {
         revision: u64,
         config: &Config,
         dns: Option<SetNames>,
-        binding: Option<&DnsBinding>,
+        binding: Option<&DnsBindings>,
     ) -> Result<Self, ApiError> {
         allocation.validate()?;
         config.model()?;
@@ -340,7 +364,7 @@ impl Plan {
         Ok(())
     }
 
-    fn base(&mut self, binding: Option<&DnsBinding>, ready: bool) {
+    fn base(&mut self, binding: Option<&DnsBindings>, ready: bool) {
         let table = self.allocation.table();
         self.batch.push_str(&format!("add table inet {table}\n"));
         self.line("add chain", &self.allocation.owner_chain());
@@ -353,10 +377,36 @@ impl Plan {
             "add chain",
             "input { type filter hook input priority -190; policy accept; }",
         );
-        if let Some(listener) = binding {
+        // Scoped link-neighbor infrastructure, not an application permission.
+        // Router advertisements, redirects and other host input stay denied.
+        self.line("add rule", &format!("input meta iif {} ip6 hoplimit 255 icmpv6 type {{ nd-neighbor-solicit, nd-neighbor-advert }} icmpv6 code 0 counter accept",self.allocation.ifindex));
+        if binding.is_some() && ready {
+            self.line(
+                "add chain",
+                "dns_pre { type nat hook prerouting priority -110; policy accept; }",
+            );
+            self.line(
+                "add chain",
+                "dns_out { type nat hook output priority -110; policy accept; }",
+            );
+        }
+        for listener in binding.into_iter().flat_map(DnsBindings::iter) {
+            let (family, nfproto, destination) = if listener.address.is_ipv4() {
+                (
+                    "ip",
+                    "ipv4",
+                    format!("{}:{}", listener.address, listener.port),
+                )
+            } else {
+                (
+                    "ip6",
+                    "ipv6",
+                    format!("[{}]:{}", listener.address, listener.port),
+                )
+            };
             for protocol in ["udp", "tcp"] {
                 let endpoint = format!(
-                    "ip daddr {} {protocol} dport {}",
+                    "{family} daddr {} {protocol} dport {}",
                     listener.address, listener.port
                 );
                 if ready {
@@ -373,23 +423,13 @@ impl Plan {
                     );
                 }
                 self.line("add rule", &format!("input {endpoint} counter drop"));
-            }
-            if ready {
-                self.line(
-                    "add chain",
-                    "dns_pre { type nat hook prerouting priority -110; policy accept; }",
-                );
-                self.line(
-                    "add chain",
-                    "dns_out { type nat hook output priority -110; policy accept; }",
-                );
-                for protocol in ["udp", "tcp"] {
-                    self.line("add rule",&format!("dns_pre meta nfproto ipv4 meta iif {} {protocol} dport 53 dnat ip to {}:{}",self.allocation.ifindex,listener.address,listener.port));
+                if ready {
+                    self.line("add rule",&format!("dns_pre meta nfproto {nfproto} meta iif {} {protocol} dport 53 dnat {family} to {destination}",self.allocation.ifindex));
                     self.line(
                         "add rule",
                         &format!(
-                            "dns_out ip daddr {} {protocol} dport 53 dnat ip to {}:{}",
-                            listener.address, listener.address, listener.port
+                            "dns_out {family} daddr {} {protocol} dport 53 dnat {family} to {destination}",
+                            listener.address
                         ),
                     );
                 }

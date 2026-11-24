@@ -4,7 +4,7 @@ pub mod dns;
 mod ethernet;
 pub use ethernet::EthernetPlan;
 mod plan;
-pub use plan::{Allocation, Config, DnsBinding, LEASE_SECONDS, Plan};
+pub use plan::{Allocation, Config, DnsBinding, DnsBindings, LEASE_SECONDS, Plan};
 #[cfg(target_os = "linux")]
 pub mod frontend;
 

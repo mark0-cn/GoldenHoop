@@ -3,7 +3,7 @@ SYSTEM_RESOLVER = r'''
 import json,os,socket,sys
 name=sys.argv[1]
 try:
- addresses=sorted({row[4][0] for row in socket.getaddrinfo(name,19001,family=socket.AF_INET,type=socket.SOCK_STREAM)})
+ addresses=sorted({row[4][0] for row in socket.getaddrinfo(name,19001,family=socket.AF_INET6 if len(sys.argv)>2 and sys.argv[2]=='6' else socket.AF_INET,type=socket.SOCK_STREAM)})
  result={'ok':True,'addresses':addresses}
 except socket.gaierror as error:result={'ok':False,'error':type(error).__name__,'code':error.errno}
 try:
@@ -38,7 +38,7 @@ try:
    if not 12<=size<=65535:raise ValueError('bad fixture DNS length')
    response=exact(stream,size)
  else:
-  with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as stream:
+  with socket.socket(socket.AF_INET6 if ':' in address else socket.AF_INET,socket.SOCK_DGRAM) as stream:
    stream.settimeout(3);stream.connect((address,int(port)));stream.send(wire);response=stream.recv(65535)
  identifier,flags,questions,answers,_,_=struct.unpack('!HHHHHH',response[:12]);cursor=12
  for _ in range(questions):cursor=skip_name(response,cursor)+4
@@ -46,6 +46,7 @@ try:
  for _ in range(answers):
   cursor=skip_name(response,cursor);kind,cls,ttl,size=struct.unpack('!HHIH',response[cursor:cursor+10]);cursor+=10
   if kind==1 and cls==1 and size==4:addresses.append(socket.inet_ntoa(response[cursor:cursor+size]))
+  if kind==28 and cls==1 and size==16:addresses.append(socket.inet_ntop(socket.AF_INET6,response[cursor:cursor+size]))
   cursor+=size
  assert identifier==71
  print(json.dumps({'ok':True,'rcode':flags&15,'answers':answers,'addresses':addresses}))

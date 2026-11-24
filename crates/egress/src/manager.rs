@@ -124,6 +124,19 @@ impl Manager {
                 "bridge allocation identity changed",
             ));
         }
+        if let Some(bindings) = self.dns.as_ref().and_then(|s| s.binding.as_ref()) {
+            let addresses = crate::frontend::bridge_addresses(&self.allocation.bridge)?;
+            let observed = std::iter::once(std::net::IpAddr::V4(addresses.v4))
+                .chain(addresses.v6.map(std::net::IpAddr::V6))
+                .collect::<std::collections::BTreeSet<_>>();
+            let bound = bindings
+                .iter()
+                .map(|b| b.address())
+                .collect::<std::collections::BTreeSet<_>>();
+            if observed != bound {
+                return Err(error(ErrorCode::Conflict, "bound bridge addresses changed"));
+            }
+        }
         Ok(())
     }
 
