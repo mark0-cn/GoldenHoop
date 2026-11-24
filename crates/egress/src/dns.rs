@@ -2,6 +2,8 @@
 //! does not bind a workload DNS server or implement a kernel grant installer.
 mod upstream;
 pub use upstream::Upstream;
+mod leases;
+pub use leases::{Authority, KernelLease, LeaseBook, LeaseTransaction};
 
 use crate::error;
 use goldenhoop_policy::{DecisionOrigin, Domain, Model};
@@ -28,6 +30,7 @@ pub struct Request {
     client_id: u16,
     upstream_id: u16,
     lookup_id: uuid::Uuid,
+    started_at: Instant,
     query: Query,
     source: Domain,
     revision: u64,
@@ -40,6 +43,7 @@ impl Request {
     /// A denied name never becomes an upstream request. IP/port-only policies
     /// cannot create DNS authority via the model's name decision.
     pub fn parse(bytes: &[u8], model: &Model, revision: u64) -> Result<Self, ApiError> {
+        let started_at = Instant::now();
         let msg = decode(bytes, MAX_QUERY)?;
         if msg.metadata.message_type != MessageType::Query
             || msg.metadata.op_code != OpCode::Query
@@ -77,6 +81,7 @@ impl Request {
             client_id: msg.metadata.id,
             upstream_id: u16::from_be_bytes([random.as_bytes()[0], random.as_bytes()[1]]),
             lookup_id: random,
+            started_at,
             query: Query::query(name, query.query_type),
             source,
             revision,
@@ -115,6 +120,12 @@ impl Request {
     }
 
     pub fn prepare(&self, bytes: &[u8]) -> Result<PendingAnswer, ApiError> {
+        if Instant::now() >= self.upstream_deadline() {
+            return Err(error(
+                ErrorCode::DeadlineExceeded,
+                "DNS lookup freshness window elapsed",
+            ));
+        }
         let response = self.response(bytes)?;
         if response.metadata.truncation
             || !matches!(
@@ -138,6 +149,7 @@ impl Request {
         let now = Instant::now();
         let grant = GrantRequest {
             lookup_id: self.lookup_id,
+            lookup_deadline: self.started_at + Duration::from_secs(6),
             revision: self.revision,
             source: self.source.clone(),
             origin: self.origin,
@@ -169,11 +181,16 @@ impl Request {
             udp_limit: usize::from(self.edns_payload.unwrap_or(512)),
         })
     }
+
+    fn upstream_deadline(&self) -> Instant {
+        self.started_at + Duration::from_secs(3)
+    }
 }
 
 #[derive(Debug)]
 pub struct GrantRequest {
     lookup_id: uuid::Uuid,
+    lookup_deadline: Instant,
     revision: u64,
     source: Domain,
     origin: DecisionOrigin,
@@ -183,6 +200,9 @@ pub struct GrantRequest {
 impl GrantRequest {
     pub fn lookup_id(&self) -> uuid::Uuid {
         self.lookup_id
+    }
+    pub fn lookup_deadline(&self) -> Instant {
+        self.lookup_deadline
     }
     pub fn revision(&self) -> u64 {
         self.revision
@@ -239,6 +259,13 @@ impl PendingAnswer {
                 .expires_at
                 .min(Instant::now() + Duration::from_secs(3))
         };
+        let deadline = deadline.min(self.grant.lookup_deadline);
+        if Instant::now() >= deadline {
+            return Err(error(
+                ErrorCode::DeadlineExceeded,
+                "DNS lookup is too old to install",
+            ));
+        }
         let receipt = tokio::time::timeout_at(deadline.into(), installer.install(&self.grant))
             .await
             .map_err(|_| {
@@ -390,4 +417,60 @@ fn chain(
         return Err(bad());
     }
     Ok((records, addresses.into_iter().collect(), ttl))
+}
+
+#[cfg(test)]
+mod freshness_tests {
+    use super::*;
+    struct MustNotInstall;
+    #[async_trait::async_trait]
+    impl GrantInstaller for MustNotInstall {
+        async fn install(&mut self, _: &GrantRequest) -> Result<GrantReceipt, ApiError> {
+            panic!("expired lookup reached the installer");
+        }
+    }
+
+    #[tokio::test]
+    async fn held_requests_cannot_forward_reprepare_or_install_after_lookup_expiry() {
+        let model = Model::new(
+            vec![
+                goldenhoop_policy::Policy::compile(&goldenhoop_protocol::NetworkPolicy {
+                    default_action: NetworkAction::Allow,
+                    rules: vec![],
+                })
+                .unwrap(),
+            ],
+            goldenhoop_policy::Overlays::default(),
+        )
+        .unwrap();
+        let mut query = Message::query();
+        query.queries.push(Query::query(
+            Name::from_ascii("valid.test.").unwrap(),
+            RecordType::A,
+        ));
+        let mut request = Request::parse(&query.to_vec().unwrap(), &model, 9).unwrap();
+        let mut response = Message::response(request.upstream_id, OpCode::Query);
+        response.queries.push(request.query.clone());
+        response.answers.push(Record::from_rdata(
+            request.query.name.clone(),
+            60,
+            RData::A(hickory_proto::rr::rdata::A("192.0.2.1".parse().unwrap())),
+        ));
+        let bytes = response.to_vec().unwrap();
+        let mut pending = request.prepare(&bytes).unwrap();
+        pending.grant.lookup_deadline = Instant::now() - Duration::from_secs(1);
+        assert!(
+            matches!(pending.finish(&mut MustNotInstall,true).await,Err(e) if e.code==ErrorCode::DeadlineExceeded)
+        );
+        request.started_at = Instant::now() - Duration::from_secs(4);
+        assert!(matches!(request.prepare(&bytes),Err(e) if e.code==ErrorCode::DeadlineExceeded));
+        let upstream = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        assert!(
+            matches!(Upstream::new(upstream.local_addr().unwrap()).unwrap().exchange(&request).await,Err(e) if e.code==ErrorCode::DeadlineExceeded)
+        );
+        assert_eq!(
+            upstream.try_recv_from(&mut [0; 512]).unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+    }
 }

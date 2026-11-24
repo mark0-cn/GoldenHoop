@@ -20,9 +20,18 @@ impl Upstream {
     }
 
     pub async fn exchange(&self, request: &Request) -> Result<PendingAnswer, ApiError> {
-        tokio::time::timeout(Duration::from_secs(3), self.exchange_inner(request))
-            .await
-            .map_err(|_| error(ErrorCode::DeadlineExceeded, "DNS upstream deadline elapsed"))?
+        if Instant::now() >= request.upstream_deadline() {
+            return Err(error(
+                ErrorCode::DeadlineExceeded,
+                "DNS lookup is too old to forward",
+            ));
+        }
+        tokio::time::timeout_at(
+            request.upstream_deadline().into(),
+            self.exchange_inner(request),
+        )
+        .await
+        .map_err(|_| error(ErrorCode::DeadlineExceeded, "DNS upstream deadline elapsed"))?
     }
 
     async fn exchange_inner(&self, request: &Request) -> Result<PendingAnswer, ApiError> {
