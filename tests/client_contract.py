@@ -11,12 +11,88 @@ from pathlib import Path, PurePosixPath
 from uuid import uuid4
 
 import httpx
-from goldenhoop import ApiError, AsyncClient, Client, Command, CreateSandbox, CreateArtifact, WaitTimeout
+from goldenhoop import ApiError, AsyncClient, Client, Command, CreateSandbox, CreateArtifact, WaitTimeout, SessionSpec, SessionControl
 
 ENDPOINT = os.environ["GOLDENHOOP_ENDPOINT"]
 TOKEN = os.environ["GOLDENHOOP_API_TOKEN"]
 REQUEST = CreateSandbox(os.environ["GOLDENHOOP_TEST_PROFILE"], os.environ["GOLDENHOOP_TEST_IMAGE"], ttl_seconds=120)
 BINARY = b"\x00\xff\x80hello\n"
+
+
+PTY_CODE = (
+    "import os,sys,tty,termios; assert all(os.isatty(fd) for fd in (0,1,2)); "
+    "tty.setraw(0); print('READY',flush=True); data=sys.stdin.buffer.read(3); "
+    "assert data==b'\\x00\\xff\\n'; assert termios.tcgetwinsize(0)==(40,100); print('BIN:'+data.hex(),flush=True)"
+)
+
+
+def sync_sessions(client, sid):
+    shell = client.create_session(sid, SessionSpec(), str(uuid4()))
+    eid = shell["execution"]["id"]
+    first = SessionControl.write(1, b"v=sync; printf 'READY\\n'\n")
+    client.session_control(eid, first)
+    assert client.wait_session_control(eid, 1)["state"] == "applied"
+    with closing(client.events(eid)) as stream:
+        cursor = next(event["sequence"] for event in stream if event["kind"] == "stdout")
+    second = SessionControl.write(2, b"printf '%s' \"$v\" >> /workspace/sync-session\n")
+    client.session_control(eid, second)
+    assert client.wait_session_control(eid, 2)["state"] == "applied"
+    assert client.session_control(eid, second)["state"] == "applied"
+    client.session_control(eid, SessionControl.close_input(3))
+    assert client.wait_execution(eid)["state"] == "succeeded"
+    assert client.read_file(sid, "sync-session") == b"sync"
+    with closing(client.events(eid, cursor)) as stream:
+        events = list(stream)
+    assert events[0]["sequence"] == cursor + 1 and events[-1]["kind"] == "completed"
+    spec = SessionSpec(Command(["python3", "-c", PTY_CODE]), {"rows": 24, "columns": 80})
+    eid = client.create_session(sid, spec, str(uuid4()))["execution"]["id"]
+    with closing(client.events(eid)) as stream:
+        next(event for event in stream if event["kind"] == "stdout")
+    client.session_control(eid, SessionControl.resize(1, 40, 100))
+    assert client.wait_session_control(eid, 1)["state"] == "applied"
+    client.session_control(eid, SessionControl.write(2, b"\x00\xff\n"))
+    assert client.wait_execution(eid)["state"] == "succeeded"
+    with closing(client.events(eid)) as stream:
+        events = list(stream)
+    assert b"BIN:00ff0a\n" in b"".join(base64.b64decode(event["data"]["data"]) for event in events if event["kind"] == "stdout")
+    assert client.session(eid)["execution"]["state"] == "succeeded"
+    assert any(item["execution"]["id"] == eid for item in client.list_sessions(sid)["items"])
+
+
+async def async_sessions(client, sid):
+    eid = (await client.create_session(sid, SessionSpec(), str(uuid4())))["execution"]["id"]
+    await client.session_control(eid, SessionControl.write(1, b"v=async; printf 'READY\\n'\n"))
+    assert (await client.wait_session_control(eid, 1))["state"] == "applied"
+    async with aclosing(client.events(eid)) as stream:
+        async for event in stream:
+            if event["kind"] == "stdout":
+                cursor = event["sequence"]
+                break
+    second = SessionControl.write(2, b"printf '%s' \"$v\" >> /workspace/async-session\n")
+    await client.session_control(eid, second)
+    assert (await client.wait_session_control(eid, 2))["state"] == "applied"
+    assert (await client.session_control(eid, second))["state"] == "applied"
+    await client.session_control(eid, SessionControl.close_input(3))
+    assert (await client.wait_execution(eid))["state"] == "succeeded"
+    assert await client.read_file(sid, "async-session") == b"async"
+    async with aclosing(client.events(eid, cursor)) as stream:
+        events = [event async for event in stream]
+    assert events[0]["sequence"] == cursor + 1 and events[-1]["kind"] == "completed"
+    spec = SessionSpec(Command(["python3", "-c", PTY_CODE]), {"rows": 24, "columns": 80})
+    eid = (await client.create_session(sid, spec, str(uuid4())))["execution"]["id"]
+    async with aclosing(client.events(eid)) as stream:
+        async for event in stream:
+            if event["kind"] == "stdout":
+                break
+    await client.session_control(eid, SessionControl.resize(1, 40, 100))
+    assert (await client.wait_session_control(eid, 1))["state"] == "applied"
+    await client.session_control(eid, SessionControl.write(2, b"\x00\xff\n"))
+    assert (await client.wait_execution(eid))["state"] == "succeeded"
+    async with aclosing(client.events(eid)) as stream:
+        events = [event async for event in stream]
+    assert b"BIN:00ff0a\n" in b"".join(base64.b64decode(event["data"]["data"]) for event in events if event["kind"] == "stdout")
+    assert (await client.session(eid))["execution"]["state"] == "succeeded"
+    assert any(item["execution"]["id"] == eid for item in (await client.list_sessions(sid))["items"])
 
 
 def sync_contract():
@@ -62,6 +138,7 @@ def sync_contract():
             assert events and events[0]["sequence"] == cursor + 1 and events[-1]["kind"] == "completed"
             for action in (client.pause, client.resume):
                 client.wait_operation(action(sid, str(uuid4()))["id"])
+            sync_sessions(client, sid)
             artifact = client.capture_artifact(sid, CreateArtifact("python.bin", "python-sdk.bin"))
             assert any(item["id"] == artifact["id"] for item in client.list_artifacts(sid)["items"])
             client.remove_file(sid, "python.bin")
@@ -105,6 +182,7 @@ async def async_contract():
             execution = await client.start(sid, Command(["sleep", "30"]), str(uuid4()))
             await client.cancel(execution["id"])
             assert (await client.wait_execution(execution["id"]))["state"] == "cancelled"
+            await async_sessions(client, sid)
             artifact = await client.capture_artifact(sid, CreateArtifact("async.bin", "async-sdk.bin"))
             assert any(item["id"] == artifact["id"] for item in (await client.list_artifacts(sid))["items"])
         assert (await client.sandbox(sid))["cleanup"] == "complete"
@@ -159,6 +237,39 @@ def cli_contract(binary):
             invoke("file-put", sid, str(source), "cli.bin")
             invoke("file-get", sid, "cli.bin", str(destination))
             assert destination.read_bytes() == BINARY
+            shell = json.loads(invoke("session-create", sid))
+            shell_id = shell["execution"]["id"]
+            session_input = directory / "session-input.bin"
+            session_input.write_bytes(b"v=cli; printf 'READY\\n'\n")
+            assert json.loads(invoke("session-write", shell_id, "1", str(session_input)))["state"] == "applied"
+            session_input.write_bytes(b"printf '%s' \"$v\" >> /workspace/cli-session\n")
+            invoke("session-write", shell_id, "2", str(session_input))
+            invoke("session-write", shell_id, "2", str(session_input))
+            rejected = json.loads(invoke("session-resize", shell_id, "3", "40", "100", expected=125))
+            assert rejected["state"] == "rejected" and rejected["error"]["code"] == "unsupported_capability"
+            invoke("session-close-input", shell_id, "4")
+            events = [json.loads(line) for line in invoke("session-events", shell_id).splitlines()]
+            assert events[-1]["kind"] == "completed" and events[-1]["data"]["cleanup"] == "complete"
+            assert json.loads(invoke("session-get", shell_id))["execution"]["state"] == "succeeded"
+            assert json.loads(invoke("session-receipt", shell_id, "3"))["state"] == "rejected"
+            assert any(item["execution"]["id"] == shell_id for item in json.loads(invoke("session-list", "--sandbox", sid))["items"])
+            retained = directory / "retained-shell.bin"
+            invoke("file-get", sid, "cli-session", str(retained))
+            assert retained.read_bytes() == b"cli"
+            terminal = json.loads(invoke("session-create", sid, "--pty", "--timeout", "30", "--", "python3", "-c", PTY_CODE))
+            terminal_id = terminal["execution"]["id"]
+            # Observe readiness before sending bytes: tty.setraw flushes earlier input.
+            with Client(ENDPOINT, TOKEN) as observer:
+                with closing(observer.events(terminal_id)) as stream:
+                    next(event for event in stream if event["kind"] == "stdout")
+            invoke("session-resize", terminal_id, "1", "40", "100")
+            rejected = json.loads(invoke("session-close-input", terminal_id, "2", expected=125))
+            assert rejected["state"] == "rejected"
+            session_input.write_bytes(b"\x00\xff\n")
+            invoke("session-write", terminal_id, "3", str(session_input))
+            events = [json.loads(line) for line in invoke("session-events", terminal_id).splitlines()]
+            assert events[-1]["kind"] == "completed" and events[-1]["data"]["state"] == "succeeded"
+            assert b"BIN:00ff0a\n" in b"".join(base64.b64decode(event["data"]["data"]) for event in events if event["kind"] == "stdout")
             invoke("file-get", sid, "cli.bin", str(destination), expected=125)
             assert destination.read_bytes() == BINARY
             artifact = json.loads(invoke("artifact-capture", sid, "cli.bin", "--name", "cli-artifact.bin"))

@@ -6,6 +6,7 @@ use std::{
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use clap::{Parser, Subcommand};
+use futures_util::StreamExt;
 use goldenhoop_client::*;
 use uuid::Uuid;
 
@@ -142,6 +143,60 @@ enum Command {
         #[arg(long)]
         idempotency_key: Option<String>,
     },
+    SessionCreate {
+        sandbox: Uuid,
+        #[arg(long)]
+        pty: bool,
+        #[arg(long, default_value_t = 24)]
+        rows: u16,
+        #[arg(long, default_value_t = 80)]
+        columns: u16,
+        #[arg(long, default_value_t = 300)]
+        timeout: u64,
+        #[arg(long, default_value = "/workspace")]
+        cwd: String,
+        #[arg(long)]
+        idempotency_key: Option<String>,
+        #[arg(last = true)]
+        argv: Vec<String>,
+    },
+    SessionGet {
+        id: Uuid,
+    },
+    SessionList {
+        #[arg(long)]
+        sandbox: Option<Uuid>,
+        #[arg(long)]
+        after: Option<Uuid>,
+        #[arg(long, default_value_t = 100)]
+        limit: u32,
+    },
+    /// Submit at most 64 KiB from a file, or - for stdin. This acknowledges delivery.
+    SessionWrite {
+        id: Uuid,
+        sequence: u64,
+        local: PathBuf,
+    },
+    SessionCloseInput {
+        id: Uuid,
+        sequence: u64,
+    },
+    SessionResize {
+        id: Uuid,
+        sequence: u64,
+        rows: u16,
+        columns: u16,
+    },
+    SessionReceipt {
+        id: Uuid,
+        sequence: u64,
+    },
+    /// Emit durable events as JSON lines; EOF without completion is an error.
+    SessionEvents {
+        id: Uuid,
+        #[arg(long, default_value_t = 0)]
+        after: u64,
+    },
 }
 
 type CliResult<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -149,10 +204,60 @@ type CliResult<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 fn print_json(value: &impl serde::Serialize) -> CliResult<()> {
     serde_json::to_writer(std::io::stdout().lock(), value)?;
     println!();
+    std::io::stdout().flush()?;
     Ok(())
 }
 fn key(key: Option<String>) -> String {
     key.unwrap_or_else(|| Uuid::new_v4().to_string())
+}
+
+async fn submit_control(client: &Client, id: Uuid, control: SessionControl) -> CliResult<u8> {
+    eprintln!("session_id={id} control_sequence={}", control.sequence);
+    client.session_control(id, &control).await?;
+    let receipt = client
+        .wait_session_control(id, control.sequence, Duration::from_secs(30))
+        .await?;
+    print_json(&receipt)?;
+    Ok(if receipt.state == SessionControlState::Applied {
+        0
+    } else {
+        125
+    })
+}
+
+async fn session_events(client: &Client, id: Uuid, mut cursor: u64) -> CliResult<()> {
+    eprintln!("session_id={id} after={cursor}");
+    for _ in 0..3 {
+        let mut events = match client.events(id, Some(cursor)).await {
+            Ok(events) => events,
+            Err(Error::Transport) => continue,
+            Err(error) => return Err(error.into()),
+        };
+        while let Some(event) = events.next().await {
+            let event = match event {
+                Ok(event) => event,
+                Err(Error::Transport) => break,
+                Err(error) => return Err(error.into()),
+            };
+            if event.kind == EventKind::Completed {
+                let execution: Execution = serde_json::from_value(event.data.clone())?;
+                if execution.id != id
+                    || !execution.state.is_terminal()
+                    || execution.cleanup != CleanupState::Complete
+                    || execution.finished_at.is_none()
+                    || (execution.state == ExecutionState::Succeeded
+                        && execution.exit_code != Some(0))
+                {
+                    return Err(Error::Protocol("invalid session completion").into());
+                }
+                print_json(&event)?;
+                return Ok(());
+            }
+            cursor = event.sequence;
+            print_json(&event)?;
+        }
+    }
+    Err(format!("session {id} output ended without completion; resume after={cursor}; the session was not cancelled").into())
 }
 
 async fn run(args: Args) -> CliResult<u8> {
@@ -239,6 +344,100 @@ async fn run(args: Args) -> CliResult<u8> {
         Command::Operation { id } => print_json(&client.operation(id).await?)?,
         Command::Execution { id } => print_json(&client.execution(id).await?)?,
         Command::Cancel { id } => print_json(&client.cancel(id).await?)?,
+        Command::SessionCreate {
+            sandbox,
+            pty,
+            rows,
+            columns,
+            timeout,
+            cwd,
+            idempotency_key,
+            argv,
+        } => {
+            let key = key(idempotency_key);
+            eprintln!("idempotency_key={key}");
+            let mut spec = SessionSpec::shell();
+            if !argv.is_empty() {
+                spec.command.argv = argv;
+            }
+            spec.command.timeout_seconds = timeout;
+            spec.command.cwd = cwd;
+            if pty {
+                spec.terminal = Some(TerminalSize { rows, columns });
+            } else if rows != 24 || columns != 80 {
+                return Err("terminal size requires --pty".into());
+            }
+            let session = client.create_session(sandbox, &spec, &key).await?;
+            eprintln!("session_id={}", session.execution.id);
+            print_json(&session)?;
+        }
+        Command::SessionGet { id } => print_json(&client.session(id).await?)?,
+        Command::SessionList {
+            sandbox,
+            after,
+            limit,
+        } => print_json(&client.list_sessions(sandbox, after, limit).await?)?,
+        Command::SessionWrite {
+            id,
+            sequence,
+            local,
+        } => {
+            let mut bytes = Vec::new();
+            if local == std::path::Path::new("-") {
+                std::io::stdin().take(65537).read_to_end(&mut bytes)?;
+            } else {
+                std::fs::File::open(local)?
+                    .take(65537)
+                    .read_to_end(&mut bytes)?;
+            }
+            if bytes.len() > 65536 {
+                return Err("session input exceeds 64 KiB".into());
+            }
+            return submit_control(
+                &client,
+                id,
+                SessionControl {
+                    sequence,
+                    action: SessionAction::Write {
+                        data_base64: STANDARD.encode(bytes),
+                    },
+                },
+            )
+            .await;
+        }
+        Command::SessionCloseInput { id, sequence } => {
+            return submit_control(
+                &client,
+                id,
+                SessionControl {
+                    sequence,
+                    action: SessionAction::CloseInput,
+                },
+            )
+            .await;
+        }
+        Command::SessionResize {
+            id,
+            sequence,
+            rows,
+            columns,
+        } => {
+            return submit_control(
+                &client,
+                id,
+                SessionControl {
+                    sequence,
+                    action: SessionAction::Resize {
+                        size: TerminalSize { rows, columns },
+                    },
+                },
+            )
+            .await;
+        }
+        Command::SessionReceipt { id, sequence } => {
+            print_json(&client.session_control_status(id, sequence).await?)?
+        }
+        Command::SessionEvents { id, after } => session_events(&client, id, after).await?,
         Command::Exec {
             sandbox,
             timeout,

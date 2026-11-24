@@ -16,6 +16,7 @@ from ._protocol import (
     check_created, check_record, decode_json, endpoint, identity, key_headers,
 )
 from ._protocol import ArtifactError, CreateArtifact, check_artifact_bytes, check_artifact_created
+from ._protocol import SessionSpec, SessionControl, SessionControlError, check_session, check_session_receipt
 
 
 class AsyncClient:
@@ -212,6 +213,55 @@ class AsyncClient:
 
     def lease(self, request: CreateSandbox | Json) -> AsyncSandboxLease:
         return AsyncSandboxLease(self, request)
+
+    async def create_session(self, sandbox_id: str, request: SessionSpec | Json, key: str) -> Json:
+        sid, request = identity(sandbox_id), body(request)
+        return check_session(await self._request("POST", f"v1/sandboxes/{sid}/sessions", request, key=key), sandbox_id=sid, request=request)
+
+    async def session(self, execution_id: str) -> Json:
+        eid = identity(execution_id)
+        return check_session(await self._request("GET", f"v1/sessions/{eid}"), execution_id=eid)
+
+    async def list_sessions(self, sandbox_id: str | None = None, after: str | None = None, limit: int = 100) -> Json:
+        params = {"limit": limit}
+        if sandbox_id is not None:
+            params["sandbox_id"] = identity(sandbox_id)
+        if after is not None:
+            params["after"] = identity(after)
+        return await self._request("GET", "v1/sessions", params=params)
+
+    async def session_control(self, execution_id: str, control: SessionControl | Json) -> Json:
+        eid, request = identity(execution_id), body(control)
+        sequence = request.get("sequence")
+        try:
+            return check_session_receipt(await self._request("POST", f"v1/sessions/{eid}/controls", request), eid, sequence)
+        except asyncio.CancelledError as error:
+            error.add_note(f"session {eid} control {sequence} may have been accepted; replay only the same sequence and content")
+            raise
+        except Error as error:
+            raise SessionControlError(eid, sequence, error) from error
+
+    async def session_control_status(self, execution_id: str, sequence: int) -> Json:
+        eid = identity(execution_id)
+        return check_session_receipt(await self._request("GET", f"v1/sessions/{eid}/controls/{sequence}"), eid, sequence)
+
+    async def wait_session_control(self, execution_id: str, sequence: int, timeout: float = 30) -> Json:
+        eid = identity(execution_id)
+        async def poll():
+            while True:
+                value = await self.session_control_status(eid, sequence)
+                if value["state"] != "pending":
+                    return value
+                await asyncio.sleep(.1)
+        try:
+            return await asyncio.wait_for(poll(), timeout)
+        except asyncio.CancelledError as error:
+            error.add_note(f"session {eid} control {sequence} was not cancelled; inspect its receipt")
+            raise
+        except TimeoutError:
+            raise SessionControlError(eid, sequence, WaitTimeout(eid)) from None
+        except Error as error:
+            raise SessionControlError(eid, sequence, error) from error
 
     async def create_artifact(self, sandbox_id: str, request: CreateArtifact | Json, key: str) -> Json:
         sid, request = identity(sandbox_id), body(request)

@@ -7,6 +7,8 @@ import httpx
 
 from goldenhoop import AsyncClient, Client, Command, ObservationError, ProtocolError, WaitTimeout
 from goldenhoop._protocol import SseDecoder, TransportError
+from goldenhoop import SessionControl, SessionSpec
+from goldenhoop._protocol import body, check_session, check_session_receipt
 
 TOKEN = "test-credential-0000000000000000000000000"
 
@@ -22,6 +24,21 @@ def frame(eid, sequence, kind, data):
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_session_receipts_and_nested_spec_identity_are_validated(self):
+        sid, eid = str(uuid4()), str(uuid4())
+        spec = body(SessionSpec())
+        record = {"execution": execution(sid, eid), "spec": spec}
+        check_session(record, execution_id=eid, sandbox_id=sid, request=spec)
+        self.assertEqual(body(SessionControl.write(1, b"\x00\xff"))["action"]["data_base64"], "AP8=")
+        receipt = {"execution_id": eid, "sequence": 1, "state": "applied", "error": None}
+        check_session_receipt(receipt, eid, 1)
+        for change in ({"execution_id": sid}, {"sequence": True}, {"state": "unknown"}, {"state": "unexpected"}):
+            with self.assertRaises(ProtocolError):
+                check_session_receipt(receipt | change, eid, 1)
+        altered = {"command": {"argv": ["different"]}, "terminal": None}
+        with self.assertRaises(ProtocolError):
+            check_session(record, sandbox_id=sid, request=altered)
+
     def test_partial_frames_commit_only_complete_cursor(self):
         eid = str(uuid4())
         raw = frame(eid, 1, "stdout", {"encoding": "base64", "data": "AP8="})
@@ -88,6 +105,25 @@ class ProtocolTests(unittest.TestCase):
 
 
 class AsyncProtocolTests(unittest.IsolatedAsyncioTestCase):
+    async def test_cancelled_session_submission_preserves_recovery_sequence(self):
+        eid, seen = str(uuid4()), asyncio.Event()
+        async def handler(request):
+            seen.set()
+            await asyncio.sleep(60)
+            return httpx.Response(202, json={})
+        async with AsyncClient("http://127.0.0.1", TOKEN) as client:
+            await client._http.aclose()
+            client._http = httpx.AsyncClient(base_url="http://127.0.0.1/", transport=httpx.MockTransport(handler))
+            task = asyncio.create_task(client.session_control(eid, SessionControl.write(1, b"echo once\n")))
+            await asyncio.wait_for(seen.wait(), 2)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError) as failure:
+                await task
+            notes = " ".join(failure.exception.__notes__)
+            self.assertIn(eid, notes)
+            self.assertIn("control 1", notes)
+            self.assertIn("same sequence and content", notes)
+
     async def test_async_clean_eof_is_not_success(self):
         sid, eid = str(uuid4()), str(uuid4())
         def handler(request):

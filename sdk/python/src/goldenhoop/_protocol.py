@@ -62,6 +62,12 @@ class ArtifactError(Error):
         super().__init__(f"artifact {artifact_id} operation failed: {error}")
 
 
+class SessionControlError(Error):
+    def __init__(self, execution_id: str, sequence: int, error: Error):
+        self.execution_id, self.sequence, self.error = execution_id, sequence, error
+        super().__init__(f"session {execution_id} control {sequence} could not be confirmed: {error}; replay only the same sequence and content")
+
+
 class CleanupError(Error):
     def __init__(self, sandbox_id: str, original: BaseException | None, error: BaseException):
         self.sandbox_id, self.original, self.error = sandbox_id, original, error
@@ -95,14 +101,70 @@ class CreateArtifact:
 
 
 @dataclass(frozen=True)
+class SessionSpec:
+    command: Command | Json = field(default_factory=lambda: Command(["/bin/sh"]))
+    terminal: dict[str, int] | None = None
+
+
+@dataclass(frozen=True)
+class SessionControl:
+    sequence: int
+    action: Json
+
+    @classmethod
+    def write(cls, sequence: int, data: bytes) -> SessionControl:
+        return cls(sequence, {"kind": "write", "data_base64": base64.b64encode(data).decode("ascii")})
+
+    @classmethod
+    def close_input(cls, sequence: int) -> SessionControl:
+        return cls(sequence, {"kind": "close_input"})
+
+    @classmethod
+    def resize(cls, sequence: int, rows: int, columns: int) -> SessionControl:
+        return cls(sequence, {"kind": "resize", "size": {"rows": rows, "columns": columns}})
+
+
+@dataclass(frozen=True)
 class RunOutput:
     execution: Json
     stdout: bytes
     stderr: bytes
 
 
-def body(value: CreateSandbox | Command | CreateArtifact | Json) -> Json:
-    return asdict(value) if isinstance(value, (CreateSandbox, Command, CreateArtifact)) else dict(value)
+def body(value: CreateSandbox | Command | CreateArtifact | SessionSpec | SessionControl | Json) -> Json:
+    return asdict(value) if isinstance(value, (CreateSandbox, Command, CreateArtifact, SessionSpec, SessionControl)) else dict(value)
+
+
+def check_session(value: Any, execution_id: str | None = None, sandbox_id: str | None = None, request: Json | None = None) -> Json:
+    try:
+        execution = value["execution"]
+        identity(execution["id"])
+        identity(execution["sandbox_id"])
+        if execution_id is not None:
+            check_record(execution, execution_id)
+        if sandbox_id is not None:
+            check_record(execution, sandbox_id, "sandbox_id")
+        if not isinstance(value["spec"], dict):
+            raise ProtocolError("invalid session specification")
+        if request is not None:
+            for field, expected in request.get("command", {}).items():
+                if value["spec"]["command"].get(field) != expected:
+                    raise ProtocolError("session command response mismatch")
+            if value["spec"].get("terminal") != request.get("terminal"):
+                raise ProtocolError("session terminal response mismatch")
+    except (KeyError, TypeError, AttributeError):
+        raise ProtocolError("invalid session response") from None
+    return value
+
+
+def check_session_receipt(value: Any, execution_id: str, sequence: int) -> Json:
+    if type(sequence) is not int or not 1 <= sequence <= 1024:
+        raise ProtocolError("invalid session control sequence")
+    check_record(value, execution_id, "execution_id")
+    if (type(value.get("sequence")) is not int or value.get("sequence") != sequence or value.get("state") not in {"pending", "applied", "rejected", "unknown"}
+            or ((value["state"] in {"pending", "applied"}) != (value.get("error") is None))):
+        raise ProtocolError("invalid session control receipt")
+    return value
 
 
 def check_artifact_created(value: Any, request: Json, sid: str) -> Json:

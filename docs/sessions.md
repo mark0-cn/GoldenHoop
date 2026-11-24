@@ -1,6 +1,6 @@
 # Interactive sessions
 
-The private agent transport and durable session metadata have passed local and CI runc/gVisor contracts. Public REST, reconnectable WebSocket, worker integration and Rust SDK support are implemented and pass the local 16-case API/client suite. Their expanded CI is pending. Python SDK/CLI session bindings, code contexts and isolated child sandboxes remain in progress. This does not mark M2 complete.
+The agent, durable metadata, public REST, reconnectable WebSocket, worker and Rust SDK have passed actual runc/gVisor CI. Python sync/async SDK and CLI session bindings now also pass the local 16-case API/client suite; their expanded CI is pending. Code contexts and isolated child sandboxes remain in progress. This does not mark M2 complete.
 
 SessionSpec describes an actual long-lived process with literal argv and an optional terminal size. A pipe shell such as /bin/sh retains its own variables and working directory across input writes. Its lifetime shares the normal command executor: one active command/session holds the workload identity, and subsequent commands wait. File RPCs remain independent. Multiple concurrent processes requiring separate cleanup boundaries belong to isolated child sandboxes, a later M2 increment.
 
@@ -43,6 +43,19 @@ Save the last delivered event sequence and reconnect using after. Disconnecting 
 
 Rust Client provides create_session, session, list_sessions, session_control, session_control_status, wait_session_control and session_socket. Ordinary execution cancel/events methods also accept a session's execution ID. Final control receipts can be Applied, Rejected or Unknown; inspect the state. SessionSocket exposes control, recv, cursor and close, validates event identity/order/completion and refuses premature EOF. Clients only use loopback WS or verified WSS derived from their validated API URL, without redirects or environment proxies. WSS uses public WebPKI roots; deployment-level TLS validation remains an M6 gate.
 
+Python Client/AsyncClient expose create_session, session, list_sessions, session_control, session_control_status and wait_session_control over REST, with their existing events/cancel methods for the shared execution ID. SessionSpec defaults to a pipe shell. SessionControl.write/close_input/resize construct typed requests. Python uses REST/SSE for PTY I/O; the native socket wrapper is currently Rust-only. A cancelled async control request retains its session ID/sequence in exception notes and does not cancel the remote process.
+
+CLI commands are session-create, session-get, session-list, session-write, session-close-input, session-resize, session-receipt and session-events. Create prints the accepted session identity; input commands wait for a final delivery receipt and return 125 for Rejected/Unknown. session-write reads at most 64 KiB from a file or stdin (`-`). session-events emits JSON lines, resumes from --after, retries transport loss up to three times and errors with the last cursor if completion cannot be confirmed. CLI supplies batch control and observation.
+
+```text
+goldenhoop session-create <sandbox-uuid>
+goldenhoop session-create <sandbox-uuid> --pty -- /bin/sh
+goldenhoop session-write <session-uuid> 1 input.bin
+goldenhoop session-resize <session-uuid> 2 40 100
+goldenhoop session-events <session-uuid> --after 0
+goldenhoop cancel <session-uuid>
+```
+
 ## Actual terminals
 
 The Rust agent allocates a private pseudoterminal, creates a new session and attaches its slave as stdin/stdout/stderr and controlling terminal, then drops to workload UID 1000 with no effective capabilities. The master uses nonblocking readiness with Tokio. PTY stdout/stderr form one binary stream, exposed as stdout events. Window resize uses the kernel terminal operation and the foreground process group receives SIGWINCH. TERM is xterm-256color. The terminal inherits no host console, credential or daemon socket.
@@ -52,3 +65,5 @@ Implementation references: [Linux openpty](https://man7.org/linux/man-pages/man3
 The [actual 14-case local agent record](evidence/m2-session-agent-runc-windows-docker.json) verifies persistent shell state, queued normal commands, input replay refusal, real isatty/controlling-terminal identity, binary terminal input, SIGWINCH/size changes, unsupported half-close, uncertain write refusal, and cancellation of descendants that escape into another POSIX session. The same 14 cases pass on [actual gVisor CI](evidence/ci-45347370569/agent-runsc/agent-runsc.json). Cleanup is confirmed in both records.
 
 The [16-case local API/client record](evidence/m2-session-api-runc-windows-docker.json) additionally verifies shell state through actual API/worker restarts, pause/resume input refusal, public PTY binary input/resize, queued input becoming Unknown after runtime loss, and paused interactive expiration while the API is down. The actual Rust SDK exercises REST controls and WebSocket disconnect/reconnect, replay without duplicate input, resize and explicit completion. Separate socket protocol tests refuse premature EOF, wrong IDs and sequence gaps. Test resources and temporary directories are removed.
+
+Public sessions also pass [actual gVisor CI](evidence/ci-45352264732/agent-runsc/api-runsc.json) and the [19-case S3-compatible API regression](evidence/ci-45352264556/api-s3/api-s3.json). The [expanded local client record](evidence/m2-session-clients-runc-windows-docker.json) exercises all four clients: Rust, Python sync, Python async and CLI. The Python clients retain shell state, replay inputs without duplication, resume SSE and resize/feed binary data to actual PTYs. CLI checks include typed rejection receipts, JSON event completion and cleanup of its temporary binary files.

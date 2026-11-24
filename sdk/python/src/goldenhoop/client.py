@@ -16,6 +16,7 @@ from ._protocol import (
     check_created, check_record, decode_json, endpoint, identity, key_headers,
 )
 from ._protocol import ArtifactError, CreateArtifact, check_artifact_bytes, check_artifact_created
+from ._protocol import SessionSpec, SessionControl, SessionControlError, check_session, check_session_receipt
 
 
 class Client:
@@ -220,6 +221,48 @@ class Client:
 
     def lease(self, request: CreateSandbox | Json) -> SandboxLease:
         return SandboxLease(self, request)
+
+    def create_session(self, sandbox_id: str, request: SessionSpec | Json, key: str) -> Json:
+        sid, request = identity(sandbox_id), body(request)
+        return check_session(self._request("POST", f"v1/sandboxes/{sid}/sessions", request, key=key), sandbox_id=sid, request=request)
+
+    def session(self, execution_id: str) -> Json:
+        eid = identity(execution_id)
+        return check_session(self._request("GET", f"v1/sessions/{eid}"), execution_id=eid)
+
+    def list_sessions(self, sandbox_id: str | None = None, after: str | None = None, limit: int = 100) -> Json:
+        params = {"limit": limit}
+        if sandbox_id is not None:
+            params["sandbox_id"] = identity(sandbox_id)
+        if after is not None:
+            params["after"] = identity(after)
+        return self._request("GET", "v1/sessions", params=params)
+
+    def session_control(self, execution_id: str, control: SessionControl | Json) -> Json:
+        eid, request = identity(execution_id), body(control)
+        sequence = request.get("sequence")
+        try:
+            return check_session_receipt(self._request("POST", f"v1/sessions/{eid}/controls", request), eid, sequence)
+        except Error as error:
+            raise SessionControlError(eid, sequence, error) from error
+
+    def session_control_status(self, execution_id: str, sequence: int) -> Json:
+        eid = identity(execution_id)
+        return check_session_receipt(self._request("GET", f"v1/sessions/{eid}/controls/{sequence}"), eid, sequence)
+
+    def wait_session_control(self, execution_id: str, sequence: int, timeout: float = 30) -> Json:
+        eid, deadline = identity(execution_id), time.monotonic() + timeout
+        try:
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise WaitTimeout(eid)
+                value = check_session_receipt(self._request("GET", f"v1/sessions/{eid}/controls/{sequence}", timeout=min(30, remaining)), eid, sequence)
+                if value["state"] != "pending":
+                    return value
+                time.sleep(min(.1, max(0, deadline - time.monotonic())))
+        except Error as error:
+            raise SessionControlError(eid, sequence, error) from error
 
     def create_artifact(self, sandbox_id: str, request: CreateArtifact | Json, key: str) -> Json:
         sid, request = identity(sandbox_id), body(request)
