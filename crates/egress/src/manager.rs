@@ -23,6 +23,7 @@ use tokio::{
 const NFT: &str = "/usr/sbin/nft";
 const MAX_OUTPUT: u64 = 4 * 1024 * 1024;
 mod resolver;
+mod source;
 pub use resolver::{Listening, Resolution};
 
 #[derive(Debug, Serialize)]
@@ -34,6 +35,8 @@ pub struct Observation {
     pub maximum_lease_seconds: u32,
     pub ethernet_guarded: bool,
     pub ethernet_sha256: Option<String>,
+    pub source_guarded: bool,
+    pub source_binding_sha256: Option<String>,
 }
 
 pub struct Manager {
@@ -44,6 +47,7 @@ pub struct Manager {
     lease_until: Option<Instant>,
     dns: Option<resolver::DnsState>,
     ethernet_required: bool,
+    source_scope: Option<crate::SourceScope>,
     // Abstract Unix names share the host network namespace, including across
     // containers with distinct /run mounts. Dropping the process releases it.
     _lock: UnixDatagram,
@@ -101,11 +105,17 @@ impl Manager {
             lease_until: None,
             dns: None,
             ethernet_required: false,
+            source_scope: None,
             _lock: lock,
         };
         // Reconcile the immutable floor on attachment. A restart cannot forget
         // an existing owned guard and silently continue without it later.
         manager.ethernet_required = manager.ethernet().await?.is_some();
+        if let Some(observed) = manager.source_guard().await? {
+            manager.uncertain = !observed.healthy || !manager.ethernet_required;
+            manager.ethernet_required = true;
+            manager.source_scope = Some(observed.scope);
+        }
         Ok(manager)
     }
 
@@ -136,6 +146,9 @@ impl Manager {
             if observed != bound {
                 return Err(error(ErrorCode::Conflict, "bound bridge addresses changed"));
             }
+        }
+        if let Some(scope) = &self.source_scope {
+            self.check_source_scope(scope)?;
         }
         Ok(())
     }
@@ -214,10 +227,13 @@ impl Manager {
     pub async fn inspect(&self) -> Result<Observation, ApiError> {
         let table = self.table().await?;
         let ethernet = self.ethernet().await?;
+        let source = self.source_guard().await?;
         Ok(Observation {
             installed: table.is_some(),
             revision: table.as_ref().map(|(r, _)| *r),
-            uncertain: self.uncertain || (self.ethernet_required && ethernet.is_none()),
+            uncertain: self.uncertain
+                || (self.ethernet_required && ethernet.is_none())
+                || !self.source_matches(source.as_ref()),
             table_sha256: table.map(|(_, v)| {
                 format!(
                     "{:x}",
@@ -232,6 +248,9 @@ impl Manager {
                     Sha256::digest(serde_json::to_vec(&v).expect("JSON value"))
                 )
             }),
+            source_guarded: source.as_ref().is_some_and(|s| s.healthy)
+                && self.source_matches(source.as_ref()),
+            source_binding_sha256: source.map(|s| s.scope.digest()),
         })
     }
 
@@ -319,6 +338,12 @@ impl Manager {
                 "required Ethernet guard is unavailable",
             ));
         }
+        if !self.source_matches(self.source_guard().await?.as_ref()) {
+            return Err(error(
+                ErrorCode::Conflict,
+                "required source guard is unavailable or changed",
+            ));
+        }
         Ok(())
     }
 
@@ -398,6 +423,7 @@ impl Manager {
         let observed = self.inspect().await?;
         if observed.revision != Some(plan.revision)
             || (self.ethernet_required && !observed.ethernet_guarded)
+            || (self.source_scope.is_some() && !observed.source_guarded)
         {
             return Err(error(
                 ErrorCode::BackendUnavailable,
@@ -438,6 +464,7 @@ impl Manager {
         let observed = self.inspect().await?;
         if observed.revision != Some(expected)
             || (self.ethernet_required && !observed.ethernet_guarded)
+            || (self.source_scope.is_some() && !observed.source_guarded)
         {
             return Err(error(
                 ErrorCode::BackendUnavailable,
@@ -485,6 +512,22 @@ impl Manager {
                 self.allocation.ethernet_table()
             ));
         }
+        if let Some(source) = self.source_guard().await? {
+            if self
+                .source_scope
+                .as_ref()
+                .is_some_and(|expected| expected != &source.scope)
+            {
+                return Err(error(
+                    ErrorCode::Conflict,
+                    "source collection identity differs",
+                ));
+            }
+            batch.push_str(&format!(
+                "delete table bridge {}\n",
+                self.allocation.source_table()
+            ));
+        }
         if !batch.is_empty() {
             self.uncertain = true;
             self.can_renew = false;
@@ -493,8 +536,13 @@ impl Manager {
         }
         // Absence is expected only after the actual collection transaction.
         self.ethernet_required = false;
+        self.source_scope = None;
         let observed = self.inspect().await?;
-        if observed.installed || observed.ethernet_guarded {
+        if observed.installed
+            || observed.ethernet_guarded
+            || observed.source_guarded
+            || observed.source_binding_sha256.is_some()
+        {
             return Err(error(
                 ErrorCode::BackendUnavailable,
                 "egress collection is unconfirmed",

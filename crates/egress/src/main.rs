@@ -36,6 +36,10 @@ mod server {
         EnableEthernet {
             expected_revision: u64,
         },
+        BindSource {
+            expected_revision: u64,
+            endpoint: goldenhoop_egress::Endpoint,
+        },
         ListenDns {
             expected_revision: u64,
         },
@@ -90,6 +94,10 @@ mod server {
             ApiError::new(ErrorCode::InvalidState, "open a trusted allocation first")
         })?;
         match request {
+            Request::BindSource {
+                expected_revision,
+                endpoint,
+            } => manager.bind_source(expected_revision, endpoint).await,
             Request::EnableEthernet { expected_revision } => {
                 manager.enable_ethernet(expected_revision).await
             }
