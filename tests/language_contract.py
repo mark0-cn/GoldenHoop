@@ -13,17 +13,86 @@ from context_contract import ContextContract
 from language_samples import LANGUAGES, SAMPLES, blocking
 
 
+# Run inside the owned test container. Read bounded native process/cgroup counters.
+STARTUP_SNAPSHOT = r'''
+import json, os
+from pathlib import Path
+record = {"processes": [], "process_errors": [], "cgroups": {},
+          "clock_ticks_per_second": os.sysconf("SC_CLK_TCK"),
+          "page_size": os.sysconf("SC_PAGE_SIZE"), "process_limit": 64}
+for path in sorted((p for p in Path("/proc").iterdir() if p.name.isdecimal()), key=lambda p: int(p.name)):
+    try:
+        with (path / "status").open() as stream:
+            status = stream.read(16384)
+        uid = int(next(line for line in status.splitlines() if line.startswith("Uid:")).split()[2])
+        if not 20000 <= uid < 20004:
+            continue
+        if len(record["processes"]) == record["process_limit"]:
+            record["processes_truncated"] = True
+            break
+        with (path / "stat").open() as stream:
+            stat = stream.read(4096)
+        fields = stat.rsplit(")", 1)[1].split()
+        name = stat.split("(", 1)[1].rsplit(")", 1)[0][:64]
+        record["processes"].append({"pid": int(path.name), "ppid": int(fields[1]),
+            "name": name, "effective_uid": uid, "state": fields[0],
+            "user_ticks": int(fields[11]), "system_ticks": int(fields[12]),
+            "rss_bytes": int(fields[21]) * record["page_size"]})
+    except (FileNotFoundError, ProcessLookupError):
+        continue
+    except (OSError, ValueError, IndexError, StopIteration) as error:
+        if len(record["process_errors"]) < 4:
+            record["process_errors"].append({"pid": int(path.name), "error": type(error).__name__})
+for name in ("cpu.stat", "memory.current", "memory.events", "pids.current"):
+    try:
+        with (Path("/sys/fs/cgroup") / name).open() as stream:
+            record["cgroups"][name] = {"value": stream.read(4096)}
+    except OSError as error:
+        record["cgroups"][name] = {"unavailable": type(error).__name__}
+print(json.dumps(record))
+'''
+
+
 class LanguageContract(ContextContract):
-    def __init__(self, image, runtime, language):
+    def __init__(self, image, runtime, language, observe_startup=False):
         super().__init__(image, runtime)
         self.language = language
         self.context_records=[]
+        self.observe_startup = observe_startup and language == 'go'
+        self.startup_observations = []
+
+    def startup_observer(self, identity):
+        record = {"context_id": identity, "language": self.language,
+                  "container_id": self.container, "samples": [],
+                  "interval_seconds": 2, "max_samples": 20}
+        self.startup_observations.append(record)
+
+        def observe(context, elapsed, remaining):
+            record['final_context'] = context
+            record['observed_after_seconds'] = round(elapsed, 6)
+            samples = record['samples']
+            if len(samples) >= record['max_samples'] or remaining <= 0:
+                return
+            if samples and elapsed - samples[-1]['after_seconds'] < record['interval_seconds']:
+                return
+            sample = {"after_seconds": round(elapsed, 6)}
+            started = time.monotonic()
+            try:
+                sample['native'] = json.loads(docker('exec', '--user', '0', self.container,
+                    'python3', '-I', '-c', STARTUP_SNAPSHOT, timeout=min(2, remaining)))
+            except (RuntimeError, ValueError, subprocess.TimeoutExpired) as error:
+                sample['diagnostic_error'] = str(error)[:512]
+            sample['collection_seconds'] = round(time.monotonic() - started, 6)
+            samples.append(sample)
+
+        return observe
 
     def new_context(self, wait=True):
         identity = str(uuid.uuid4())
         self.rpc({"method": "code_context_create", "id": identity, "spec": {"language": self.language}})
         if wait:
-            record = self.wait_context(identity)
+            observer = self.startup_observer(identity) if self.observe_startup else None
+            record = self.wait_context(identity, observer=observer)
             assert record["spec"]["language"] == self.language, record
             assert record["kernel_info"]["language_info"]["name"] == self.language, record
             self.context_records.append(record)
@@ -91,13 +160,15 @@ def run(args):
     failure = None
     clean = True
     for language in args.languages:
-        fixture = LanguageContract(args.image,args.runtime,language)
+        fixture = LanguageContract(args.image,args.runtime,language,args.startup_observations)
         owned={'language':language,'attempt':fixture.attempt,'cleanup':'unknown'}
         evidence.setdefault('fixtures',[]).append(owned)
         try:
             fixture.start()
             owned['container_id']=fixture.container
             inspected = json.loads(docker('inspect', fixture.container))[0]
+            assert inspected['Config']['Labels']['dev.goldenhoop.context-test'] == fixture.attempt
+            assert inspected['Config']['Labels']['dev.goldenhoop.test'] == 'agent-contract'
             evidence['image_id'] = inspected['Image']
             evidence['host_config'] = inspected['HostConfig']
             evidence['effective_mounts']=json.loads(docker('exec','--user','0',fixture.container,'python3','-I','-c',
@@ -122,6 +193,7 @@ def run(args):
         finally:
             evidence['observations'].extend(fixture.observations)
             evidence.setdefault('contexts',[]).extend(fixture.context_records)
+            evidence.setdefault('startup_observations',[]).extend(fixture.startup_observations)
             try:
                 fixture.cleanup()
                 assert not docker('ps','-aq','--filter','label=dev.goldenhoop.context-test='+fixture.attempt)
@@ -138,7 +210,7 @@ def run(args):
     if args.runtime=='runsc': evidence['runsc_version']=subprocess.run(['runsc','--version'],check=True,capture_output=True,text=True).stdout.strip()
     if args.output:
         path=Path(args.output);path.parent.mkdir(parents=True,exist_ok=True)
-        path.write_text(json.dumps(evidence,indent=2)+'\n',encoding='utf-8')
+        path.write_text(json.dumps(evidence,indent=2)+'\n',encoding='utf-8',newline='\n')
     print(json.dumps({k:evidence.get(k) for k in ('suite','result','cleanup','failed_language','error')}))
     if failure: raise failure
 
@@ -149,4 +221,5 @@ if __name__=='__main__':
     parser.add_argument('--runtime',choices=['runc','runsc'],default='runc')
     parser.add_argument('--languages',nargs='+',choices=LANGUAGES,default=LANGUAGES)
     parser.add_argument('--output')
+    parser.add_argument('--startup-observations',action='store_true')
     run(parser.parse_args())

@@ -41,6 +41,10 @@ ENV PATH="/usr/local/go/bin:${PATH}"
 RUN --mount=type=cache,id=goldenhoop-fixture-go-mod,target=/go/pkg/mod \
     --mount=type=cache,id=goldenhoop-fixture-go-build,target=/root/.cache/go-build \
     GOBIN=/out go install github.com/gopherdata/gophernotes@v0.7.6
+# New private context HOME directories start with an empty Go build cache.
+# Supply public standard-library archives in the read-only toolchain instead.
+RUN --mount=type=cache,id=goldenhoop-fixture-go-build,target=/root/.cache/go-build \
+    GODEBUG=installgoroot=all go install -p 2 std
 
 FROM toolchain AS node
 ADD --checksum=sha256:4f2b175a6d53a5c617a80dba2676238a0688cef28c6da4eba35c7d844e66fcfb https://nodejs.org/dist/v24.22.3/node-v24.22.3-linux-x64.tar.xz /tmp/node.tar.xz

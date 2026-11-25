@@ -54,11 +54,15 @@ class ContextContract(Contract):
         self.history.setdefault(context, []).extend(events)
         return self.history[context]
 
-    def wait_context(self, identity, target="ready", timeout=35):
-        deadline = time.monotonic() + timeout
+    def wait_context(self, identity, target="ready", timeout=35, observer=None):
+        started = time.monotonic()
+        deadline = started + timeout
         while time.monotonic() < deadline:
             record = self.context(identity)
             self.drain(identity)
+            if observer is not None:
+                now = time.monotonic()
+                observer(record, now - started, max(0, deadline - now))
             if record["state"] == target:
                 if target != "ready":
                     assert record["cleanup"] == "complete" and record["finished_at"], record
