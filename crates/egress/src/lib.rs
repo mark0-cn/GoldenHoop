@@ -5,6 +5,8 @@ mod ethernet;
 pub use ethernet::EthernetPlan;
 mod source;
 pub use source::{Endpoint, Mac, SourcePlan, SourceScope};
+mod destinations;
+pub use destinations::{DestinationClass, DestinationScope, ProtectedDestinations};
 mod plan;
 pub use plan::{Allocation, Config, DnsBinding, DnsBindings, LEASE_SECONDS, Plan};
 #[cfg(target_os = "linux")]

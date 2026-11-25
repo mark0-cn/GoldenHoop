@@ -297,11 +297,13 @@ impl SourcePlan {
             vec![field("ether", "saddr", "!=", json!(ep.mac.to_string()))],
             "drop",
         );
+        // A valid subchain return must finish this base chain. A jump would
+        // resume in prerouting and reach its final unknown-frame drop.
         p.rule(
             allocation,
             "prerouting",
             vec![field("ether", "type", "==", json!("arp"))],
-            "jump arp_source",
+            "goto arp_source",
         );
         p.rule(
             allocation,
@@ -316,7 +318,7 @@ impl SourcePlan {
             allocation,
             "prerouting",
             vec![field("ether", "type", "==", json!("ip6"))],
-            "jump ipv6_source",
+            "goto ipv6_source",
         );
         p.rule(allocation, "prerouting", vec![], "drop");
         p.rule(
@@ -383,7 +385,7 @@ impl SourcePlan {
                 meta("l4proto", "==", json!(58)),
                 field("icmpv6", "type", "==", nd_types),
             ],
-            "jump neighbor_source",
+            "goto neighbor_source",
         );
         // Source admission precedes bridge conntrack (-200). Reading ct state
         // here would classify an ordinary, not-yet-tracked packet as invalid.
@@ -477,8 +479,8 @@ impl SourcePlan {
             &format!("{chain} {native} counter {verdict}"),
         );
         let mut values = conditions.into_iter().map(|m| m.value).collect::<Vec<_>>();
-        values.push(if let Some(target) = verdict.strip_prefix("jump ") {
-            json!({"jump":{"target":target}})
+        values.push(if let Some(target) = verdict.strip_prefix("goto ") {
+            json!({"goto":{"target":target}})
         } else {
             json!({verdict:null})
         });
@@ -830,14 +832,28 @@ mod kernel_readback_tests {
         Ok(copy)
     }
 
+    fn historical_jump_plan(plan: &SourcePlan) -> Rules {
+        // Compare the historical captures' representation against their old
+        // declared dispatch graph. That graph is now known to deny valid
+        // returns and must never confirm the current production plan.
+        let mut rules = plan.rules.clone();
+        for (_, expr) in &mut rules {
+            let last = expr.last_mut().unwrap();
+            if let Some(target) = last.get("goto").cloned() {
+                *last = json!({"jump":target});
+            }
+        }
+        rules
+    }
+
     #[test]
     fn actual_runc_and_gvisor_decompilations_preserve_conjunctive_semantics() {
         let mut accepted = 0;
         for (plan, rules, obsolete) in captures() {
-            let expected = canonical(&plan.rules).unwrap();
-            // Native captures are unchanged. The initial variant's early CT
-            // rule must be rejected; the corrected variant matches directly.
-            // Neither decompilation proves successful packet admission.
+            // All captured jump/return graphs must refuse current admission.
+            assert_ne!(canonical(&rules).unwrap(), canonical(&plan.rules).unwrap());
+            let expected = canonical(&historical_jump_plan(&plan)).unwrap();
+            // This tests representation only, not historical packet success.
             if obsolete {
                 assert_ne!(canonical(&rules).unwrap(), expected);
             } else {
@@ -854,7 +870,7 @@ mod kernel_readback_tests {
             if obsolete {
                 continue;
             }
-            let expected = canonical(&plan.rules).unwrap();
+            let expected = canonical(&historical_jump_plan(&plan)).unwrap();
             let mut candidates = Vec::new();
             let mut missing = rules.clone();
             missing.remove(0);

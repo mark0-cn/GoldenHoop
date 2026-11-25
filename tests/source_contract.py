@@ -21,6 +21,7 @@ class SourceCases:
             self.evidence['suite']='source-fixture-prerequisite-probe'
             self.evidence['scope']='actual trusted endpoint/provider mapping and source-spoof diagnostic controls; source floor not installed; no capability granted'
         self.source_bound=False
+        self.verdict_table_attempted=False
         root=Path(__file__).resolve().parents[1]
         for name in ('source_contract.py','source_samples.py'):
             p=root/'tests'/name;self.evidence['source_files_sha256'][p.relative_to(root).as_posix()]=hashlib.sha256(p.read_bytes()).hexdigest()
@@ -101,6 +102,52 @@ class SourceCases:
             return reply
         return super().open()
 
+    def collect_verdict_probe(self):
+        if not self.verdict_table_attempted:return
+        name='gh_v_'+self.attempt
+        if any(e.get('table',{}).get('name')==name and e['table']['family']=='inet' for e in self.tables()):
+            observed=json.loads(self.exec(self.helper,'nft','--json','list','table','inet',name).stdout)
+            owners=[e['chain']['name'] for e in observed['nftables'] if 'chain' in e and e['chain']['name'].startswith('goldenhoop_')]
+            assert owners==[self.owner.replace(':','_')],owners
+            self.exec(self.helper,'nft','delete','table','inet',name)
+        assert not any(e.get('table',{}).get('name')==name and e['table']['family']=='inet' for e in self.tables())
+        self.evidence['owned_verdict_probe_table_absent']=True
+        self.verdict_table_attempted=False;self.save()
+
+    def cleanup(self):
+        try:self.collect_verdict_probe()
+        finally:super().cleanup()
+
+    def verdict_probe(self):
+        # A scoped, temporary inet control-flow prerequisite. This is not the
+        # bridge source floor and grants no production network capability.
+        name='gh_v_'+self.attempt
+        assert not any(e.get('table',{}).get('name')==name for e in self.tables())
+        owner=self.owner.replace(':','_')
+        dispatch=lambda verdict:(f'add rule inet {name} forward iifname != "{self.bridge}" counter return\n'
+            f'add rule inet {name} forward counter {verdict} allowed_source\n'
+            f'add rule inet {name} forward counter drop\n')
+        self.verdict_table_attempted=True
+        try:
+            self.exec(self.helper,'nft','--file','-',data=(f'add table inet {name}\nadd chain inet {name} {owner}\n'
+                f'add chain inet {name} forward {{ type filter hook forward priority -210; policy accept; }}\n'
+                f'add chain inet {name} allowed_source\nadd rule inet {name} allowed_source counter return\n'+dispatch('jump')))
+            for address in (self.target_ip,self.target6):
+                assert not self.probe(self.guest,'tcp',address,19001),address
+                self.rpc('renew',expected_revision=self.revision)
+            before=json.loads(self.exec(self.helper,'nft','--json','list','table','inet',name).stdout)
+            drops=sum(x['counter']['packets'] for e in before['nftables'] if 'rule' in e and e['rule']['chain']=='forward' for x in e['rule']['expr'] if 'counter' in x and any('drop' in v for v in e['rule']['expr']))
+            assert drops>=2,before
+            self.exec(self.helper,'nft','--file','-',data=f'flush chain inet {name} forward\n'+dispatch('goto'))
+            for address in (self.target_ip,self.target6):
+                for transport,port in (('tcp',19001),('udp',19002)):
+                    assert self.probe(self.guest,transport,address,port),(transport,address)
+                self.rpc('renew',expected_revision=self.revision)
+            after=json.loads(self.exec(self.helper,'nft','--json','list','table','inet',name).stdout)
+            self.evidence['verdict_control_flow_probe']={'scope':'actual temporary inet jump/goto/return prerequisite; not bridge/source enforcement','jump_table':before,'goto_table':after}
+            self.check('actual_inet_jump_returns_to_the_deny_tail_but_goto_keeps_ipv4_ipv6_tcp_udp_admission')
+        finally:self.collect_verdict_probe()
+
     def kernel_policy_cases(self):
         self.evidence['trusted_allocation']=dict(self.allocation)
         self.save()
@@ -136,6 +183,7 @@ class SourceCases:
         self.evidence['trusted_source_scope']={'endpoint':binding,'gateway_mac':gateway_mac,'gateway4':self.gateway,'gateway6':self.gateway6}
         self.save()
         self.apply_config({'policies':[{'default_action':'allow','rules':[]}]})
+        self.verdict_probe()
         for mode in ('normal4','normal6','mac4','spoof4','spoof6'):
             self.packet('before',mode,True)
             self.rpc('renew',expected_revision=self.revision)
