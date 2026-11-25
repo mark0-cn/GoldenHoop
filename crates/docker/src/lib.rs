@@ -17,7 +17,9 @@ use uuid::Uuid;
 
 mod contexts;
 mod isolated;
+mod networks;
 mod sessions;
+pub use networks::{DockerNetworkProvider, NetworkObservation, NetworkPlan, NetworkRemoval};
 struct ProbeSupport {
     diagnostics: bool,
     shell: bool,

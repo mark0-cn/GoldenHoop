@@ -7,9 +7,11 @@ permissions:
 jobs:
   host-netfilter:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - name: Build the trusted base and disposable network fixture
         run: |
           docker build --label dev.goldenhoop.build=network-prerequisites -f images/agent/Dockerfile -t goldenhoop-agent:test .
@@ -19,6 +21,10 @@ jobs:
         run: python3 -B tests/network_capabilities.py --output evidence/network-prerequisites.json --remove-image
       - name: Verify actual Rust unreferenced DNS set expiry and collection
         run: python3 -B tests/dns_set_probe.py --rust --output evidence/dns-set-staging.json
+      - name: Build the private allocation-only Rust contract
+        run: cargo build --locked -p goldenhoop-control --example network_allocation
+      - name: Verify owned bridge creation, lost consumer response, recovery and native collection
+        run: python3 -B tests/network_provider_contract.py --binary target/debug/examples/network_allocation --work-dir .test-work --output evidence/network-provider.json
       - name: Verify all owned prerequisite resources are absent
         if: always()
         shell: bash
@@ -26,6 +32,9 @@ jobs:
           set -euo pipefail
           remaining=$(docker ps -a --filter label=dev.goldenhoop.test=network-contract --format '{{.ID}}')
           test -z "$remaining"
+          test -z "$(docker ps -a --filter label=dev.goldenhoop.test=network-provider --format '{{.ID}}')"
+          test -z "$(docker network ls --filter label=dev.goldenhoop.role=egress-network --format '{{.ID}}')"
+          test -z "$(docker volume ls --filter label=dev.goldenhoop.role=agent-bundle --format '{{.Name}}')"
           if docker image inspect goldenhoop-network-fixture:test >/dev/null 2>&1; then
             label=$(docker image inspect goldenhoop-network-fixture:test --format '{{index .Config.Labels "dev.goldenhoop.fixture"}}')
             test "$label" = network-interop

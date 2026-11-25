@@ -1,6 +1,6 @@
 //! Private allocator metadata, never an enforcement acknowledgement or API DTO.
 use super::*;
-use goldenhoop_egress::{Allocation, DestinationDefinition, SourceScope};
+use goldenhoop_egress::{Allocation, DestinationDefinition, NetworkIdentity, SourceScope};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -65,16 +65,25 @@ fn network_id_valid(id: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 impl NetworkAllocation {
+    pub fn identity(&self) -> NetworkIdentity {
+        NetworkIdentity {
+            installation_id: self.installation_id,
+            sandbox_id: self.sandbox_id,
+            generation: self.generation,
+            profile: self.profile.clone(),
+        }
+    }
     pub fn binding_fingerprint(&self) -> Result<Option<String>, ApiError> {
         self.binding.as_ref().map(fingerprint).transpose()
     }
     fn validate(&self, installation: Uuid) -> Result<(), ApiError> {
-        let generation = self.generation.simple().to_string();
+        let identity = self.identity();
+        identity.validate().map_err(|_| internal())?;
         if self.installation_id != installation
             || self.sandbox_id.is_nil()
             || self.generation.is_nil()
-            || self.network_name != format!("goldenhoop-net-{generation}")
-            || self.bridge != format!("ghn{}", &generation[..12])
+            || self.network_name != identity.network_name()
+            || self.bridge != identity.bridge_name()
             || self.profile.is_empty()
             || self.profile.len() > 128
             || self.revision > i64::MAX as u64
