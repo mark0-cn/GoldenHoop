@@ -115,6 +115,30 @@ impl Default for NetworkPolicy {
     }
 }
 
+/// Desired user policy only; this response carries no runtime lease or host
+/// controller identity. Ancestor and administrator constraints still apply.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NetworkPolicyState {
+    pub sandbox_id: Uuid,
+    pub revision: u64,
+    pub policy: NetworkPolicy,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetNetworkPolicy {
+    pub expected_revision: u64,
+    pub policy: NetworkPolicy,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NetworkPolicyChanged {
+    pub policy: NetworkPolicyState,
+    pub operation: Operation,
+}
+
 fn default_ttl() -> u64 {
     1_800
 }

@@ -445,14 +445,13 @@ impl Store {
                 "reserve a network before runtime dispatch",
             ));
         }
-        if super::isolated::scope(&mut tx, id)
-            .await?
-            .parent_id
-            .is_some()
+        if let Some(parent) = super::isolated::scope(&mut tx, id).await?.parent_id
+            && !super::network_policy_public::public_parent(&mut tx, parent, self.installation_id)
+                .await?
         {
             return Err(ApiError::new(
                 ErrorCode::UnsupportedCapability,
-                "isolated network allocation integration is unavailable",
+                "isolated network allocation requires a public protected parent",
             ));
         }
         let simple = generation.simple().to_string();

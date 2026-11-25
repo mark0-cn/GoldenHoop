@@ -242,6 +242,46 @@ impl Client {
         }
         Ok(value)
     }
+    pub async fn network_policy(&self, id: Uuid) -> Result<NetworkPolicyState> {
+        let value: NetworkPolicyState = self
+            .get(&format!("v1/sandboxes/{id}/network-policy"))
+            .await?;
+        if value.sandbox_id != id || value.revision > i64::MAX as u64 {
+            return Err(Error::Protocol("network policy identity mismatch"));
+        }
+        Ok(value)
+    }
+    pub async fn set_network_policy(
+        &self,
+        id: Uuid,
+        request: &SetNetworkPolicy,
+        key: &str,
+    ) -> Result<NetworkPolicyChanged> {
+        let value: NetworkPolicyChanged = Self::json(
+            self.send(
+                Method::PUT,
+                &format!("v1/sandboxes/{id}/network-policy"),
+                Some(
+                    serde_json::to_value(request)
+                        .map_err(|_| Error::Protocol("invalid network policy request"))?,
+                ),
+                Some(key),
+            )
+            .await?,
+        )
+        .await?;
+        if value.policy.sandbox_id != id
+            || value.operation.resource_id != id
+            || value.policy.revision > i64::MAX as u64
+            || request.expected_revision.checked_add(1) != Some(value.policy.revision)
+            || value.policy.policy != request.policy
+        {
+            return Err(Error::Protocol(
+                "network policy change identity or version mismatch",
+            ));
+        }
+        Ok(value)
+    }
     pub async fn list(&self, after: Option<Uuid>, limit: u32) -> Result<SandboxPage> {
         let mut path = format!("v1/sandboxes?limit={limit}");
         if let Some(id) = after {

@@ -208,6 +208,9 @@ impl Worker {
                     eprintln!("{{\"event\":\"reconciliation_task_failed\"}}");
                 }
             }
+            if let Err(error) = self.store.settle_network_policy_changes().await {
+                report("network_policy_change_settlement_failed", &error);
+            }
             match self.store.artifact_work().await {
                 Ok(mut work) => {
                     if !work.is_empty() {

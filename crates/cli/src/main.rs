@@ -151,6 +151,20 @@ enum SandboxCommand {
     Diagnostics {
         id: Uuid,
     },
+    NetworkPolicy {
+        id: Uuid,
+    },
+    NetworkPolicySet {
+        id: Uuid,
+        #[arg(long)]
+        expected_revision: u64,
+        #[arg(long)]
+        policy: PathBuf,
+        #[arg(long)]
+        idempotency_key: Option<String>,
+        #[arg(long)]
+        no_wait: bool,
+    },
     Delete {
         id: Uuid,
         #[arg(long)]
@@ -528,6 +542,38 @@ async fn run(args: Args) -> CliResult<u8> {
         }
         Command::Sandbox(SandboxCommand::Diagnostics { id }) => {
             print_json(&client.diagnostics(id).await?)?
+        }
+        Command::Sandbox(SandboxCommand::NetworkPolicy { id }) => {
+            print_json(&client.network_policy(id).await?)?
+        }
+        Command::Sandbox(SandboxCommand::NetworkPolicySet {
+            id,
+            expected_revision,
+            policy,
+            idempotency_key,
+            no_wait,
+        }) => {
+            let mut bytes = Vec::new();
+            std::fs::File::open(policy)?
+                .take(64 * 1024 + 1)
+                .read_to_end(&mut bytes)?;
+            if bytes.len() > 64 * 1024 {
+                return Err("network policy file exceeds 64 KiB".into());
+            }
+            let request = SetNetworkPolicy {
+                expected_revision,
+                policy: serde_json::from_slice(&bytes)?,
+            };
+            let key = key(idempotency_key);
+            eprintln!("idempotency_key={key}");
+            let mut changed = client.set_network_policy(id, &request, &key).await?;
+            eprintln!("sandbox_id={id} operation_id={}", changed.operation.id);
+            if !no_wait {
+                changed.operation = client
+                    .wait_operation(changed.operation.id, Duration::from_secs(60))
+                    .await?;
+            }
+            print_json(&changed)?;
         }
         Command::Sandbox(SandboxCommand::List { after, limit }) => {
             print_json(&client.list(after, limit).await?)?

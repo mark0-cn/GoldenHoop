@@ -110,6 +110,7 @@ jobs:
         run: |
           cargo build --locked -p goldenhoop-control --bin goldenhoopd --example network_allocation --example network_policy
           cargo build --locked -p goldenhoop-egress --example quarantine_readback
+          cargo build --locked -p goldenhoop-cli
       - name: Verify guarded source, DNS, destination binding and owned worker collection
         run: python3 -B tests/guarded_bootstrap_contract.py --runtime ${{ matrix.runtime }} --binary target/debug/examples/network_allocation --worker-binary target/debug/goldenhoopd --work-dir .test-work --output evidence/guarded-bootstrap-${{ matrix.runtime }}.json
       - name: Verify collection after actual process exit before trusted-agent start
@@ -120,6 +121,8 @@ jobs:
         run: python3 -B tests/effective_policy_contract.py --runtime ${{ matrix.runtime }} --binary target/debug/examples/network_allocation --worker-binary target/debug/goldenhoopd --readback-binary target/debug/examples/quarantine_readback --work-dir .test-work --output evidence/effective-policy-${{ matrix.runtime }}.json
       - name: Verify worker-held policies, Ready gating, renewal and crash recovery
         run: python3 -B tests/worker_network_policy_contract.py --runtime ${{ matrix.runtime }} --binary target/debug/examples/network_allocation --worker-binary target/debug/goldenhoopd --policy-binary target/debug/examples/network_policy --work-dir .test-work --output evidence/worker-network-policy-${{ matrix.runtime }}.json
+      - name: Verify public policy API, Rust SDK, native acknowledgement and paused replay
+        run: python3 -B tests/public_network_policy_contract.py --runtime ${{ matrix.runtime }} --binary target/debug/examples/network_allocation --worker-binary target/debug/goldenhoopd --policy-binary target/debug/examples/network_policy --cli-binary target/debug/goldenhoop --work-dir .test-work --output evidence/public-network-policy-${{ matrix.runtime }}.json
       - name: Verify the IPv4 routed-filter mechanism and scoped collection
         run: python3 -B tests/network_contract.py --runtime ${{ matrix.runtime }} --receiver-publication routed --ci-host-diagnostics --output evidence/network-ipv4-${{ matrix.runtime }}.json
       - name: Verify workload DNS interception, grants, source expiry and controller loss

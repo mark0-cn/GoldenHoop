@@ -21,6 +21,7 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 
 mod contexts;
 mod isolated;
+mod network_policy;
 mod sessions;
 
 struct App {
@@ -64,6 +65,12 @@ pub fn router(store: Store, token: &str) -> Result<Router, ApiError> {
         .route("/v1/sandboxes/{id}/pause", post(pause))
         .route("/v1/sandboxes/{id}/resume", post(resume))
         .route("/v1/sandboxes/{id}/diagnostics", get(diagnostics))
+        .route(
+            "/v1/sandboxes/{id}/network-policy",
+            get(network_policy::get_policy)
+                .put(network_policy::set_policy)
+                .layer(DefaultBodyLimit::max(64 * 1024)),
+        )
         .route("/v1/sandboxes/{id}/commands", post(command))
         .route("/v1/executions/{id}", get(execution))
         .route("/v1/executions/{id}/cancel", post(cancel))

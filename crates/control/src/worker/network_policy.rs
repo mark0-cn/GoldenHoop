@@ -137,6 +137,14 @@ impl Worker {
         let id = stored.sandbox.id;
         let desired = self.store.effective_desired(id).await?;
         if desired == DesiredState::Terminated
+            && stored.sandbox.desired_state != DesiredState::Terminated
+        {
+            self.store
+                .set_desired(id, DesiredState::Terminated, &format!("tree-close-{id}"))
+                .await?;
+            stored = self.store.sandbox(id).await?;
+        }
+        if desired == DesiredState::Terminated
             || matches!(
                 stored.sandbox.state,
                 SandboxState::Failed | SandboxState::Terminated

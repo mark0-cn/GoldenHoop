@@ -20,6 +20,7 @@ from ._protocol import SessionSpec, SessionControl, SessionControlError, check_s
 from ._code_async import AsyncCodeClientMixin
 from ._protocol import CreateIsolatedSession
 from ._isolated import check_scope, check_isolated_created
+from ._network import policy_state, policy_request, policy_change
 
 
 class AsyncClient(AsyncCodeClientMixin):
@@ -99,6 +100,16 @@ class AsyncClient(AsyncCodeClientMixin):
         if value.get("runtime") is not None:
             check_record(value["runtime"], sid, "sandbox_id")
         return value
+
+    async def network_policy(self, sandbox_id: str) -> Json:
+        sid = identity(sandbox_id)
+        return policy_state(await self._request("GET", f"v1/sandboxes/{sid}/network-policy"), sid)
+
+    async def set_network_policy(self, sandbox_id: str, policy: Json, expected_revision: int, key: str) -> Json:
+        sid = identity(sandbox_id)
+        request = policy_request(expected_revision, policy)
+        value = await self._request("PUT", f"v1/sandboxes/{sid}/network-policy", request, key=key)
+        return policy_change(value, sid, request)
 
     async def list(self, after: str | None = None, limit: int = 100) -> Json:
         params = {"limit": limit}

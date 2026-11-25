@@ -20,6 +20,7 @@ from ._protocol import SessionSpec, SessionControl, SessionControlError, check_s
 from ._code_sync import CodeClientMixin
 from ._protocol import CreateIsolatedSession
 from ._isolated import check_scope, check_isolated_created
+from ._network import policy_state, policy_request, policy_change
 
 
 class Client(CodeClientMixin):
@@ -100,6 +101,16 @@ class Client(CodeClientMixin):
         if value.get("runtime") is not None:
             check_record(value["runtime"], sid, "sandbox_id")
         return value
+
+    def network_policy(self, sandbox_id: str) -> Json:
+        sid = identity(sandbox_id)
+        return policy_state(self._request("GET", f"v1/sandboxes/{sid}/network-policy"), sid)
+
+    def set_network_policy(self, sandbox_id: str, policy: Json, expected_revision: int, key: str) -> Json:
+        sid = identity(sandbox_id)
+        request = policy_request(expected_revision, policy)
+        value = self._request("PUT", f"v1/sandboxes/{sid}/network-policy", request, key=key)
+        return policy_change(value, sid, request)
 
     def list(self, after: str | None = None, limit: int = 100) -> Json:
         params = {"limit": limit}

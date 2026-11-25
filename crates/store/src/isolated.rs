@@ -371,8 +371,18 @@ impl Store {
             .network
             .clone()
             .unwrap_or_else(|| parent_record.request.network.clone());
+        let layered_network =
+            super::network_policy_public::public_parent(&mut tx, parent, self.installation_id)
+                .await?;
+        if layered_network {
+            // The child must have an enforcing backend even when its own API
+            // feature ceiling forbids later policy edits. Runtime permission
+            // still waits for the full ancestor/user/operator configuration.
+            goldenhoop_core::require_capability(profile, Capability::NetworkPolicy)?;
+        }
         if request.network != NetworkPolicy::default()
             && request.network != parent_record.request.network
+            && !layered_network
         {
             return Err(ApiError::new(
                 ErrorCode::Forbidden,

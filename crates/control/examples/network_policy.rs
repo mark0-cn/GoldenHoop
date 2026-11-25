@@ -2,7 +2,7 @@
 use clap::{Parser, Subcommand};
 use goldenhoop_egress::{Config, ProtectedBindingReceipt};
 use goldenhoop_protocol::{ApiError, CommandSpec, DesiredState};
-use goldenhoop_store::Store;
+use goldenhoop_store::{NetworkOperatorPolicy, Store};
 use std::{net::SocketAddr, path::PathBuf};
 use uuid::Uuid;
 
@@ -17,6 +17,13 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Action {
+    /// Trusted contract setup. Effective layers come only from stored intent.
+    StagePublic {
+        #[arg(long)]
+        checkpoint_json: String,
+        #[arg(long)]
+        upstream: SocketAddr,
+    },
     Stage {
         #[arg(long)]
         checkpoint_json: String,
@@ -45,6 +52,24 @@ async fn run(args: &Args, store: &Store) -> Result<serde_json::Value, Box<dyn st
     let id = args.sandbox;
     let network = store.network_allocation(id).await?;
     Ok(match &args.action {
+        Action::StagePublic {
+            checkpoint_json,
+            upstream,
+        } => {
+            store
+                .bind_network_operator(&NetworkOperatorPolicy::default())
+                .await?;
+            serde_json::to_value(
+                store
+                    .stage_public_network_policy(
+                        id,
+                        network.generation,
+                        serde_json::from_str(checkpoint_json)?,
+                        *upstream,
+                    )
+                    .await?,
+            )?
+        }
         Action::Stage {
             checkpoint_json,
             upstream,

@@ -33,6 +33,8 @@ pub struct NetworkPolicyControl {
     pub upstream: SocketAddr,
     /// The original observed immutable context, not a current kernel claim.
     pub checkpoint: ProtectedBindingReceipt,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_inputs: Option<NetworkPolicyInputs>,
     pub phase: NetworkPolicyPhase,
     pub owner: Option<NetworkPolicyOwner>,
     pub attempt: Option<Uuid>,
@@ -46,9 +48,12 @@ fn conflict() -> ApiError {
     )
 }
 impl NetworkPolicyControl {
-    fn validate(&self, installation: Uuid) -> Result<(), ApiError> {
+    pub(super) fn validate(&self, installation: Uuid) -> Result<(), ApiError> {
         self.checkpoint.validate().map_err(|_| internal())?;
         goldenhoop_egress::dns::Upstream::new(self.upstream).map_err(|_| internal())?;
+        if let Some(inputs) = &self.public_inputs {
+            inputs.validate(self.sandbox_id)?;
+        }
         if self.sandbox_id.is_nil()
             || self.allocation_generation.is_nil()
             || self.checkpoint.allocation.installation_id != installation
@@ -120,7 +125,7 @@ fn row(
     }
     Ok(record)
 }
-async fn source(
+pub(super) async fn source(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     id: Uuid,
     installation: Uuid,
@@ -133,7 +138,7 @@ async fn source(
         .ok_or_else(|| not_found("network policy"))?;
     row(&value, installation)
 }
-async fn save(
+pub(super) async fn save(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     record: &mut NetworkPolicyControl,
 ) -> Result<(), ApiError> {
@@ -157,7 +162,7 @@ async fn save(
         .map_err(db)?;
     Ok(())
 }
-async fn live(
+pub(super) async fn live(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     record: &NetworkPolicyControl,
     installation: Uuid,
@@ -169,6 +174,12 @@ async fn live(
         .await
         .map_err(db)?;
     let sandbox = sandbox_row(&value)?;
+    if let Some(expected) = &record.public_inputs {
+        let (config, actual) = super::network_policy_public::inputs(tx, record.sandbox_id).await?;
+        if expected != &actual || config.digest()? != record.config_sha256 {
+            return Err(conflict());
+        }
+    }
     let binding = network.binding.as_ref().ok_or_else(conflict)?;
     if network.phase != NetworkPhase::Bound
         || network.generation != record.allocation_generation
@@ -209,7 +220,7 @@ async fn current_worker(
 }
 /// Invalidate the public observation before an asynchronous policy/recovery
 /// transition. Existing runtime identity and ever-running evidence are kept.
-async fn fence_sandbox(
+pub(super) async fn fence_sandbox(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     id: Uuid,
 ) -> Result<(), ApiError> {
@@ -235,6 +246,36 @@ async fn fence_sandbox(
             .await
             .map_err(db)?;
     }
+    Ok(())
+}
+
+pub(super) async fn stage(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    record: &NetworkPolicyControl,
+    installation: Uuid,
+) -> Result<(), ApiError> {
+    record.validate(installation)?;
+    let sandbox = live(tx, record, installation).await?;
+    if sandbox.ever_running || sandbox.sandbox.state != SandboxState::Starting {
+        return Err(conflict());
+    }
+    if sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM network_policies WHERE sandbox_id=?")
+        .bind(record.sandbox_id.to_string())
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(db)?
+        != 0
+    {
+        return Err(conflict());
+    }
+    sqlx::query("INSERT INTO network_policies(sandbox_id,allocation_generation,revision,desired_revision,payload) VALUES(?,?,0,0,?)")
+        .bind(record.sandbox_id.to_string()).bind(record.allocation_generation.to_string()).bind(encode(record)?).execute(&mut **tx).await.map_err(db)?;
+    sqlx::query("INSERT INTO network_policy_events(sandbox_id,revision,payload) VALUES(?,0,?)")
+        .bind(record.sandbox_id.to_string())
+        .bind(encode(record)?)
+        .execute(&mut **tx)
+        .await
+        .map_err(db)?;
     Ok(())
 }
 
@@ -297,34 +338,14 @@ impl Store {
             config,
             upstream,
             checkpoint,
+            public_inputs: None,
             phase: NetworkPolicyPhase::Pending,
             owner: None,
             attempt: None,
             observation: None,
         };
-        record.validate(self.installation_id)?;
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
-        let sandbox = live(&mut tx, &record, self.installation_id).await?;
-        if sandbox.ever_running || sandbox.sandbox.state != SandboxState::Starting {
-            return Err(conflict());
-        }
-        if sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM network_policies WHERE sandbox_id=?")
-            .bind(id.to_string())
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(db)?
-            != 0
-        {
-            return Err(conflict());
-        }
-        sqlx::query("INSERT INTO network_policies(sandbox_id,allocation_generation,revision,desired_revision,payload) VALUES(?,?,0,0,?)")
-            .bind(id.to_string()).bind(generation.to_string()).bind(encode(&record)?).execute(&mut *tx).await.map_err(db)?;
-        sqlx::query("INSERT INTO network_policy_events(sandbox_id,revision,payload) VALUES(?,0,?)")
-            .bind(id.to_string())
-            .bind(encode(&record)?)
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
+        stage(&mut tx, &record, self.installation_id).await?;
         tx.commit().await.map_err(db)?;
         Ok(record)
     }
@@ -338,6 +359,12 @@ impl Store {
         let digest = config.digest()?;
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
         let mut record = source(&mut tx, id, self.installation_id).await?;
+        if record.public_inputs.is_some() {
+            return Err(ApiError::new(
+                ErrorCode::Forbidden,
+                "public policy requires versioned user-policy changes",
+            ));
+        }
         live(&mut tx, &record, self.installation_id).await?;
         if record.allocation_generation != generation || record.desired_revision != expected_desired
         {
@@ -481,6 +508,7 @@ impl Store {
         record.attempt = None;
         record.observation = Some(receipt);
         save(&mut tx, &mut record).await?;
+        super::network_policy_public::acknowledge(&mut tx, &record).await?;
         tx.commit().await.map_err(db)?;
         Ok(record)
     }

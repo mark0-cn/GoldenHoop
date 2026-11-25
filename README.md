@@ -4,11 +4,13 @@ A Rust agent sandbox platform with explicit runtime capabilities, independent AP
 
 ## Project status
 
-**M0-M1 are implemented and verified; M2 is in progress. Commands, files, diagnostics, retained artifacts, persistent shells, PTYs, Python code contexts and isolated child sandboxes pass actual runc/gVisor contracts through the API, Rust/Python SDKs and CLI. S3-compatible API/client tests also pass on Linux. Six-language native and four-client gates now pass locally on runc; expanded gVisor/S3 acceptance remains pending.**
+**M0-M2 have accepted runc/gVisor and S3-compatible baselines; M3 is in progress. Commands, files, diagnostics, retained artifacts, shells, PTYs, six-language code contexts and isolated child sandboxes have actual API/SDK/CLI acceptance. Protected network orchestration passes the trusted staged worker contracts; public initial network provisioning, credentials and audit remain required.**
 
 Code contexts have durable public APIs and Rust/Python/CLI bindings. Python's existing runc/gVisor and S3-compatible loops pass, including restart recovery and cleanup. New Python, Java, Go, TypeScript, Bash and JavaScript adapters use [explicitly probed language support](docs/code-languages.md) from a cached kernel image; support is disabled by default. [Isolated child sandboxes](docs/isolated-sessions.md) add reserved resources, inherited lifecycle and immutable feature ceilings, behind a separate actual runtime probe. See [current verification](docs/progress.md).
 
 The [reference coverage checklist](docs/reference-coverage.md) retains the Java, Go, TypeScript, Bash and JavaScript context adapters and all M3-M6 gates. An installed interpreter or a skipped runtime test is not a completed feature.
+
+[Versioned network-policy updates](docs/network-policy.md) distinguish durable user intent from actual native application. The new public-source API gates require separate supported-host acceptance; `NetworkPolicy` and `SecretInjection` remain unadvertised.
 
 The full target includes local containers, Firecracker microVMs, and Kubernetes; command and file execution; terminals and code contexts; network policy and credential brokering; snapshots, templates, warm pools, batches, and diagnostics.
 

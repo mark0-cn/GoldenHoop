@@ -848,7 +848,7 @@ async fn schema_seven_upgrade_preserves_native_history_bytes_and_existing_operat
         let store=fixture.open().await;let network=allocation(&store,100).await;let id=network.sandbox_id;let operation=store.sandbox(id).await.unwrap().create_operation;let installation=store.installation_id();store.close().await;
         let options=SqliteConnectOptions::new().filename(&fixture.path);let mut connection=SqliteConnection::connect_with(&options).await.unwrap();
         let result=async {
-            sqlx::raw_sql("DROP TABLE network_policy_events;DROP TABLE network_policies;DROP TABLE network_controller_events;DROP TABLE network_controllers;UPDATE meta SET value='7' WHERE key='schema_version'").execute(&mut connection).await?;
+            sqlx::raw_sql("DROP TABLE network_policy_applied_sources;DROP TABLE network_policy_changes;DROP TABLE network_policy_users;DROP TABLE network_policy_events;DROP TABLE network_policies;DROP TABLE network_controller_events;DROP TABLE network_controllers;UPDATE meta SET value='7' WHERE key='schema_version'").execute(&mut connection).await?;
             let current:String=sqlx::query_scalar("SELECT payload FROM network_allocations WHERE sandbox_id=?").bind(id.to_string()).fetch_one(&mut connection).await?;
             let history:Vec<String>=sqlx::query_scalar("SELECT payload FROM network_allocation_events WHERE sandbox_id=? ORDER BY revision").bind(id.to_string()).fetch_all(&mut connection).await?;
             Ok::<_,sqlx::Error>((current,history))
@@ -859,7 +859,7 @@ async fn schema_seven_upgrade_preserves_native_history_bytes_and_existing_operat
             let current:String=sqlx::query_scalar("SELECT payload FROM network_allocations WHERE sandbox_id=?").bind(id.to_string()).fetch_one(&mut connection).await?;
             let history:Vec<String>=sqlx::query_scalar("SELECT payload FROM network_allocation_events WHERE sandbox_id=? ORDER BY revision").bind(id.to_string()).fetch_all(&mut connection).await?;
             Ok::<_,sqlx::Error>((version,current,history))
-        }.await;connection.close().await.unwrap();let after=result.unwrap();assert_eq!(after.0,"11");assert_eq!((after.1,after.2),before);
+        }.await;connection.close().await.unwrap();let after=result.unwrap();assert_eq!(after.0,"12");assert_eq!((after.1,after.2),before);
         reserve(&upgraded,&network).await;
     }).await;
 }
@@ -1102,7 +1102,7 @@ async fn schema_eight_controller_payload_and_history_bytes_survive_purpose_upgra
         let creating=store.begin_controller_create(network.sandbox_id,reserved.controller_generation,reserved.revision).await.unwrap();store.close().await;
         let options=SqliteConnectOptions::new().filename(&fixture.path);let mut connection=SqliteConnection::connect_with(&options).await.unwrap();
         let before=async {
-            sqlx::raw_sql("DROP TABLE network_policy_events;DROP TABLE network_policies;UPDATE meta SET value='8' WHERE key='schema_version'").execute(&mut connection).await?;
+            sqlx::raw_sql("DROP TABLE network_policy_applied_sources;DROP TABLE network_policy_changes;DROP TABLE network_policy_users;DROP TABLE network_policy_events;DROP TABLE network_policies;UPDATE meta SET value='8' WHERE key='schema_version'").execute(&mut connection).await?;
             let payload:String=sqlx::query_scalar("SELECT payload FROM network_controllers WHERE controller_generation=?").bind(creating.controller_generation.to_string()).fetch_one(&mut connection).await?;
             let history:Vec<String>=sqlx::query_scalar("SELECT payload FROM network_controller_events WHERE controller_generation=? ORDER BY revision").bind(creating.controller_generation.to_string()).fetch_all(&mut connection).await?;
             Ok::<_,sqlx::Error>((payload,history))
@@ -1113,7 +1113,7 @@ async fn schema_eight_controller_payload_and_history_bytes_survive_purpose_upgra
             let payload:String=sqlx::query_scalar("SELECT payload FROM network_controllers WHERE controller_generation=?").bind(creating.controller_generation.to_string()).fetch_one(&mut connection).await?;
             let history:Vec<String>=sqlx::query_scalar("SELECT payload FROM network_controller_events WHERE controller_generation=? ORDER BY revision").bind(creating.controller_generation.to_string()).fetch_all(&mut connection).await?;
             Ok::<_,sqlx::Error>((version,payload,history))
-        }.await;connection.close().await.unwrap();let after=after.unwrap();assert_eq!(after.0,"11");assert_eq!((after.1,after.2),before);
+        }.await;connection.close().await.unwrap();let after=after.unwrap();assert_eq!(after.0,"12");assert_eq!((after.1,after.2),before);
         assert!(upgraded.begin_controller_create(network.sandbox_id,creating.controller_generation,actual.revision).await.is_err());
     }).await;
 }
@@ -1158,7 +1158,7 @@ async fn schema_nine_native_enforcement_and_collection_dispatches_keep_exact_byt
         store.close().await;
         let options = SqliteConnectOptions::new().filename(&fixture.path);
         let mut connection = SqliteConnection::connect_with(&options).await.unwrap();
-        sqlx::raw_sql("DROP TABLE network_policy_events;DROP TABLE network_policies;UPDATE meta SET value='9' WHERE key='schema_version'")
+        sqlx::raw_sql("DROP TABLE network_policy_applied_sources;DROP TABLE network_policy_changes;DROP TABLE network_policy_users;DROP TABLE network_policy_events;DROP TABLE network_policies;UPDATE meta SET value='9' WHERE key='schema_version'")
             .execute(&mut connection)
             .await
             .unwrap();
@@ -1195,7 +1195,7 @@ async fn schema_nine_native_enforcement_and_collection_dispatches_keep_exact_byt
             .fetch_one(&mut connection)
             .await
             .unwrap();
-        assert_eq!(version, "11");
+        assert_eq!(version, "12");
         assert_eq!(snapshot(&mut connection).await, before);
         connection.close().await.unwrap();
     })
