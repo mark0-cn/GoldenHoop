@@ -7,13 +7,40 @@ import json
 import sqlite3
 import subprocess
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from contextlib import closing
+from datetime import datetime,timezone
 from pathlib import Path
 from guarded_bootstrap_contract import Contract as GuardedContract
 
 
 ALLOW={'policies':[{'default_action':'deny','rules':[{'destination':'93.184.216.34','ports':[443],'action':'allow'}]}]}
 DENY={'policies':[{'default_action':'deny','rules':[]}]}
+
+
+def current_ready_owner(records,policy,registration,desired_revision,previous_owner=None,now=None):
+    """Observation filter only; the actual private lease gate must also reply."""
+    try:
+        now=now or datetime.now(timezone.utc)
+        age=(now-datetime.fromisoformat(registration['heartbeat'].replace('Z','+00:00'))).total_seconds()
+        owner=policy['owner']
+        controllers=[row for row in records['controllers'] if row['controller_generation']==owner['controller_generation']]
+        return (records['sandbox']['state']=='running' and policy['phase']=='active'
+                and policy['desired_revision']==desired_revision and -5<=age<=10
+                and owner['worker_id']==registration['id']
+                and len(controllers)==1 and controllers[0]['phase']=='running'
+                and controllers[0]['container_id']==owner['container_id']
+                and (previous_owner is None or (owner['worker_id']!=previous_owner['worker_id']
+                     and owner['controller_generation']!=previous_owner['controller_generation'])))
+    except (KeyError,TypeError,ValueError):
+        return False
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self,req,fp,code,msg,headers,newurl):
+        return None
 
 
 class Contract(GuardedContract):
@@ -36,6 +63,27 @@ class Contract(GuardedContract):
         with closing(sqlite3.connect(self.database.as_uri()+'?mode=ro',uri=True,timeout=2)) as db:
             return json.loads(db.execute('SELECT payload FROM network_policies WHERE sandbox_id=?',(self.sandbox,)).fetchone()[0])
 
+    def registration(self):
+        with closing(sqlite3.connect(self.database.as_uri()+'?mode=ro',uri=True,timeout=2)) as db:
+            row=db.execute("SELECT value FROM meta WHERE key='worker'").fetchone()
+            return json.loads(row[0]) if row else None
+
+    def live_diagnostics(self,registration):
+        endpoint=urllib.parse.urlsplit(registration['endpoint'])
+        assert endpoint.scheme=='http' and endpoint.hostname in ('127.0.0.1','::1') and endpoint.port
+        assert not endpoint.username and not endpoint.password and endpoint.path=='' and not endpoint.query and not endpoint.fragment
+        request=urllib.request.Request(registration['endpoint']+'/internal/diagnostics',data=json.dumps({'sandbox_id':self.sandbox}).encode(),headers={'Authorization':'Bearer '+registration['token'],'Content-Type':'application/json'},method='POST')
+        try:
+            with urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect()).open(request,timeout=7) as response:
+                receipt=json.load(response)
+        except (urllib.error.URLError,TimeoutError,OSError,json.JSONDecodeError) as error:
+            self.report.setdefault('private_lease_gate_unavailable',[]).append({'error_type':type(error).__name__,'http_status':getattr(error,'code',None)})
+            return None
+        assert receipt['sandbox']['id']==self.sandbox
+        sample=receipt['runtime']
+        if sample is not None:assert sample['sandbox_id']==self.sandbox
+        return receipt if receipt['sandbox']['state']=='running' and sample is not None and sample['running'] is True and sample['paused'] is False else None
+
     def start_live_worker(self):
         assert self.worker is None
         self.log_handle=self.worker_log.open('ab')
@@ -43,13 +91,21 @@ class Contract(GuardedContract):
         self.worker=subprocess.Popen(command,stdout=self.log_handle,stderr=subprocess.STDOUT,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
         self.worker_started=True;self.report.setdefault('live_worker_commands',[]).append(command);self.save()
 
-    def wait_state(self,state,desired_revision=None):
+    def wait_state(self,state,desired_revision=None,previous_owner=None):
         deadline=time.monotonic()+100
         while time.monotonic()<deadline:
             assert self.worker and self.worker.poll() is None,'worker exited'
-            records=self.records();policy=self.control()
+            records=self.records();policy=self.control();registration=self.registration()
             if records['sandbox']['state']==state and (desired_revision is None or (policy['phase']=='active' and policy['desired_revision']==desired_revision)):
-                self.report.setdefault('observed_worker_states',[]).append({'records':records,'policy':policy});self.save();return records,policy
+                diagnostics=None
+                if state=='running':
+                    if not current_ready_owner(records,policy,registration,desired_revision,previous_owner):
+                        self.report.setdefault('historical_readiness_refused',[]).append({'state':state,'policy_phase':policy['phase'],'policy_owner':policy['owner'],'registered_worker_id':registration['id'] if registration else None})
+                        time.sleep(0.25);continue
+                    diagnostics=self.live_diagnostics(registration)
+                    if diagnostics is None:
+                        time.sleep(0.25);continue
+                self.report.setdefault('observed_worker_states',[]).append({'records':records,'policy':policy,'current_worker_id':registration['id'] if registration else None,'live_diagnostics':diagnostics});self.save();return records,policy
             time.sleep(0.25)
         self.report['last_live_records']=self.records();self.report['last_live_policy']=self.control();self.save()
         raise RuntimeError('worker did not reach '+state)
@@ -98,6 +154,7 @@ class Contract(GuardedContract):
         refused=self.policy('update','--desired-revision','0','--config-json',json.dumps(ALLOW),expected=1);assert refused['code']=='conflict'
         _,tightened=self.wait_state('running',1)
         assert tightened['observation']['binding']['revision']>initial_revision and tightened['config_sha256']!=renewed['config_sha256']
+        assert tightened['owner']==renewed['owner']
         self.command('goldenhoop_after_tightening');self.same_runtime(original)
         self.check('desired_policy_CAS_invalidates_old_readiness_and_the_same_session_confirms_a_new_tightened_revision')
         self.policy('desired','--state','paused');self.wait_state('paused')
@@ -123,7 +180,7 @@ class Contract(GuardedContract):
         sets=[row['set'] for row in expired['inet_table']['nftables'] if 'set' in row]
         live=[s for s in sets if s['name']=='live'];assert len(live)==1 and not live[0].get('elem')
         self.report['independent_expired_kernel_policy']=expired;self.same_runtime(original)
-        self.start_live_worker();_,recovered=self.wait_state('running',1)
+        self.start_live_worker();_,recovered=self.wait_state('running',1,previous_owner=old_owner)
         assert recovered['owner']['worker_id']!=old_owner['worker_id'] and recovered['owner']['controller_generation']!=old_owner['controller_generation']
         self.command('goldenhoop_after_worker_crash_recovery');self.same_runtime(original)
         self.check('actual_worker_crash_expires_the_kernel_lease_and_historical_active_metadata_cannot_bypass_fresh_epoch_recovery')

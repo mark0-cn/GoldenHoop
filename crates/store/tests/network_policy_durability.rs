@@ -297,6 +297,10 @@ async fn reopen_keeps_historical_ack_but_new_owner_requires_old_process_collecti
             )
             .await
             .unwrap();
+        let mut running = store.sandbox(id).await.unwrap();
+        running.sandbox.state = SandboxState::Running;
+        let original_handle = running.handle.clone().unwrap();
+        store.observe(running).await.unwrap();
         store.close().await;
         let reopened = Store::open(&path).await.unwrap();
         let result = AssertUnwindSafe(async {
@@ -304,10 +308,32 @@ async fn reopen_keeps_historical_ack_but_new_owner_requires_old_process_collecti
             assert_eq!(old.revision, active.revision);
             assert_eq!(old.owner.as_ref(), Some(&owner));
             assert_eq!(old.phase, NetworkPolicyPhase::Active);
+            let mut heartbeat = worker.clone();
+            heartbeat.heartbeat = Utc::now();
+            reopened.register_worker(&heartbeat).await.unwrap();
+            let still_active = reopened.network_policy(id).await.unwrap();
+            assert_eq!(still_active.revision, old.revision);
+            assert_eq!(still_active.phase, NetworkPolicyPhase::Active);
+            assert_eq!(
+                reopened.sandbox(id).await.unwrap().sandbox.state,
+                SandboxState::Running
+            );
             let mut replacement = worker.clone();
             replacement.id = Uuid::new_v4();
             replacement.heartbeat = Utc::now();
             reopened.register_worker(&replacement).await.unwrap();
+            let fenced = reopened.network_policy(id).await.unwrap();
+            assert_eq!(fenced.phase, NetworkPolicyPhase::Fenced);
+            assert!(fenced.observation.is_none());
+            assert_eq!(fenced.owner.as_ref(), Some(&owner));
+            assert_eq!(reopened.worker().await.unwrap().id, replacement.id);
+            let sandbox = reopened.sandbox(id).await.unwrap();
+            assert_eq!(sandbox.sandbox.state, SandboxState::Unknown);
+            assert!(sandbox.ever_running);
+            assert_eq!(
+                sandbox.handle.unwrap().backend_ref,
+                original_handle.backend_ref
+            );
             assert!(
                 reopened
                     .begin_network_policy_apply(id, old.revision, &owner)

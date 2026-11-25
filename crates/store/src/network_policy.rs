@@ -237,6 +237,36 @@ async fn fence_sandbox(
     }
     Ok(())
 }
+
+/// Publish a replacement registration only after historical owners lose their
+/// acknowledgements and Running observation in the same SQLite transaction.
+/// Heartbeats of the same registered worker never enter this path.
+pub(super) async fn fence_other_workers(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    worker_id: Uuid,
+    installation: Uuid,
+) -> Result<(), ApiError> {
+    let rows = sqlx::query("SELECT * FROM network_policies")
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(db)?;
+    for value in rows {
+        let mut record = row(&value, installation)?;
+        if record.phase != NetworkPolicyPhase::Fenced
+            && record
+                .owner
+                .as_ref()
+                .is_some_and(|owner| owner.worker_id != worker_id)
+        {
+            record.phase = NetworkPolicyPhase::Fenced;
+            record.attempt = None;
+            record.observation = None;
+            fence_sandbox(tx, record.sandbox_id).await?;
+            save(tx, &mut record).await?;
+        }
+    }
+    Ok(())
+}
 impl Store {
     pub async fn network_policy(&self, id: Uuid) -> Result<NetworkPolicyControl, ApiError> {
         let value = sqlx::query("SELECT * FROM network_policies WHERE sandbox_id=?")

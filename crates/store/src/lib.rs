@@ -349,8 +349,22 @@ impl Store {
     }
 
     pub async fn register_worker(&self, worker: &WorkerRegistration) -> Result<(), ApiError> {
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+        let previous: Option<String> =
+            sqlx::query_scalar("SELECT value FROM meta WHERE key='worker'")
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(db)?;
+        let previous = previous
+            .as_deref()
+            .map(decode::<WorkerRegistration>)
+            .transpose()?;
+        if previous.as_ref().is_none_or(|old| old.id != worker.id) {
+            network_policy::fence_other_workers(&mut tx, worker.id, self.installation_id).await?;
+        }
         sqlx::query("INSERT INTO meta(key,value) VALUES('worker',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
-            .bind(encode(worker)?).execute(&self.pool).await.map_err(db)?;
+            .bind(encode(worker)?).execute(&mut *tx).await.map_err(db)?;
+        tx.commit().await.map_err(db)?;
         Ok(())
     }
 
