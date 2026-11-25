@@ -186,6 +186,11 @@ async fn send_datagram(socket: &UdpSocket, reply: &[u8], peer: SocketAddr) {
 }
 
 impl Frontend {
+    pub fn is_running(&self) -> bool {
+        !self.stop.is_cancelled()
+            && !self.tasks.is_empty()
+            && self.tasks.iter().all(|task| !task.is_finished())
+    }
     pub async fn shutdown(mut self) {
         self.stop.cancel();
         for task in self.tasks.drain(..) {

@@ -80,6 +80,8 @@ struct Args {
     bootstrap_expect_bridge_unavailable: bool,
     #[arg(long, requires = "bootstrap_workload")]
     bootstrap_stop_after_prepare: bool,
+    #[arg(long, requires = "bootstrap_workload")]
+    bootstrap_dns_upstream: Option<std::net::SocketAddr>,
     #[arg(long)]
     workload_image: Option<String>,
 }

@@ -16,6 +16,7 @@ use tokio::{
 
 const NFT: &str = "/usr/sbin/nft";
 const MAX_OUTPUT: u64 = 4 * 1024 * 1024;
+mod binding;
 mod destinations;
 mod resolver;
 mod source;
@@ -145,14 +146,19 @@ impl Manager {
         {
             return Ok(None);
         }
-        let value: Value =
-            serde_json::from_slice(&nft(&["--json", "list", "table", "inet", &table], None).await?)
-                .map_err(|_| {
-                    error(
-                        ErrorCode::BackendUnavailable,
-                        "invalid nft table observation",
-                    )
-                })?;
+        let value: Value = serde_json::from_slice(
+            &nft(
+                &["--json", "--numeric", "list", "table", "inet", &table],
+                None,
+            )
+            .await?,
+        )
+        .map_err(|_| {
+            error(
+                ErrorCode::BackendUnavailable,
+                "invalid nft table observation",
+            )
+        })?;
         let entries = value["nftables"].as_array().ok_or_else(|| {
             error(
                 ErrorCode::BackendUnavailable,

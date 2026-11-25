@@ -27,6 +27,7 @@ pub struct Listening {
 pub(super) struct DnsState {
     upstream: Upstream,
     pub(super) deadline: Instant,
+    pub(super) expires_at: Option<chrono::DateTime<chrono::Utc>>,
     pub(super) model: Option<Model>,
     pub(super) config: Option<Config>,
     pub(super) book: Option<LeaseBook>,
@@ -138,6 +139,40 @@ impl Manager {
         upstream: IpEndpoint,
         remaining_seconds: u16,
     ) -> Result<Observation, ApiError> {
+        if !(1..=1800).contains(&remaining_seconds) {
+            return Err(error(
+                ErrorCode::InvalidRequest,
+                "invalid remaining sandbox DNS lifetime",
+            ));
+        }
+        self.configure_dns(
+            expected,
+            upstream,
+            Instant::now() + Duration::from_secs(u64::from(remaining_seconds)),
+            None,
+        )
+        .await
+    }
+
+    pub async fn configure_dns_until(
+        &mut self,
+        expected: u64,
+        upstream: IpEndpoint,
+        expires_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Observation, ApiError> {
+        let started = Instant::now();
+        let remaining = crate::binding::remaining_lifetime(expires_at, chrono::Utc::now())?;
+        self.configure_dns(expected, upstream, started + remaining, Some(expires_at))
+            .await
+    }
+
+    async fn configure_dns(
+        &mut self,
+        expected: u64,
+        upstream: IpEndpoint,
+        deadline: Instant,
+        expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<Observation, ApiError> {
         if self.destinations.is_some() {
             return Err(error(
                 ErrorCode::InvalidState,
@@ -151,17 +186,18 @@ impl Manager {
                 "configure DNS once after confirmed quarantine",
             ));
         }
-        if !(1..=1800).contains(&remaining_seconds) {
-            return Err(error(
-                ErrorCode::InvalidRequest,
-                "invalid remaining sandbox DNS lifetime",
-            ));
-        }
         let upstream = Upstream::new(upstream)?;
         self.expected(expected).await?;
+        if Instant::now() >= deadline {
+            return Err(error(
+                ErrorCode::DeadlineExceeded,
+                "DNS lifetime elapsed during configuration",
+            ));
+        }
         self.dns = Some(DnsState {
             upstream,
-            deadline: Instant::now() + Duration::from_secs(u64::from(remaining_seconds)),
+            deadline,
+            expires_at,
             model: None,
             config: None,
             book: None,

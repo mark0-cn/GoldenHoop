@@ -1,6 +1,8 @@
 //! Actual production-driver staging, not workload readiness or policy publication.
 use super::*;
-use goldenhoop_docker::{ControllerPlan, ControllerSession, WorkloadNetworkPlan};
+use goldenhoop_docker::{
+    ControllerPlan, ControllerSession, QuarantineProtection, WorkloadNetworkPlan,
+};
 
 pub(super) async fn run(
     args: &Args,
@@ -96,9 +98,14 @@ pub(super) async fn run(
         require(serde_json::to_value(&endpoint).map_err(|_|invalid())?==serde_json::to_value(independent).map_err(|_|invalid())?)?;
         let source=driver.bind_quarantined_source(&handle,&network,session).await?;
         require(driver.bind_quarantined_source(&handle,&network,session).await.is_err() && !session.is_uncertain())?;
+        let protection=QuarantineProtection {upstream:args.bootstrap_dns_upstream.ok_or_else(invalid)?,private_exceptions:vec![],control_addresses:vec![]};
+        let binding=driver.protect_quarantined_network(&handle,&network,session,&source,&protection).await?;
+        require(driver.protect_quarantined_network(&handle,&network,session,&source,&protection).await.is_err() && !session.is_uncertain())?;
+        let journal=store.bind_network(id,plan.native.identity.generation,plan.native.provisioning_token,goldenhoop_store::NetworkBinding {network_id:network.network_id.clone(),allocation:binding.allocation.clone(),source:binding.source.clone(),destinations:binding.destinations.clone()}).await?;
+        require(journal.phase==NetworkPhase::Bound)?;
         let current=store.sandbox(id).await?;
         require(current.sandbox.state==SandboxState::Starting && !current.ever_running)?;
-        Ok::<Value,ApiError>(json!({"mode":"trusted_agent_quarantined","handle":handle,"network":network,"endpoint":endpoint,"source_binding":source,"duplicate_source_binding_refused":true,"missing_floor_refused_before_creation":true,"none_network_fallback_refused":true,"duplicate_start_refused":true,"nonempty_bootstrap_refused":true,"workload_ready":false,"user_execution_dispatched":false,"stored":current.sandbox,"ever_running":current.ever_running,"guard":controller_call(session,ControllerRequest::Inspect{}).await?,"profile":observed}))
+        Ok::<Value,ApiError>(json!({"mode":"trusted_agent_quarantined","handle":handle,"network":network,"endpoint":endpoint,"source_binding":source,"protected_binding":binding,"network_journal":journal,"duplicate_protection_refused":true,"duplicate_source_binding_refused":true,"missing_floor_refused_before_creation":true,"none_network_fallback_refused":true,"duplicate_start_refused":true,"nonempty_bootstrap_refused":true,"workload_ready":false,"user_execution_dispatched":false,"stored":current.sandbox,"ever_running":current.ever_running,"guard":controller_call(session,ControllerRequest::Inspect{}).await?,"profile":observed}))
     }.await;
     if result.is_err() {
         driver.remove(&handle).await?;

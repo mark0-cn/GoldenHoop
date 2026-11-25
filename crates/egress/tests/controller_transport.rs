@@ -336,6 +336,19 @@ async fn actual_controller_stdio_refuses_unopened_operations_and_exits_after_eof
     for (request, expected) in [
         (Request::Inspect {}, ErrorCode::InvalidState),
         (
+            Request::ConfigureDns {
+                expected_revision: 0,
+                upstream: "127.0.0.1:19004".parse().unwrap(),
+            },
+            ErrorCode::InvalidState,
+        ),
+        (
+            Request::InspectBinding {
+                expected_revision: 0,
+            },
+            ErrorCode::InvalidState,
+        ),
+        (
             Request::BindRuntimeSource {
                 expected_revision: 0,
                 addresses: goldenhoop_egress::EndpointAddresses {
@@ -385,6 +398,13 @@ async fn actual_collection_only_binary_refuses_enforcement_before_any_allocation
     let mut client = Client::new(child.stdout.take().unwrap(), child.stdin.take().unwrap());
     for command in [
         Request::Install {},
+        Request::ConfigureDns {
+            expected_revision: 0,
+            upstream: "127.0.0.1:19004".parse().unwrap(),
+        },
+        Request::InspectBinding {
+            expected_revision: 0,
+        },
         Request::BindRuntimeSource {
             expected_revision: 0,
             addresses: goldenhoop_egress::EndpointAddresses {

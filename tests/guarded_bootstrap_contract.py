@@ -12,6 +12,7 @@ from pathlib import Path
 
 from network_provider_contract import Contract as ProviderContract
 from worker_network_recovery_contract import Contract as RecoveryContract
+from guarded_bootstrap_samples import UPSTREAM
 
 SOURCE_AUDIT = r'''
 import datetime,json,pathlib,re,subprocess,sys,uuid
@@ -33,7 +34,14 @@ native=json.loads(p.stdout);tables=[row['table'] for row in native['nftables'] i
 assert len(tables)==1 and tables[0]['family']=='bridge' and tables[0]['name']==table
 chains=[row['chain']['name'] for row in native['nftables'] if 'chain' in row]
 assert owner.replace(':','_') in chains and 'source_version_1' in chains
-print(json.dumps({'observed_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'bridge':allocation['bridge'],'bridge_ifindex':int((bridge/'ifindex').read_text()),'port':ep['port'],'port_ifindex':int((port/'ifindex').read_text()),'port_target':str(ports[0].resolve()),'gateway_addresses':addresses,'source_table':native}))
+result={'observed_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'bridge':allocation['bridge'],'bridge_ifindex':int((bridge/'ifindex').read_text()),'port':ep['port'],'port_ifindex':int((port/'ifindex').read_text()),'port_target':str(ports[0].resolve()),'gateway_addresses':addresses,'source_table':native}
+if 'destinations' in receipt:
+ table='gh_d_'+uuid.UUID(allocation['generation']).hex
+ p=subprocess.run(['nft','--json','list','table','inet',table],capture_output=True,text=True,timeout=5);assert p.returncode==0,p.stderr
+ result['destination_table']=json.loads(p.stdout)
+ chains=[row['chain']['name'] for row in result['destination_table']['nftables'] if 'chain' in row]
+ assert owner.replace(':','_') in chains and 'destination_version_2' in chains
+print(json.dumps(result))
 '''
 
 
@@ -46,10 +54,13 @@ class Contract(RecoveryContract):
         self.report['mode'] = args.mode
         self.report['source_files_sha256']['tests/guarded_bootstrap_contract.py'] = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
         self.worker_started = False
+        self.upstream = None
+        samples=Path(__file__).with_name('guarded_bootstrap_samples.py')
+        self.report['source_files_sha256']['tests/guarded_bootstrap_samples.py']=hashlib.sha256(samples.read_bytes()).hexdigest()
 
     def invoke(self, action, *extra, expected=0):
         if action == 'init':
-            extra = ('--runtime', self.args.runtime, '--ttl-seconds', '600', '--workload-image', self.args.image, *extra)
+            extra = ('--runtime', self.args.runtime, '--ttl-seconds', '3600' if self.args.mode=='full' else '600', '--workload-image', self.args.image, *extra)
         if action.startswith('controller-'):
             extra = ('--controller-generation', self.controller_generation, *extra)
             if action == 'controller-create':
@@ -60,6 +71,9 @@ class Contract(RecoveryContract):
                 extra = ('--bootstrap-expect-bridge-unavailable', *extra)
             elif self.args.mode == 'prepared-exit':
                 extra = ('--bootstrap-stop-after-prepare', *extra)
+            else:
+                assert self.upstream
+                extra = ('--bootstrap-dns-upstream', self.upstream, *extra)
         try:
             return ProviderContract.invoke(self, action, *extra, expected=expected)
         except BaseException:
@@ -98,6 +112,22 @@ class Contract(RecoveryContract):
     def runtime_events(self, since, until):
         return [json.loads(line) for line in self.docker('events','--since',since,'--until',until,'--filter','type=container',
                 '--filter','label=dev.goldenhoop.sandbox='+self.sandbox,'--format','{{json .}}').stdout.splitlines()]
+
+    def start_upstream(self):
+        self.upstream_id=self.docker('run','--detach','--name','goldenhoop-bootstrap-dns-'+self.attempt,
+            '--label','dev.goldenhoop.installation='+self.installation,'--label','dev.goldenhoop.role=network-provider-audit',
+            '--label','dev.goldenhoop.test=network-provider','--label','dev.goldenhoop.attempt='+self.attempt,
+            '--runtime','runc','--network','host','--user','1000:1000','--cap-drop','ALL',
+            '--security-opt','no-new-privileges:true','--read-only','--no-healthcheck','--memory','64m','--memory-swap','64m',
+            '--cpus','0.25','--pids-limit','16','--entrypoint','python3',self.report['fixture_image_id'],'-B','-u','-c',UPSTREAM).stdout.strip()
+        deadline=time.monotonic()+10
+        while time.monotonic()<deadline:
+            logs=[json.loads(line) for line in self.docker('logs',self.upstream_id).stdout.splitlines()]
+            ready=next((row for row in logs if row.get('ready')),None)
+            if ready:
+                self.upstream=ready['endpoint'];self.report['owned_dns_spy']={'container_id':self.upstream_id,'endpoint':self.upstream};return
+            time.sleep(0.05)
+        raise RuntimeError('owned bootstrap DNS spy did not start')
 
     def recover_with_worker(self):
         assert self.controller_image_id and self.plan and not self.creation_uncertain
@@ -152,6 +182,7 @@ class Contract(RecoveryContract):
             else:
                 assert preflight.returncode==0,preflight.stderr
             since = datetime.now(timezone.utc).isoformat()
+            if self.args.mode=='full':self.start_upstream()
             self.invoke('controller-create')
             result = self.invoke('controller-run',expected=79 if self.args.mode=='prepared-exit' else 0)
             if self.args.mode=='prepared-exit':
@@ -193,11 +224,22 @@ class Contract(RecoveryContract):
                     assert not bootstrap['user_execution_dispatched'] and bootstrap['guard']['ethernet_guarded'] and not bootstrap['guard']['uncertain']
                     self.check('actual_supervisor_start_cross_checks_the_sole_endpoint_and_refuses_duplicate_or_none_network_startup')
                     source=bootstrap['source_binding']
-                    assert source['allocation']==bootstrap['network']['native']['allocation'] and source['revision']==bootstrap['guard']['revision']
+                    assert source['allocation']==bootstrap['network']['native']['allocation'] and source['revision']+1==bootstrap['guard']['revision']
                     assert source['source']['endpoint']['mac']==link['MacAddress'] and source['source']['endpoint']['ipv4']==link['IPAddress'] and source['source']['endpoint']['ipv6']==link['GlobalIPv6Address']
                     assert bootstrap['duplicate_source_binding_refused'] and bootstrap['guard']['source_guarded']
                     self.report['independent_native_source_binding']=self.source_audit(source,result['exchange']['native_alias']['alias'])
                     self.check('the_provider_addresses_bind_to_the_unique_actual_host_port_and_an_independently_owned_source_table')
+                    binding=bootstrap['protected_binding']
+                    assert binding['source']==source['source'] and binding['allocation']==source['allocation'] and binding['revision']==bootstrap['guard']['revision']
+                    assert binding['expires_at']==self.plan['expires_at'] and bootstrap['duplicate_protection_refused'] and bootstrap['guard']['destinations_guarded']
+                    assert len(binding['destinations']['dns'])==2 and bootstrap['network_journal']['phase']=='bound'
+                    assert bootstrap['network_journal']['binding']['destinations']==binding['destinations']
+                    self.report['independent_protected_binding']=self.source_audit(binding,result['exchange']['native_alias']['alias'])
+                    logs=[json.loads(line) for line in self.docker('logs',self.upstream_id).stdout.splitlines()]
+                    assert not any(row.get('unexpected_query') for row in logs)
+                    self.report['owned_dns_spy']['logs']=logs
+                    self.owned(json.loads(self.docker('inspect',self.upstream_id).stdout)[0]);self.docker('rm','--force','--volumes',self.upstream_id)
+                    self.check('live_DNS_tasks_and_actual_destination_rules_bind_the_original_one_hour_expiry_without_a_lease_or_upstream_query')
             before=self.records()
             assert before['sandbox']['state'] in ('pending','starting')
             assert not any(row['kind']=='create' and row['state']=='succeeded' for row in before['operations'])

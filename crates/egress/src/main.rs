@@ -17,11 +17,13 @@ mod server {
         Native(goldenhoop_egress::native::NativeBridgeObservation),
         Collected(goldenhoop_egress::CollectionReceipt),
         BoundSource(goldenhoop_egress::SourceBindingReceipt),
+        Binding(goldenhoop_egress::ProtectedBindingReceipt),
     }
 
     async fn execute(
         collection_only: bool,
         manager: &mut Option<Manager>,
+        native_context: &mut Option<goldenhoop_egress::native::NativeBridgePlan>,
         frontend: &mut Option<goldenhoop_egress::frontend::Frontend>,
         queries: &tokio::sync::mpsc::Sender<goldenhoop_egress::frontend::QueryRequest>,
         request: Request,
@@ -44,15 +46,32 @@ mod server {
                     "native binding requires no active manager",
                 ));
             }
-            return goldenhoop_egress::native::bind(plan)
-                .await
-                .map(Reply::Native);
+            if native_context.as_ref().is_some_and(|bound| {
+                serde_json::to_value(bound).ok() != serde_json::to_value(&plan).ok()
+            }) {
+                return Err(ApiError::new(
+                    ErrorCode::Conflict,
+                    "native dispatch is already frozen",
+                ));
+            }
+            let observed = goldenhoop_egress::native::bind(plan.clone()).await?;
+            *native_context = Some(plan);
+            return Ok(Reply::Native(observed));
         }
         if let Request::Open { allocation } = request {
             if manager.is_some() {
                 return Err(ApiError::new(
                     ErrorCode::Conflict,
                     "controller already has an allocation",
+                ));
+            }
+            if native_context
+                .as_ref()
+                .is_some_and(|bound| bound.allocation.owner() != allocation.owner())
+            {
+                return Err(ApiError::new(
+                    ErrorCode::Conflict,
+                    "allocation differs from native dispatch",
                 ));
             }
             let opened = Manager::new(allocation).await?;
@@ -64,6 +83,43 @@ mod server {
             ApiError::new(ErrorCode::InvalidState, "open a trusted allocation first")
         })?;
         match request {
+            Request::ConfigureDns {
+                expected_revision,
+                upstream,
+            } => {
+                let bound = native_context.as_ref().ok_or_else(|| {
+                    ApiError::new(
+                        ErrorCode::InvalidState,
+                        "bind original native lifetime before DNS",
+                    )
+                })?;
+                bound.validate_at(chrono::Utc::now())?;
+                manager
+                    .configure_dns_until(expected_revision, upstream, bound.expires_at)
+                    .await
+            }
+            Request::InspectBinding { expected_revision } => {
+                if !frontend
+                    .as_ref()
+                    .is_some_and(|frontend| frontend.is_running())
+                {
+                    return Err(ApiError::new(
+                        ErrorCode::InvalidState,
+                        "protected DNS frontend is not running",
+                    ));
+                }
+                let receipt = manager.inspect_binding(expected_revision).await?;
+                if !frontend
+                    .as_ref()
+                    .is_some_and(|frontend| frontend.is_running())
+                {
+                    return Err(ApiError::new(
+                        ErrorCode::BackendUnavailable,
+                        "protected DNS frontend stopped during inspection",
+                    ));
+                }
+                return Ok(Reply::Binding(receipt));
+            }
             Request::ProtectDestinations {
                 expected_revision,
                 private_exceptions,
@@ -173,6 +229,7 @@ mod server {
             return Err("manager accepts private JSON-line control on stdio only".into());
         }
         let mut manager: Option<Manager> = None;
+        let mut native_context = None;
         let mut frontend: Option<goldenhoop_egress::frontend::Frontend> = None;
         let (queries, mut incoming) = goldenhoop_egress::frontend::channel();
         let mut input = BufReader::new(tokio::io::stdin());
@@ -207,6 +264,7 @@ mod server {
                         match execute(
                             collection_only,
                             &mut manager,
+                            &mut native_context,
                             &mut frontend,
                             &queries,
                             frame.command,

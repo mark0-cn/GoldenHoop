@@ -25,7 +25,7 @@ pub use controllers::{
     ControllerObservation, ControllerPlan, ControllerRemoval, ControllerSession,
     DockerControllerProvider,
 };
-pub use guarded::{WorkloadEndpoint, WorkloadNetworkPlan};
+pub use guarded::{QuarantineProtection, WorkloadEndpoint, WorkloadNetworkPlan};
 pub use networks::{DockerNetworkProvider, NetworkObservation, NetworkPlan, NetworkRemoval};
 struct ProbeSupport {
     diagnostics: bool,

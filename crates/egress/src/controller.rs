@@ -63,6 +63,15 @@ pub enum Request {
         upstream: std::net::SocketAddr,
         remaining_seconds: u16,
     },
+    /// Uses the original expiry frozen by successful BindNative, never a
+    /// caller-selected extension of the sandbox lifetime.
+    ConfigureDns {
+        expected_revision: u64,
+        upstream: std::net::SocketAddr,
+    },
+    InspectBinding {
+        expected_revision: u64,
+    },
     Resolve {
         wire: Vec<u8>,
         #[serde(default)]

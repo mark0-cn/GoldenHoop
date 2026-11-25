@@ -8,7 +8,9 @@ use goldenhoop_egress::{
 };
 use serde::{Deserialize, Serialize};
 use std::net::{Ipv4Addr, Ipv6Addr};
+mod protection;
 mod source;
+pub use protection::QuarantineProtection;
 #[cfg(test)]
 mod tests;
 
@@ -28,6 +30,19 @@ pub struct WorkloadEndpoint {
     pub mac: Mac,
     pub ipv4: Ipv4Addr,
     pub ipv6: Ipv6Addr,
+}
+// Cancellation after a mutation must fence the session while confirmation
+// remains incomplete. Closing it does not attest process or kernel absence.
+struct ControllerAttempt<'a> {
+    session: &'a mut ControllerSession,
+    confirmed: bool,
+}
+impl Drop for ControllerAttempt<'_> {
+    fn drop(&mut self) {
+        if !self.confirmed {
+            self.session.fence();
+        }
+    }
 }
 fn conflict() -> ApiError {
     ApiError::new(

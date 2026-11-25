@@ -1,6 +1,8 @@
 //! Trusted host packet-filter adapter. No production capability is published.
 //! The caller must supply a journal-bound allocation over private stdio.
+mod binding;
 mod collection;
+pub use binding::ProtectedBindingReceipt;
 pub mod controller;
 pub use collection::CollectionReceipt;
 mod controller_plan;
@@ -20,6 +22,7 @@ pub use destinations::{DestinationClass, DestinationScope, ProtectedDestinations
 mod destination_plan;
 pub use destination_plan::{DestinationDefinition, DestinationListener, DestinationPlan};
 mod plan;
+pub mod quarantine;
 pub use plan::{Allocation, Config, DnsBinding, DnsBindings, LEASE_SECONDS, Plan};
 #[cfg(target_os = "linux")]
 pub mod frontend;

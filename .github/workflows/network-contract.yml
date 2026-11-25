@@ -22,7 +22,11 @@ jobs:
       - name: Verify actual Rust unreferenced DNS set expiry and collection
         run: python3 -B tests/dns_set_probe.py --rust --output evidence/dns-set-staging.json
       - name: Build the production worker and private allocation contract
-        run: cargo build --locked -p goldenhoop-control --bin goldenhoopd --example network_allocation
+        run: |
+          cargo build --locked -p goldenhoop-control --bin goldenhoopd --example network_allocation
+          cargo build --locked -p goldenhoop-egress --example quarantine_readback
+      - name: Verify actual owned quarantine semantics and weakened-rule refusal
+        run: python3 -B tests/quarantine_readback_contract.py --binary target/debug/examples/network_allocation --readback-binary target/debug/examples/quarantine_readback --work-dir .test-work --output evidence/quarantine-readback.json
       - name: Verify durable controller epochs, dispatch recovery, native binding and collection
         run: python3 -B tests/controller_provider_contract.py --binary target/debug/examples/network_allocation --work-dir .test-work --output evidence/network-provider.json
       - name: Verify production worker collection of actual expired owned rules
@@ -94,7 +98,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Build the production driver bootstrap and recovery contract
         run: cargo build --locked -p goldenhoop-control --bin goldenhoopd --example network_allocation
-      - name: Verify guarded bootstrap, native source binding and owned worker collection
+      - name: Verify guarded source, DNS, destination binding and owned worker collection
         run: python3 -B tests/guarded_bootstrap_contract.py --runtime ${{ matrix.runtime }} --binary target/debug/examples/network_allocation --worker-binary target/debug/goldenhoopd --work-dir .test-work --output evidence/guarded-bootstrap-${{ matrix.runtime }}.json
       - name: Verify collection after actual process exit before trusted-agent start
         run: python3 -B tests/guarded_bootstrap_contract.py --runtime ${{ matrix.runtime }} --mode prepared-exit --binary target/debug/examples/network_allocation --worker-binary target/debug/goldenhoopd --work-dir .test-work --output evidence/guarded-prepared-exit-${{ matrix.runtime }}.json

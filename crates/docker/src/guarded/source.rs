@@ -2,7 +2,7 @@
 use super::*;
 use goldenhoop_egress::{EndpointAddresses, SourceBindingReceipt};
 
-async fn call(
+pub(super) async fn call(
     session: &mut ControllerSession,
     request: Request,
 ) -> Result<serde_json::Value, ApiError> {
@@ -49,6 +49,11 @@ impl DockerDriver {
         {
             return Err(conflict());
         }
+        let mut attempt = ControllerAttempt {
+            session,
+            confirmed: false,
+        };
+        let session = &mut *attempt.session;
         let result = async {
             let value = call(
                 session,
@@ -87,14 +92,12 @@ impl DockerDriver {
             Ok(receipt)
         }
         .await;
-        if result.is_err() {
-            session.fence();
-        }
+        attempt.confirmed = result.is_ok();
         result
     }
 }
 
-fn validate_receipt(
+pub(super) fn validate_receipt(
     network: &WorkloadNetworkPlan,
     endpoint: &WorkloadEndpoint,
     native: &NetworkObservation,
