@@ -256,8 +256,10 @@ async fn read_policy(
     )
     .map_err(|_| conflict())?;
     validate_policy(network, frozen, revision, digest, wall, &receipt)?;
-    // Subtract the complete exchange latency by anchoring the returned duration
-    // at request start, never at receive time.
+    // The server's verified budget begins when it starts sampling, after this
+    // request starts. Anchoring here conservatively includes transport without
+    // requiring matching monotonic epochs or extending the native deadline.
+    // Never anchor a receipt's duration at receive time.
     let until = start + Duration::from_millis(u64::from(receipt.lease_remaining_milliseconds));
     if until <= Instant::now() {
         return Err(conflict());

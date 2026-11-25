@@ -4,8 +4,10 @@ The production worker can adopt an explicitly staged complete protected network.
 This path uses the actual Docker driver and controller transport. New supported
 host gates cover Ready, commands, renewal, tightening, pause and crash recovery on
 runc and gVisor. Their current acceptance status belongs in `progress.md`.
-Public network provisioning, hierarchy policy composition and capability probes
-remain required. NetworkPolicy and SecretInjection remain unadvertised.
+Optional public provisioning uses the same path and requires an actual deployment
+probe. Full public hierarchy acceptance remains required. NetworkPolicy stays
+unadvertised without configuration or after a failed probe; SecretInjection
+remains unadvertised.
 
 Schema 11 adds a desired configuration, its fingerprint and version, the original
 protected checkpoint, the approved upstream, controller ownership and an
@@ -37,7 +39,9 @@ registration, records a policy attempt before mutation, applies the complete
 desired configuration, and accepts only actual driver readbacks. It retains the
 nonserializable monotonic lease and renews through full native readback every two
 seconds. A one-second dispatch margin is subtracted from its conservative bound.
-Renewals do not turn old persisted receipts into fresh proof.
+Receipt budgets follow the [sampling-start finite-lease contract](effective-policy.md).
+The actor retains all existing private deadline, owner, source and publication
+checks. Renewals do not turn old persisted receipts into fresh proof.
 
 Running publication requires a current local actor, matching desired version and
 owner, current worker registration and a positive local lease. All worker agent

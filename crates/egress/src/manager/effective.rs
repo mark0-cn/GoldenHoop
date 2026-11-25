@@ -139,6 +139,11 @@ impl Manager {
         &self,
         expected: u64,
     ) -> Result<EffectivePolicyReceipt, ApiError> {
+        // The wall timestamp and monotonic budget describe the same sampling
+        // start. Capture wall time first so it cannot move the budget past the
+        // original absolute lifetime merely through local capture order.
+        let observed_at = chrono::Utc::now();
+        let started = Instant::now();
         let config = self
             .effective_policy
             .as_ref()
@@ -185,7 +190,8 @@ impl Manager {
             self.lease_until
                 .ok_or_else(|| error(ErrorCode::InvalidState, "local lease is absent"))?,
         );
-        let remaining = until.saturating_duration_since(Instant::now()).as_millis();
+        let remaining =
+            crate::policy_binding::sampled_lease_budget(started, Instant::now(), until)?;
         let receipt = EffectivePolicyReceipt {
             binding: ProtectedBindingReceipt {
                 allocation: self.allocation.clone(),
@@ -193,12 +199,11 @@ impl Manager {
                 destinations: destinations.definition,
                 revision: expected,
                 expires_at,
-                observed_at: chrono::Utc::now(),
+                observed_at,
             },
             config_sha256: config.digest()?,
             native_sha256: kernel.sha256,
-            lease_remaining_milliseconds: u32::try_from(remaining)
-                .map_err(|_| error(ErrorCode::Conflict, "invalid live lease bound"))?,
+            lease_remaining_milliseconds: remaining,
         };
         receipt.validate_config(config)?;
         Ok(receipt)

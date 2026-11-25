@@ -6,17 +6,17 @@ retain none-network isolation and do not advertise `NetworkPolicy`. New public
 creation, environment-probe and five-level runtime gates require their own
 supported-host acceptance; private staged contracts do not establish them.
 
-At f79409c, all ten host records and both sixteen-group public policy gates pass.
-Both automatic creation gates still fail child readiness before any private
-command or public creation group is accepted. The new static reason identifies
-published private readiness expiry in both runtimes. The
-[immutable network archive](evidence/m3-lifecycle-termination-intent-ci-45714471223-archive.json)
-preserves twenty-four records with Complete cleanup. The root repeatedly changes
-between Running and Unknown while its policy stays Active, and the child pauses
-with desired Running. Active metadata is not Ready. Exchange timing still needs
-measurement before attributing the expiry to a specific cause.
+At 8353aed, all ten host records and both sixteen-group public policy gates pass.
+The runc environment probe completes six root/child commands and confirmed
+collection, and two public node creation operations succeed. The five-level
+case then fails while the third node waits for readiness: the root is Unknown
+with published private readiness expired, while descendants pause with desired
+Running. The gVisor probe still fails child readiness before any command. The
+[immutable network archive](evidence/m3-policy-sampling-budget-ci-45717051531-archive.json)
+preserves twenty-four records with Complete cleanup. Full five-level public
+acceptance remains required. Active metadata is not Ready.
 
-The current [diagnosis](evidence/m3-network-probe-completion-diagnosis.json)
+The earlier [diagnosis](evidence/m3-network-probe-completion-diagnosis.json)
 separates these failures from a definite, previously unreached completion bug:
 the known private deployment-probe operation could never settle successfully.
 Its durable success guard now requires historical Running, normal Terminated
@@ -25,6 +25,15 @@ confirmed collection remain mandatory in the worker before advertising support.
 Static dispatch refusal reasons now distinguish the existing readiness checks
 and are retained in the sandbox observation. No check, lease lifetime,
 publication margin, timeout or execution assertion is relaxed.
+
+The current [sampling-budget diagnosis](evidence/m3-policy-sampling-budget-diagnosis.json)
+records a conservative accounting mismatch: the manager previously calculated
+remaining time after sampling, while the client anchored it at request start.
+The manager now returns a start-relative budget after the same complete native
+checks and a still-live-at-finish check. The client retains request-start
+anchoring and every existing dispatch fence. The native maximum, original
+lifetime and one-second publication margin are unchanged. Its effect on the
+full supported-host hierarchy requires a current-source retest.
 
 The independent readback fixture now proves its private IPv6 address can bind
 TCP and UDP before testing the production manager. Its seven local and f79409c

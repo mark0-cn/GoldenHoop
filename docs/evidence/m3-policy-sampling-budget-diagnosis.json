@@ -1,0 +1,175 @@
+{
+  "timestamp": "2026-11-25T23:23:10.851336+00:00",
+  "base": "8353aedd7638ff32fc7a935dbb5439cfbfe0ffc2",
+  "current_source_files_sha256": {
+    "crates/egress/src/policy_binding.rs": "acefed91e8bae590813afe573dae876a12acbdd79817b02b92eec29099112ba8",
+    "crates/egress/src/manager/effective.rs": "75f8d817b268e66a9bde8db389b7d3c24f4794b8f0b79977f821338688cdded9",
+    "crates/docker/src/guarded/policy.rs": "d28983fb497f5b7c06d3458c6f2e91bc3703fc33bb8c5fed72d67c8f45afeec7",
+    "crates/control/src/worker/network_policy.rs": "ae91a08dadbc309b5ab5ad1428b04e58f3cb2d84f1d6d3fdc2adb3d26a79948f",
+    "crates/store/src/network_policy.rs": "34c88f92e438b405c71e981532bb9bbd17df3d976674e05c0a0792fc7fdcfa30",
+    "crates/egress/src/plan.rs": "b3f9b857445b55cf7f39eb6d615f678d86effe9df62ef035559a81f81ea082f6",
+    "crates/egress/src/manager.rs": "49c5d7f5b2f8b646347a83914ee3df0ab37e7db6ca341585731301829a1d1662",
+    "crates/egress/src/policy_readback/lease.rs": "65687bf46cd661f9799d38d323300797be13367724f3d1e2aecb1f9cd5c4f49b"
+  },
+  "unchanged_boundary_sources": {
+    "crates/control/src/worker/network_policy.rs": "ae91a08dadbc309b5ab5ad1428b04e58f3cb2d84f1d6d3fdc2adb3d26a79948f",
+    "crates/store/src/network_policy.rs": "34c88f92e438b405c71e981532bb9bbd17df3d976674e05c0a0792fc7fdcfa30",
+    "crates/egress/src/plan.rs": "b3f9b857445b55cf7f39eb6d615f678d86effe9df62ef035559a81f81ea082f6",
+    "crates/egress/src/manager.rs": "49c5d7f5b2f8b646347a83914ee3df0ab37e7db6ca341585731301829a1d1662",
+    "crates/egress/src/policy_readback/lease.rs": "65687bf46cd661f9799d38d323300797be13367724f3d1e2aecb1f9cd5c4f49b"
+  },
+  "red_comparison": {
+    "report": "docs/evidence/m3-policy-sampling-budget-initial-domain-regression.json",
+    "sha256": "e4d51864a1f54496368c68150ad3cc0f8da33f42a53fa97e35074f64d0783a70",
+    "expected_exit_code": 101,
+    "failed_tests": 2,
+    "same_regression_test_body_after_fix": true,
+    "scope": "Synthetic temporal-budget tests only. Source snapshots preserve the pre-fix extraction; they are neither immutable-base nor final-current sources."
+  },
+  "temporal_model": {
+    "scope": "Illustrative elapsed-time model, not a measured CI trace. Server and client do not exchange monotonic epochs.",
+    "client_send_ms": 0,
+    "server_sample_start_ms": 5,
+    "server_sample_finish_ms": 4005,
+    "client_receive_ms": 5005,
+    "same_verified_native_expiry_ms": 10000,
+    "old_end_relative_budget_ms": 5995,
+    "old_request_anchored_deadline_ms": 5995,
+    "old_remaining_at_receive_ms": 990,
+    "new_start_relative_budget_ms": 9995,
+    "new_request_anchored_deadline_ms": 9995,
+    "new_remaining_at_receive_ms": 4990,
+    "unchanged_publication_margin_ms": 1000
+  },
+  "safety_argument": [
+    "The native deadline is the unchanged minimum of the fully verified kernel deadline and the cached deadline of the legitimately issued lease.",
+    "The server requires the same lease to remain live after all native, source, destination, bridge and lifetime checks complete. Expired or reversed samples return no budget.",
+    "The budget is rounded down from that same deadline to server sampling start, is positive, and cannot exceed the existing ten-second maximum. Its wall timestamp is captured before the monotonic start and remains subject to the original absolute expiry bound.",
+    "The client sends before server sampling begins. Anchoring the returned duration at client request start ends no later than the same native deadline, without comparing monotonic epochs. Late delivery still fails the existing client-now deadline check.",
+    "All full preflight/postflight native readbacks, endpoint identity checks, intersected private deadlines, source-version/owner checks and the one-second publication margin remain unchanged. Serialized public receipts still cannot construct private dispatch authority."
+  ],
+  "causal_limit": "The safe but overly conservative accounting mismatch is confirmed by source and the red/green clock regressions. No actual per-exchange timing was recorded in the archived CI. Its effect on full supported-host five-level liveness requires exact current-source retesting.",
+  "prior_archives": [
+    {
+      "run": 45717051531,
+      "commit": "8353aedd7638ff32fc7a935dbb5439cfbfe0ffc2",
+      "report": "docs/evidence/m3-policy-sampling-budget-ci-45717051531-archive.json",
+      "sha256": "0931d6ac188a8db43537465257027d3d41d52fabfecce5ad61ce1c9977d0ae30",
+      "conclusion": "failure",
+      "raw_records": 24,
+      "unique_sources": 226,
+      "cleanup_not_complete": 0
+    },
+    {
+      "run": 45714471330,
+      "commit": "f79409cbcc87cc05a838e87104e1424df3eab50c",
+      "report": "docs/evidence/m3-policy-sampling-budget-ci-45714471330-archive.json",
+      "sha256": "28cbdbdce21b582b46548124604e137eea458c7d762e330092dc43878a0b2723",
+      "conclusion": "success",
+      "raw_records": 20,
+      "unique_sources": 239,
+      "cleanup_not_complete": 0
+    },
+    {
+      "run": 45714471421,
+      "commit": "f79409cbcc87cc05a838e87104e1424df3eab50c",
+      "report": "docs/evidence/m3-policy-sampling-budget-ci-45714471421-archive.json",
+      "sha256": "59c1ccc3b4b08c270fb08c1e6ade616d73ac6cce5327e54be626a05fbb7f4757",
+      "conclusion": "failure",
+      "raw_records": 2,
+      "unique_sources": 233,
+      "cleanup_not_complete": 0
+    },
+    {
+      "run": 45717051465,
+      "commit": "8353aedd7638ff32fc7a935dbb5439cfbfe0ffc2",
+      "report": "docs/evidence/m3-policy-sampling-budget-ci-45717051465-archive.json",
+      "sha256": "c8e0a7816d189e2d590c28f6c53cf08bcd3aba6d9955bd473357ad35d2f37e31",
+      "conclusion": "success",
+      "raw_records": 2,
+      "unique_sources": 233,
+      "cleanup_not_complete": 0
+    }
+  ],
+  "prior_public_creation": [
+    {
+      "runtime": "runc",
+      "raw": "docs/evidence/ci-45717051531/network-ipv4-runc/public-network-create-runc.json",
+      "raw_sha256": "24b0a05d0bd21b9efb068f2dde4f41bc9bafcc287615ca875d43976f3643357a",
+      "result": "failed",
+      "cleanup": "complete",
+      "accepted_groups": 1,
+      "case_names": [
+        "NetworkPolicy_is_advertised_only_after_real_root_child_application_and_positive_probe_collection"
+      ],
+      "executions": 6,
+      "error": "RuntimeError('public protected operation did not settle')",
+      "environment_probe": "passed after six actual root/child commands and confirmed collection",
+      "public_creation_operations": [
+        {
+          "sandbox_id": "e0a62f01-d498-445f-8a02-5fa4b7c75cbe",
+          "operation_id": "3868d6fc-9261-4273-91a8-aad2ddea0478",
+          "operation_state": "succeeded",
+          "observed_state": "unknown",
+          "desired_state": "running",
+          "reason": "waiting for fresh protected policy lease: protected dispatch is unavailable: published private readiness expired"
+        },
+        {
+          "sandbox_id": "ef704862-4e57-42ac-857b-d3d6ad6703c3",
+          "operation_id": "0f8b02dc-d6df-4e69-ab61-50e1278a0966",
+          "operation_state": "succeeded",
+          "observed_state": "paused",
+          "desired_state": "running",
+          "reason": null
+        },
+        {
+          "sandbox_id": "aeb49285-452a-4f4b-a1ae-12069abf57fa",
+          "operation_id": "d9f1c8c9-f221-460e-9149-366e1b57ff03",
+          "operation_state": "running",
+          "observed_state": "paused",
+          "desired_state": "running",
+          "reason": null
+        }
+      ],
+      "full_five_level_case": "failed waiting for the third node; no full hierarchy acceptance"
+    },
+    {
+      "runtime": "runsc",
+      "raw": "docs/evidence/ci-45717051531/network-ipv4-runsc/public-network-create-runsc.json",
+      "raw_sha256": "03fbc632c5824f1f3b43646eef296aeeeede65666b407e54a69cfb32cf6ad6ac",
+      "result": "failed",
+      "cleanup": "complete",
+      "accepted_groups": 0,
+      "case_names": [],
+      "executions": 0,
+      "error": "AssertionError()",
+      "environment_probe": "failed child readiness before any command",
+      "reason_counts": {
+        "waiting for fresh protected policy lease: protected dispatch is unavailable: published private readiness expired": 30,
+        "sandbox termination requested": 6
+      },
+      "full_five_level_case": "unexercised"
+    }
+  ],
+  "separate_unresolved_kernel_startup": {
+    "run": 45714471421,
+    "commit": "f79409cbcc87cc05a838e87104e1424df3eab50c",
+    "raw": "docs/evidence/ci-45714471421/api-s3/api-s3.json",
+    "raw_sha256": "4cdc0af6126cdd4a40d38d996e838de1b1542ed1eb1bd78b1770a45437081e37",
+    "api_groups_before_failure": 27,
+    "stage": "Rust SDK six-language contexts; TSLab kernel-info/output readiness reports ZeroMQ EBUSY",
+    "result": "failed",
+    "cleanup": "complete",
+    "cause": "not yet established; no kernel or dependency change in this sampling-budget increment"
+  },
+  "later_s3_result": {
+    "run": 45717051465,
+    "commit": "8353aedd7638ff32fc7a935dbb5439cfbfe0ffc2",
+    "raw": "docs/evidence/ci-45717051465/api-s3/api-s3.json",
+    "raw_sha256": "efcd59dee32b3f40f6a9ba31a57c336d1fa202e574f9dd3167e9dd35b5233717",
+    "accepted_groups": 31,
+    "result": "passed",
+    "cleanup": "complete",
+    "scope": "Later successful S3 result is retained separately. No kernel/dependency repair is attributed to this sampling-budget increment."
+  }
+}
