@@ -1,6 +1,8 @@
 //! Durable control state. Runtime access belongs exclusively to the worker.
 mod artifacts;
 mod contexts;
+mod controllers;
+pub use controllers::{ControllerAbsence, ControllerPhase, NetworkController};
 mod executions;
 mod isolated;
 mod lifecycle;
@@ -250,7 +252,10 @@ impl Store {
                 .fetch_one(&mut *tx)
                 .await
                 .map_err(db)?;
-        if !matches!(version.as_str(), "1" | "2" | "3" | "4" | "5" | "6" | "7") {
+        if !matches!(
+            version.as_str(),
+            "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8"
+        ) {
             return Err(ApiError::new(
                 ErrorCode::UnsupportedCapability,
                 "database schema version is unsupported",
@@ -280,14 +285,20 @@ impl Store {
                 .await
                 .map_err(db)?;
         }
-        if !matches!(version.as_str(), "6" | "7") {
+        if !matches!(version.as_str(), "6" | "7" | "8") {
             sqlx::raw_sql(include_str!("schema-v6.sql"))
                 .execute(&mut *tx)
                 .await
                 .map_err(db)?;
         }
-        if version != "7" {
+        if !matches!(version.as_str(), "7" | "8") {
             sqlx::raw_sql(include_str!("schema-v7.sql"))
+                .execute(&mut *tx)
+                .await
+                .map_err(db)?;
+        }
+        if version != "8" {
+            sqlx::raw_sql(include_str!("schema-v8.sql"))
                 .execute(&mut *tx)
                 .await
                 .map_err(db)?;

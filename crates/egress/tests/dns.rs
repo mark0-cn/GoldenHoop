@@ -411,12 +411,29 @@ async fn actual_truncated_udp_retries_tcp_and_tcp_eof_is_not_an_answer() {
 }
 
 async fn paired_listeners() -> std::io::Result<(TcpListener, UdpSocket, std::net::SocketAddr)> {
-    // Windows' TCP and UDP excluded/occupied ranges need not coincide. Let
-    // TCP select its own port first, then require the UDP side too. Never skip
-    // the test or alter host reservations when a candidate cannot serve both.
-    for _ in 0..16 {
-        let tcp = TcpListener::bind("127.0.0.1:0").await?;
-        let endpoint = tcp.local_addr()?;
+    // TCP/UDP exclusions can differ and adjacent TCP auto-allocations may all
+    // lie in a UDP-only reservation. Sample distinct high loopback ports and
+    // require both real binds before running either DNS assertion.
+    let mut seen = std::collections::BTreeSet::new();
+    for _ in 0..128 {
+        let random = *uuid::Uuid::new_v4().as_bytes();
+        let port = 49_152 + u16::from_ne_bytes([random[0], random[1]]) % 16_384;
+        if !seen.insert(port) {
+            continue;
+        }
+        let endpoint = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+        let tcp = match TcpListener::bind(endpoint).await {
+            Ok(tcp) => tcp,
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::AddrInUse | std::io::ErrorKind::PermissionDenied
+                ) =>
+            {
+                continue;
+            }
+            Err(e) => return Err(e),
+        };
         match UdpSocket::bind(endpoint).await {
             Ok(udp) => return Ok((tcp, udp, endpoint)),
             Err(e)

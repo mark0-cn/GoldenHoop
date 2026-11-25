@@ -8,12 +8,13 @@ use goldenhoop_docker::{
 use goldenhoop_egress::{
     Allocation, NetworkIdentity,
     controller::{CallError, Reply as ControllerReply, Request as ControllerRequest},
-    native::{NativeBridgeObservation, NativeBridgePlan},
+    native::NativeBridgeObservation,
 };
 use goldenhoop_protocol::*;
 use goldenhoop_runtime::RuntimeDriver;
 use goldenhoop_store::{
-    NetworkAbsence, NetworkAllocation, NetworkNativeBinding, NetworkPhase, Store,
+    ControllerAbsence, ControllerPhase, NetworkAbsence, NetworkAllocation, NetworkNativeBinding,
+    NetworkPhase, Store,
 };
 use serde_json::{Value, json};
 use std::{collections::BTreeSet, io::Write, path::PathBuf};
@@ -32,6 +33,7 @@ enum Action {
     ControllerRecover,
     ControllerRun,
     ControllerCollect,
+    ControllerStartIntent,
 }
 #[derive(Parser)]
 struct Args {
@@ -55,6 +57,8 @@ struct Args {
     absence_json: Option<String>,
     #[arg(long)]
     controller_image: Option<String>,
+    #[arg(long)]
+    controller_generation: Option<Uuid>,
     #[arg(long)]
     fault_after_controller: bool,
 }
@@ -111,64 +115,130 @@ async fn controller_call(
     }
 }
 
+async fn collect_controller_journal(
+    store: &Store,
+    controllers: &DockerControllerProvider,
+    record: &goldenhoop_store::NetworkController,
+) -> Result<Value, ApiError> {
+    let collecting = store
+        .begin_controller_collection(
+            record.sandbox_id,
+            record.controller_generation,
+            record.revision,
+        )
+        .await?;
+    let id = collecting.container_id.as_deref().ok_or_else(invalid)?;
+    let removed = controllers.collect(&collecting.plan, id).await?;
+    let done = if collecting.phase == ControllerPhase::Collected {
+        collecting.clone()
+    } else {
+        store
+            .confirm_controller_absence(
+                record.sandbox_id,
+                record.controller_generation,
+                collecting.collection_token.ok_or_else(invalid)?,
+                ControllerAbsence {
+                    container_id: Some(id.into()),
+                    creation_settled: true,
+                    start_settled: true,
+                    provider_absent: removed.provider_absent,
+                    observed_at: removed.observed_at,
+                },
+            )
+            .await?
+    };
+    let replay = controllers.collect(&collecting.plan, id).await?;
+    require(
+        removed.provider_absent
+            && replay.provider_absent
+            && controllers.lookup(&collecting.plan).await?.is_none(),
+    )?;
+    Ok(
+        json!({"removed":removed,"repeated_collection":replay,"journal":done,"native_collection_attested":false}),
+    )
+}
+
 async fn exercise_controller(
     args: &Args,
     store: &Store,
     provider: &DockerNetworkProvider,
-    record: &NetworkAllocation,
+    network_record: &NetworkAllocation,
     network: &NetworkPlan,
 ) -> Result<Value, ApiError> {
-    // This private contract reconstructs a checkpoint from the actual database
-    // and verifies the original provider before any privileged process write.
-    // It does not implement the production worker's controller dispatch journal.
-    let native = record.native.as_ref().ok_or_else(invalid)?;
-    require(
-        record.phase == NetworkPhase::Provisioning
-            && record.binding.is_none()
-            && record.token == Some(network.provisioning_token),
-    )?;
-    let observed = provider.lookup(network).await?.ok_or_else(invalid)?;
-    require(observed.network_id == native.network_id && observed.attached_endpoints == 0)?;
-    let sandbox = store.sandbox(record.sandbox_id).await?;
-    require(
-        sandbox.sandbox.expires_at == network.expires_at && sandbox.sandbox.expires_at > Utc::now(),
-    )?;
-    let controllers =
-        DockerControllerProvider::connect(args.controller_image.as_deref().ok_or_else(invalid)?)
-            .await?;
-    let plan = controllers.plan(NativeBridgePlan {
-        identity: record.identity(),
-        allocation: native.allocation.clone(),
-        provisioning_token: network.provisioning_token,
-        expires_at: network.expires_at,
-    })?;
-    frame(&json!({"controller_plan":plan,"journal_native_checkpoint":native}));
+    let generation = args.controller_generation.ok_or_else(invalid)?;
+    let id = network_record.sandbox_id;
     if matches!(args.action, Action::ControllerCreate) {
-        let created = controllers.create_fresh(&plan).await?;
+        let observed = provider.lookup(network).await?.ok_or_else(invalid)?;
+        let native = network_record.native_binding().ok_or_else(invalid)?;
+        require(observed.network_id == native.network_id && observed.attached_endpoints == 0)?;
+        let reserved = store
+            .reserve_network_controller(
+                id,
+                network_record.generation,
+                generation,
+                args.controller_image.as_deref().ok_or_else(invalid)?,
+            )
+            .await?;
+        let creating = store
+            .begin_controller_create(id, generation, reserved.revision)
+            .await?;
+        frame(&json!({"controller_plan":creating.plan,"controller_intent":creating}));
+        let controllers = DockerControllerProvider::connect(&creating.plan.image_id).await?;
+        let created = controllers.create_fresh(&creating.plan).await?;
         frame(&json!({"created_controller":created}));
         if args.fault_after_controller {
             eprintln!(
-                "controlled exit after controller creation before caller acknowledgement or start"
+                "controlled exit after controller creation before durable physical acknowledgement or start"
             );
             std::process::exit(77);
         }
-        return Ok(json!({"controller":created,"workload_or_packet_publication":false}));
+        let journal = store
+            .record_controller_created(
+                id,
+                generation,
+                creating.create_token.ok_or_else(invalid)?,
+                &created.container_id,
+            )
+            .await?;
+        return Ok(
+            json!({"controller":created,"journal":journal,"workload_or_packet_publication":false}),
+        );
     }
-    let actual = controllers.lookup(&plan).await?.ok_or_else(invalid)?;
+    require(args.controller_image.is_none())?;
+    let mut journal = store.network_controller(id, generation).await?;
+    let plan = journal.plan.clone();
+    let controllers = DockerControllerProvider::connect(&plan.image_id).await?;
+    frame(&json!({"controller_plan":plan,"journal":journal}));
+    let actual = controllers.lookup(&plan).await?;
     if matches!(args.action, Action::ControllerRecover) {
-        return Ok(json!({"controller":actual,"creation_replayed":false,"start_replayed":false}));
+        if journal.phase == ControllerPhase::Creating
+            && let Some(actual) = &actual
+        {
+            journal = store
+                .record_controller_created(
+                    id,
+                    generation,
+                    journal.create_token.ok_or_else(invalid)?,
+                    &actual.container_id,
+                )
+                .await?;
+        }
+        return Ok(
+            json!({"controller":actual,"journal":journal,"creation_replayed":false,"start_replayed":false}),
+        );
     }
     if matches!(args.action, Action::ControllerCollect) {
-        let removed = controllers.collect(&plan, &actual.container_id).await?;
-        let replay = controllers.collect(&plan, &actual.container_id).await?;
-        require(
-            removed.provider_absent
-                && replay.provider_absent
-                && controllers.lookup(&plan).await?.is_none(),
-        )?;
-        return Ok(
-            json!({"removed":removed,"repeated_collection":replay,"native_collection_attested":false}),
-        );
+        return collect_controller_journal(store, &controllers, &journal).await;
+    }
+    let actual = actual.ok_or_else(invalid)?;
+    require(journal.container_id.as_deref() == Some(actual.container_id.as_str()))?;
+    let starting = store
+        .begin_controller_start(id, generation, journal.revision)
+        .await?;
+    frame(&json!({"controller_start_intent":starting}));
+    if matches!(args.action, Action::ControllerStartIntent) {
+        eprintln!("controlled exit after durable start intent before any controller start request");
+        std::process::exit(78);
     }
     let mut refusals = BTreeSet::new();
     for field in 0..4 {
@@ -202,6 +272,16 @@ async fn exercise_controller(
     let mut session = controllers
         .start_created(&plan, &actual.container_id)
         .await?;
+    let running = controllers.lookup(&plan).await?.ok_or_else(invalid)?;
+    require(running.running && running.status == "running")?;
+    let running = store
+        .record_controller_running(
+            id,
+            generation,
+            starting.start_token.ok_or_else(invalid)?,
+            &running.container_id,
+        )
+        .await?;
     let result=async {
         let mut wrong=plan.native.allocation.clone();wrong.ifindex+=1;
         require(matches!(session.call(ControllerRequest::Open {allocation:wrong},tokio::time::Instant::now()+std::time::Duration::from_secs(5)).await,Err(CallError::InvalidRequest)))?;
@@ -219,7 +299,8 @@ async fn exercise_controller(
     }.await;
     let exited = session.close().await;
     if result.is_err() || exited.is_err() {
-        let cleanup = controllers.collect(&plan, &actual.container_id).await;
+        let fresh = store.network_controller(id, generation).await?;
+        let cleanup = collect_controller_journal(store, &controllers, &fresh).await;
         frame(&json!({"controller_failure_collection":cleanup.as_ref().ok()}));
     }
     let result = result?;
@@ -228,10 +309,14 @@ async fn exercise_controller(
         controllers
             .start_created(&plan, &actual.container_id)
             .await
-            .is_err(),
+            .is_err()
+            && store
+                .begin_controller_start(id, generation, running.revision)
+                .await
+                .is_err(),
     )?;
     Ok(
-        json!({"exchange":result,"exited":exited,"exited_controller_not_restarted":true,"workload_or_packet_publication":false}),
+        json!({"exchange":result,"exited":exited,"journal":running,"exited_controller_not_restarted":true,"workload_or_packet_publication":false}),
     )
 }
 
@@ -242,8 +327,14 @@ async fn exercise(args: &Args, store: &Store) -> Result<Value, ApiError> {
             | Action::ControllerRecover
             | Action::ControllerRun
             | Action::ControllerCollect
+            | Action::ControllerStartIntent
     );
-    require(controller || (args.controller_image.is_none() && !args.fault_after_controller))?;
+    require(
+        controller
+            || (args.controller_image.is_none()
+                && args.controller_generation.is_none()
+                && !args.fault_after_controller),
+    )?;
     require(!args.fault_after_controller || matches!(args.action, Action::ControllerCreate))?;
     require(!args.leading_zero_subnet || matches!(args.action, Action::Init))?;
     require(
@@ -325,7 +416,8 @@ async fn exercise(args: &Args, store: &Store) -> Result<Value, ApiError> {
         Action::ControllerCreate
         | Action::ControllerRecover
         | Action::ControllerRun
-        | Action::ControllerCollect => unreachable!("handled above"),
+        | Action::ControllerCollect
+        | Action::ControllerStartIntent => unreachable!("handled above"),
         Action::Recover => {
             let observed = provider.lookup(&plan).await?.ok_or_else(invalid)?;
             Ok(json!({"provider":observed,"journal":record,"creation_replayed":false}))

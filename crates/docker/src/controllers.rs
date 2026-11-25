@@ -3,6 +3,7 @@ use super::{EXPIRY_LABEL, INSTALL_LABEL, PROFILE_LABEL, ROLE_LABEL, SANDBOX_LABE
 use bollard::{Docker, container::LogOutput, models::*, query_parameters::*};
 use chrono::{DateTime, Utc};
 use futures_util::StreamExt;
+pub use goldenhoop_egress::ControllerPlan;
 use goldenhoop_egress::{
     controller::{CallError, Client, MAX_FRAME, Reply, Request},
     native::NativeBridgePlan,
@@ -68,30 +69,6 @@ async fn bounded<T>(
         .await
         .map_err(|_| unknown())?
         .map_err(backend)
-}
-
-/// Reconstruct only from the persisted native checkpoint and pinned administrator
-/// configuration. This value does not authorize replaying a provisioning dispatch.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ControllerPlan {
-    pub native: NativeBridgePlan,
-    pub image_id: String,
-}
-impl ControllerPlan {
-    pub fn validate(&self) -> Result<(), ApiError> {
-        self.native.validate()?;
-        if !image_id(&self.image_id) {
-            return Err(invalid());
-        }
-        Ok(())
-    }
-    pub fn name(&self) -> String {
-        format!(
-            "goldenhoop-egress-{}",
-            self.native.identity.generation.simple()
-        )
-    }
 }
 
 /// Provider process observation only; no native packet or collection attestation.
@@ -181,10 +158,15 @@ impl DockerControllerProvider {
             writes: Arc::new(Mutex::new(HashSet::new())),
         })
     }
-    pub fn plan(&self, native: NativeBridgePlan) -> Result<ControllerPlan, ApiError> {
+    pub fn plan(
+        &self,
+        native: NativeBridgePlan,
+        generation: uuid::Uuid,
+    ) -> Result<ControllerPlan, ApiError> {
         let plan = ControllerPlan {
             native,
             image_id: self.image_id.clone(),
+            controller_generation: Some(generation),
         };
         self.check(&plan)?;
         Ok(plan)
@@ -246,13 +228,13 @@ impl DockerControllerProvider {
         plan: &ControllerPlan,
     ) -> Result<ControllerObservation, ApiError> {
         self.check(plan)?;
-        plan.native.validate_at(Utc::now())?;
+        plan.validate_dispatch_at(Utc::now())?;
         let mut writes = self.writes.lock().await;
         let key = format!("create:{}", plan.name());
         if writes.contains(&key) || self.lookup(plan).await?.is_some() {
             return Err(conflict());
         }
-        plan.native.validate_at(Utc::now())?;
+        plan.validate_dispatch_at(Utc::now())?;
         writes.insert(key);
         let response = bounded(self.docker.create_container(
             Some(CreateContainerOptions {
@@ -279,7 +261,7 @@ impl DockerControllerProvider {
         expected_id: &str,
     ) -> Result<ControllerSession, ApiError> {
         self.check(plan)?;
-        plan.native.validate_at(Utc::now())?;
+        plan.validate_dispatch_at(Utc::now())?;
         if !id(expected_id) {
             return Err(invalid());
         }
@@ -306,7 +288,7 @@ impl DockerControllerProvider {
             }),
         ))
         .await?;
-        plan.native.validate_at(Utc::now())?;
+        plan.validate_dispatch_at(Utc::now())?;
         bounded(self.docker.start_container(expected_id, None)).await?;
         let observed = self.lookup(plan).await?.ok_or_else(unknown)?;
         if observed.container_id != expected_id || !observed.running || observed.status != "running"

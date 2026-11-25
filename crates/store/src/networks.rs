@@ -241,7 +241,7 @@ fn network_row(
     }
     Ok(value)
 }
-async fn source(
+pub(super) async fn source(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     id: Uuid,
     installation: Uuid,
@@ -254,7 +254,7 @@ async fn source(
         .ok_or_else(|| not_found("network allocation"))?;
     network_row(&row, installation)
 }
-async fn save(
+pub(super) async fn save(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     value: &mut NetworkAllocation,
 ) -> Result<(), ApiError> {
@@ -318,6 +318,7 @@ pub(super) async fn require_collected(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     id: Uuid,
 ) -> Result<(), ApiError> {
+    super::controllers::require_collected(tx, id).await?;
     let live: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM network_allocations WHERE sandbox_id=? AND phase<>'collected'",
     )
@@ -600,6 +601,7 @@ impl Store {
         value.phase = NetworkPhase::Collecting;
         value.token = Some(Uuid::new_v4());
         value.absence = None;
+        super::controllers::collect_all(&mut tx, id, self.installation_id).await?;
         save(&mut tx, &mut value).await?;
         tx.commit().await.map_err(db)?;
         Ok(value)
@@ -616,6 +618,7 @@ impl Store {
         if value.generation != generation || value.token != Some(token) {
             return Err(conflict());
         }
+        super::controllers::require_collected(&mut tx, id).await?;
         if value.phase == NetworkPhase::Collected && value.absence.as_ref() == Some(&absence) {
             tx.commit().await.map_err(db)?;
             return Ok(value);

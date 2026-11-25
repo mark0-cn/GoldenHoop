@@ -29,6 +29,17 @@ fn unmodified_actual_inspection_keeps_immutable_identity_placement_and_created_s
 }
 
 #[test]
+fn historical_controller_identity_is_collectible_but_never_authorizes_dispatch() {
+    let (_, plan, _) = captured();
+    assert!(plan.controller_generation.is_none());
+    plan.validate().unwrap();
+    assert_eq!(
+        plan.validate_dispatch_at(Utc::now()).unwrap_err().code,
+        ErrorCode::InvalidState
+    );
+}
+
+#[test]
 fn actual_inspection_mutations_cannot_forge_ownership_weaken_placement_or_infer_process_success() {
     use serde_json::json;
     let (expected, plan, original) = captured();
@@ -118,6 +129,7 @@ fn expired_controller_identity_remains_collectible_without_authorizing_new_dispa
         profile: "local-gvisor".into(),
     };
     let plan = ControllerPlan {
+        controller_generation: Some(Uuid::new_v4()),
         image_id: format!("sha256:{}", "a".repeat(64)),
         native: NativeBridgePlan {
             allocation: Allocation {
