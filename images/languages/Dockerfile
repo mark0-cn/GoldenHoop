@@ -1,4 +1,7 @@
 # Disposable interoperability fixture, not a production sandbox image.
+# CI can restore public Maven artifacts through this named build context.
+FROM scratch AS maven_seed
+
 FROM rust:1-bookworm AS toolchain
 RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
     && apt-get -o Acquire::Retries=3 update && apt-get -o Acquire::Retries=3 install -y --no-install-recommends maven openjdk-17-jdk-headless xz-utils \
@@ -9,11 +12,27 @@ WORKDIR /sources
 ADD --checksum=sha256:9397823b098f50f091707cb787d148e0494c62dbf57bd09bcfc6620de35f26c7 https://codeload.github.com/zeromq/jeromq/tar.gz/3908fe3dabcba4d3de98ed0a6b85553690a1e006 /tmp/jeromq.tar.gz
 RUN mkdir jeromq && tar -xzf /tmp/jeromq.tar.gz -C jeromq --strip-components=1
 WORKDIR /sources/jeromq
-RUN --mount=type=cache,id=goldenhoop-fixture-maven,target=/root/.m2 \
-    mvn --batch-mode -DskipTests -Dmaven.javadoc.skip=true -Dcheckstyle.skip package
+ARG MAVEN_OFFLINE=0
+RUN --mount=type=bind,from=maven_seed,target=/maven-seed \
+    test ! -e /root/.m2/repository \
+    && mkdir -p /root/.m2/repository \
+    && if [ -f /maven-seed/cache.tar ]; then \
+        tar -xf /maven-seed/cache.tar -C /root/.m2/repository; \
+       elif [ "$MAVEN_OFFLINE" = 1 ]; then \
+        echo 'Offline fixture build requires the public Maven seed' >&2; exit 1; \
+       fi \
+    && case "$MAVEN_OFFLINE" in \
+        0) mvn --batch-mode -DskipTests -Dmaven.javadoc.skip=true -Dcheckstyle.skip package ;; \
+        1) mvn --offline --batch-mode -DskipTests -Dmaven.javadoc.skip=true -Dcheckstyle.skip package ;; \
+        *) echo 'MAVEN_OFFLINE must be 0 or 1' >&2; exit 1 ;; \
+       esac \
+    && tar --exclude='*.lastUpdated' -cf /maven-cache.tar -C /root/.m2/repository .
 WORKDIR /sources/ijava
 ADD --checksum=sha256:484cc62579cb77510b0f0c78283f043794396d8ae9d76a8f2ab5d7368ec246b2 https://github.com/SpencerPark/IJava/releases/download/v1.3.0/ijava-1.3.0.zip /tmp/ijava.zip
 RUN jar xf /tmp/ijava.zip
+
+FROM scratch AS maven-cache-export
+COPY --from=java /maven-cache.tar /cache.tar
 
 FROM toolchain AS go
 ADD --checksum=sha256:a21ae5633a269bcd7e90cf767e48225633795e99d831742cbf3397064fee7712 https://go.dev/dl/go1.25.14.linux-amd64.tar.gz /tmp/go.tar.gz

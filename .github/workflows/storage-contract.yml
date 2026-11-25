@@ -43,9 +43,30 @@ jobs:
       - name: Build the actual agent, API and clients
         run: |
           docker build -f images/agent/Dockerfile -t goldenhoop-agent:test .
-          docker build -f images/languages/Dockerfile -t goldenhoop-languages-fixture:test .
           cargo build --locked -p goldenhoop-control -p goldenhoop-cli
           cargo build --locked -p goldenhoop-client --example sdk_contract
+      - name: Restore public Maven fixture dependencies
+        id: maven-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .test-work/maven-cache
+          key: ${{ runner.os }}-goldenhoop-fixture-maven-v1-${{ hashFiles('images/languages/Dockerfile') }}
+          restore-keys: ${{ runner.os }}-goldenhoop-fixture-maven-v1-
+      - name: Build the disposable six-language fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .test-work/maven-cache
+          docker build --build-context maven_seed=.test-work/maven-cache -f images/languages/Dockerfile -t goldenhoop-languages-fixture:test .
+          docker build --build-context maven_seed=.test-work/maven-cache -f images/languages/Dockerfile --target maven-cache-export --output type=local,dest=.test-work/maven-cache-export .
+          mv .test-work/maven-cache-export/cache.tar .test-work/maven-cache/cache.tar
+          rmdir .test-work/maven-cache-export
+      - name: Save public Maven dependencies before runtime tests
+        if: steps.maven-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .test-work/maven-cache
+          key: ${{ steps.maven-cache.outputs.cache-primary-key }}
       - run: docker pull rustfs/rustfs@sha256:ee717072290bec9b11abfc0365f8310b00df1cd9b3639943edae47bdef05044a
       - name: Exercise S3-backed API, clients and actual worker crashes
         env:
