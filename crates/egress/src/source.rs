@@ -385,17 +385,9 @@ impl SourcePlan {
             ],
             "jump neighbor_source",
         );
-        // Using conntrack activates the bridge defragmentation prerequisite;
-        // ND is inspected separately before the generic invalid-data refusal.
-        p.rule(
-            allocation,
-            "ipv6_source",
-            vec![Match {
-                native: "ct state == invalid".into(),
-                value: json!({"match":{"op":"==","left":{"ct":{"key":"state"}},"right":"invalid"}}),
-            }],
-            "drop",
-        );
+        // Source admission precedes bridge conntrack (-200). Reading ct state
+        // here would classify an ordinary, not-yet-tracked packet as invalid.
+        // Inspect the original per-frame addresses and ND headers instead.
         if let Some(v6) = ep.ipv6 {
             p.rule(
                 allocation,

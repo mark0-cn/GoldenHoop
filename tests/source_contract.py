@@ -54,17 +54,25 @@ class SourceCases:
         role='source-packet-'+phase+'-'+mode
         identity=self.container(role,['--runtime','runc','--network','container:'+self.guest,'--user','0:0','--cap-add','NET_RAW','--memory','128m','--memory-swap','128m','--cpus','0.25','--pids-limit','32'],PACKET,mode,nonce,json.dumps(self.packet_config))
         observed=self.completed(identity)
-        assert observed['sent_frames']==3 and observed['cap_effective']==1<<13 and observed['no_new_privileges'],observed
+        expected_frames=6 if mode.endswith(('-frag','-fragment')) else 3
+        assert observed['sent_frames']==expected_frames and observed['cap_effective']==1<<13 and observed['no_new_privileges'],observed
         received=any(json.loads(line).get('nonce')==nonce for line in docker('logs',self.source_receiver).stdout.splitlines())
         if expect_delivery is not None:assert received==expect_delivery,(mode,received,observed)
         self.evidence.setdefault('source_packet_observations',[]).append({'phase':phase,'mode':mode,'receiver_nonce_observed':received,'sender':observed})
         self.save()
         return observed
 
-    def source_counters(self):
+    def source_counters(self,chain):
         entries=json.loads(self.exec(self.helper,'nft','--json','list','table','bridge','gh_s_'+self.attempt).stdout)['nftables']
         assert any(e.get('chain',{}).get('name')==self.owner.replace(':','_') for e in entries)
-        return sum(x['counter']['packets'] for e in entries if 'rule' in e for x in e['rule']['expr'] if 'counter' in x and any('drop' in v for v in e['rule']['expr']))
+        return sum(x['counter']['packets'] for e in entries if 'rule' in e and e['rule']['chain']==chain for x in e['rule']['expr'] if 'counter' in x and any('drop' in v for v in e['rule']['expr']))
+
+    def dropped(self,mode,chain,delivery=None):
+        before=self.source_counters(chain);self.packet('after',mode,delivery)
+        after=self.source_counters(chain)
+        self.evidence.setdefault('source_drop_observations',[]).append({'mode':mode,'chain':chain,'before':before,'after':after})
+        self.save();assert after>=before+3,(mode,chain,before,after)
+        self.rpc('renew',expected_revision=self.revision)
 
     def rpc(self,operation,error=False,**fields):
         try:
@@ -130,6 +138,11 @@ class SourceCases:
             self.packet('before',mode,True)
             self.rpc('renew',expected_revision=self.revision)
         self.check('source_spoof_vectors_reach_a_controlled_receiver_before_the_source_floor')
+        for mode in ('normal4-frag','spoof4-frag','normal6-frag','spoof6-frag','normal6-hbh','spoof6-hbh','normal6-dest','spoof6-dest'):
+            result=self.packet('before',mode,True)
+            if mode.startswith('normal'):assert result['reply'],mode
+            self.rpc('renew',expected_revision=self.revision)
+        self.check('valid_ipv4_ipv6_fragments_and_ipv6_extension_spoof_vectors_reach_the_receiver_before_enforcement')
         self.rpc('quarantine',expected_revision=self.revision)
         if self.args.probe_only:
             refused=self.rpc('bind_source',expected_revision=self.revision,endpoint=binding,error=True)
@@ -148,19 +161,24 @@ class SourceCases:
             self.rpc('renew',expected_revision=self.revision)
         self.check('bound_ipv4_and_ipv6_sources_keep_real_routed_udp_admission')
         for mode in ('mac4','spoof4','spoof6','vlan4'):
-            before=self.source_counters();self.packet('after',mode,False)
-            assert self.source_counters()>=before+3,mode
-            self.rpc('renew',expected_revision=self.revision)
+            self.dropped(mode,'ipv6_source' if mode=='spoof6' else 'prerouting',False)
         self.check('foreign_mac_ip_sources_and_vlan_frames_hit_scoped_kernel_drops')
+        for mode in ('normal4-frag','normal6-frag','normal6-hbh','normal6-dest'):
+            assert self.packet('after',mode,True)['reply'],mode
+            self.rpc('renew',expected_revision=self.revision)
+        for mode in ('spoof4-frag','spoof6-frag','spoof6-hbh','spoof6-dest'):
+            self.dropped(mode,'prerouting' if mode=='spoof4-frag' else 'ipv6_source',False)
+        self.check('fragments_and_ipv6_extension_headers_preserve_owned_data_admission_without_foreign_source_bypass')
         for mode in ('arp-good','ns-good'):
             assert self.packet('after',mode)['reply'],mode
             self.rpc('renew',expected_revision=self.revision)
         self.check('canonical_arp_and_ipv6_neighbor_discovery_have_real_gateway_replies')
         neighbors=self.exec(self.helper,'ip','-json','neigh','show','dev',self.bridge).stdout
         for mode in ('arp-sha','arp-spa','ns-target','na-option','na-target','na-router'):
-            before=self.source_counters();self.packet('after',mode)
-            assert self.source_counters()>=before+3,mode
-            self.rpc('renew',expected_revision=self.revision)
+            self.dropped(mode,'arp_source' if mode.startswith('arp-') else 'neighbor_source')
+        for mode in ('ns-extension','na-extension','na-fragment','ns-hop','ns-code'):
+            self.dropped(mode,'neighbor_source')
+        self.check('fragmented_or_extension_wrapped_neighbor_messages_and_wrong_hop_code_hit_source_drops')
         after=json.loads(self.exec(self.helper,'ip','-json','neigh','show','dev',self.bridge).stdout)
         wrong_mac=binding['mac'][:-2]+format(int(binding['mac'][-2:],16)^1,'02x')
         assert not any(row.get('lladdr')==wrong_mac for row in after),after
