@@ -21,6 +21,9 @@ pub struct Envelope {
 #[derive(Deserialize, Serialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
+    BindNative {
+        plan: crate::native::NativeBridgePlan,
+    },
     Open {
         allocation: Allocation,
     },

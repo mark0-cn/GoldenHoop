@@ -5,6 +5,9 @@ pub mod dns;
 mod identity;
 pub use identity::NetworkIdentity;
 mod ethernet;
+#[cfg(target_os = "linux")]
+mod host;
+pub mod native;
 pub use ethernet::EthernetPlan;
 mod source;
 pub use source::{Endpoint, Mac, SourcePlan, SourceScope};

@@ -4,13 +4,7 @@ use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{
-    os::{
-        linux::net::SocketAddrExt,
-        unix::{
-            fs::MetadataExt,
-            net::{SocketAddr, UnixDatagram},
-        },
-    },
+    os::unix::{fs::MetadataExt, net::UnixDatagram},
     path::Path,
     process::Stdio,
     time::{Duration, Instant},
@@ -60,30 +54,7 @@ pub struct Manager {
 impl Manager {
     pub async fn new(allocation: Allocation) -> Result<Self, ApiError> {
         allocation.validate()?;
-        let status = std::fs::read_to_string("/proc/self/status").map_err(|_| {
-            error(
-                ErrorCode::BackendUnavailable,
-                "cannot inspect manager credentials",
-            )
-        })?;
-        let field = |name: &str| {
-            status
-                .lines()
-                .find_map(|line| line.strip_prefix(name))
-                .map(str::trim)
-        };
-        let only_net_admin = |value: Option<&str>| {
-            value.and_then(|v| u64::from_str_radix(v, 16).ok()) == Some(1 << 12)
-        };
-        if !only_net_admin(field("CapEff:"))
-            || !only_net_admin(field("CapPrm:"))
-            || field("NoNewPrivs:") != Some("1")
-        {
-            return Err(error(
-                ErrorCode::Forbidden,
-                "manager requires only NET_ADMIN and no-new-privileges",
-            ));
-        }
+        crate::host::authority()?;
         let meta = std::fs::symlink_metadata(NFT).map_err(|_| {
             error(
                 ErrorCode::BackendUnavailable,
@@ -93,14 +64,7 @@ impl Manager {
         if !meta.is_file() || meta.uid() != 0 || meta.mode() & 0o022 != 0 {
             return Err(error(ErrorCode::Forbidden, "untrusted nft executable"));
         }
-        let address = SocketAddr::from_abstract_name(allocation.owner().as_bytes())
-            .map_err(|_| error(ErrorCode::InvalidRequest, "invalid manager lock name"))?;
-        let lock = UnixDatagram::bind_addr(&address).map_err(|_| {
-            error(
-                ErrorCode::Conflict,
-                "allocation already has a packet-filter controller",
-            )
-        })?;
+        let lock = crate::host::allocation_lock(&allocation)?;
         let mut manager = Self {
             allocation,
             revision: None,

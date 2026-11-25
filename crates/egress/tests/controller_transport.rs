@@ -315,14 +315,39 @@ async fn actual_controller_stdio_refuses_unopened_operations_and_exits_after_eof
         .spawn()
         .unwrap();
     let mut client = Client::new(child.stdout.take().unwrap(), child.stdin.take().unwrap());
-    for request in [
-        Request::Inspect {},
-        Request::Renew {
-            expected_revision: 7,
+    let identity = goldenhoop_egress::NetworkIdentity {
+        installation_id: uuid::Uuid::new_v4(),
+        sandbox_id: uuid::Uuid::new_v4(),
+        generation: uuid::Uuid::new_v4(),
+        profile: "local-runc-dev".into(),
+    };
+    let expired = goldenhoop_egress::native::NativeBridgePlan {
+        allocation: goldenhoop_egress::Allocation {
+            installation_id: identity.installation_id,
+            sandbox_id: identity.sandbox_id,
+            generation: identity.generation,
+            bridge: identity.bridge_name(),
+            ifindex: 72,
         },
+        identity,
+        provisioning_token: uuid::Uuid::new_v4(),
+        expires_at: chrono::Utc::now() - chrono::Duration::seconds(1),
+    };
+    for (request, expected) in [
+        (Request::Inspect {}, ErrorCode::InvalidState),
+        (
+            Request::Renew {
+                expected_revision: 7,
+            },
+            ErrorCode::InvalidState,
+        ),
+        (
+            Request::BindNative { plan: expired },
+            ErrorCode::DeadlineExceeded,
+        ),
     ] {
         assert!(
-            matches!(client.call(request,deadline()).await.unwrap(),Reply::Error(error) if error.code==ErrorCode::InvalidState)
+            matches!(client.call(request,deadline()).await.unwrap(),Reply::Error(error) if error.code==expected)
         );
         assert!(!client.is_uncertain());
     }

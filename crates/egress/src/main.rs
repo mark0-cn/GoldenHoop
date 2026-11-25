@@ -14,6 +14,7 @@ mod server {
         Dns(Resolution),
         Source(serde_json::Value),
         Listening(Listening),
+        Native(goldenhoop_egress::native::NativeBridgeObservation),
     }
 
     async fn execute(
@@ -22,6 +23,17 @@ mod server {
         queries: &tokio::sync::mpsc::Sender<goldenhoop_egress::frontend::QueryRequest>,
         request: Request,
     ) -> Result<Reply, ApiError> {
+        if let Request::BindNative { plan } = request {
+            if manager.is_some() {
+                return Err(ApiError::new(
+                    ErrorCode::Conflict,
+                    "native binding requires no active manager",
+                ));
+            }
+            return goldenhoop_egress::native::bind(plan)
+                .await
+                .map(Reply::Native);
+        }
         if let Request::Open { allocation } = request {
             if manager.is_some() {
                 return Err(ApiError::new(
@@ -98,7 +110,7 @@ mod server {
                 }
                 Ok(observed)
             }
-            Request::Open { .. } => unreachable!("handled above"),
+            Request::Open { .. } | Request::BindNative { .. } => unreachable!("handled above"),
         }
         .map(Reply::State)
     }
