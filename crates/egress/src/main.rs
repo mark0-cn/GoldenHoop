@@ -1,72 +1,11 @@
 #[cfg(target_os = "linux")]
 mod server {
-    use goldenhoop_egress::{Allocation, Config, Listening, Manager, Observation, Resolution};
+    use goldenhoop_egress::controller::{Envelope, MAX_FRAME, Request};
+    use goldenhoop_egress::{Allocation, Listening, Manager, Observation, Resolution};
     use goldenhoop_protocol::{ApiError, ErrorCode};
-    use serde::{Deserialize, Serialize};
+    use serde::Serialize;
     use serde_json::json;
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-
-    const MAX_FRAME: u64 = 256 * 1024;
-
-    #[derive(Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct Envelope {
-        id: u64,
-        command: Request,
-    }
-
-    #[derive(Deserialize)]
-    #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
-    enum Request {
-        Open {
-            allocation: Allocation,
-        },
-        Install,
-        Apply {
-            expected_revision: u64,
-            config: Config,
-        },
-        Quarantine {
-            expected_revision: u64,
-        },
-        Renew {
-            expected_revision: u64,
-        },
-        Inspect,
-        EnableEthernet {
-            expected_revision: u64,
-        },
-        BindSource {
-            expected_revision: u64,
-            endpoint: goldenhoop_egress::Endpoint,
-        },
-        ProtectDestinations {
-            expected_revision: u64,
-            private_exceptions: Vec<String>,
-            control_addresses: Vec<std::net::IpAddr>,
-        },
-        ListenDns {
-            expected_revision: u64,
-        },
-        EnableDns {
-            expected_revision: u64,
-            upstream: std::net::SocketAddr,
-            remaining_seconds: u16,
-        },
-        Resolve {
-            wire: Vec<u8>,
-            #[serde(default)]
-            tcp: bool,
-        },
-        DnsSource {
-            name: String,
-            #[serde(default)]
-            aaaa: bool,
-        },
-        Remove {
-            expected_revision: u64,
-        },
-    }
 
     #[derive(Serialize)]
     #[serde(untagged)]
@@ -142,7 +81,7 @@ mod server {
                     .enable_dns(expected_revision, upstream, remaining_seconds)
                     .await
             }
-            Request::Install => manager.install().await,
+            Request::Install {} => manager.install().await,
             Request::Apply {
                 expected_revision,
                 config,
@@ -151,7 +90,7 @@ mod server {
                 manager.quarantine(expected_revision).await
             }
             Request::Renew { expected_revision } => manager.renew(expected_revision).await,
-            Request::Inspect => manager.inspect().await,
+            Request::Inspect {} => manager.inspect().await,
             Request::Remove { expected_revision } => {
                 let observed = manager.remove(expected_revision).await?;
                 if let Some(frontend) = frontend.take() {
