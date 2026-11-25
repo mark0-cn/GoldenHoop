@@ -899,6 +899,11 @@ async fn definitive_rejection_preserves_fifo_and_collected_parent_does_not_hide_
         parent.sandbox.state = SandboxState::Terminated;
         parent.sandbox.cleanup = CleanupState::Complete;
         store.observe(parent).await.unwrap();
+        // Isolate the remaining context work from lifecycle acknowledgement.
+        store
+            .finish_operations(sandbox, "terminate", OperationState::Succeeded, None)
+            .await
+            .unwrap();
         assert_eq!(store.work().await.unwrap().len(), 1);
         store
             .close_code_context(context.id, "parent-absent")

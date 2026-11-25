@@ -6,6 +6,67 @@ use std::{
 };
 use uuid::Uuid;
 
+#[tokio::test]
+async fn completed_cleanup_with_pending_termination_is_reconciled_after_restart() {
+    checked(|store, path| async move {
+        let id = root(&store, None, 300).await;
+        let operation = store
+            .set_desired(id, DesiredState::Terminated, "close-before-loss")
+            .await
+            .unwrap();
+        assert_eq!(operation.state, OperationState::Pending);
+        let mut observed = store.sandbox(id).await.unwrap();
+        observed.sandbox.state = SandboxState::Failed;
+        observed.sandbox.cleanup = CleanupState::Complete;
+        observed.handle = None;
+        // Synthetic native absence models the durable boundary before the
+        // worker's separate finish_operations call. No backend is exercised.
+        store.observe(observed).await.unwrap();
+        store.close().await;
+
+        let reopened = Store::open(&path).await.unwrap();
+        let result = AssertUnwindSafe(async {
+            assert_eq!(
+                reopened.operation(operation.id).await.unwrap().state,
+                OperationState::Pending
+            );
+            assert_eq!(
+                reopened
+                    .set_desired(id, DesiredState::Terminated, "repeat-close-after-restart")
+                    .await
+                    .unwrap()
+                    .id,
+                operation.id
+            );
+            let pending = reopened.work().await.unwrap();
+            let recovered = pending
+                .iter()
+                .find(|stored| stored.sandbox.id == id)
+                .expect("pending lifecycle acknowledgement must remain reconciliation work");
+            assert_eq!(recovered.sandbox.state, SandboxState::Failed);
+            assert_eq!(recovered.sandbox.cleanup, CleanupState::Complete);
+            assert_eq!(recovered.sandbox.desired_state, DesiredState::Terminated);
+            assert!(recovered.handle.is_none());
+            reopened
+                .finish_operations(id, "terminate", OperationState::Succeeded, None)
+                .await
+                .unwrap();
+            let finished = reopened.operation(operation.id).await.unwrap();
+            assert_eq!(finished.state, OperationState::Succeeded);
+            assert!(finished.finished_at.is_some());
+            assert!(reopened.work().await.unwrap().is_empty());
+        })
+        .catch_unwind()
+        .await;
+        reopened.close().await;
+        drop(reopened);
+        if let Err(error) = result {
+            std::panic::resume_unwind(error);
+        }
+    })
+    .await;
+}
+
 async fn checked<F, Fut>(test: F)
 where
     F: FnOnce(Store, PathBuf) -> Fut,

@@ -137,13 +137,35 @@ class Contract(ContextCases, IsolatedCases):
 
     def wait_operation(self, identity, expected="succeeded"):
         deadline = time.monotonic() + 25
+        record = None
         while time.monotonic() < deadline:
             record = self.request("GET", f"/v1/operations/{identity}")
             if record["state"] in ("succeeded", "failed", "cancelled"):
                 assert record["state"] == expected, record
                 return record
             time.sleep(0.1)
-        raise AssertionError(f"operation did not finish: {identity}")
+        snapshot = {"operation_id": identity, "last_operation": record,
+                    "expected_state": expected, "captured_at_unix": time.time()}
+        try:
+            with closing(sqlite3.connect(self.database.as_uri()+"?mode=ro", uri=True, timeout=1)) as connection:
+                connection.row_factory = sqlite3.Row
+                operation = connection.execute("SELECT id,resource_id,kind,state FROM operations WHERE id=?", (identity,)).fetchone()
+                snapshot['durable_operation'] = dict(operation) if operation else None
+                if operation:
+                    resource = operation['resource_id']
+                    sandbox = connection.execute("SELECT id,desired,state,cleanup FROM sandboxes WHERE id=?", (resource,)).fetchone()
+                    snapshot['durable_sandbox'] = dict(sandbox) if sandbox else None
+                    snapshot['pending_lifecycle_operations'] = [dict(row) for row in connection.execute(
+                        "SELECT id,kind,state FROM operations WHERE resource_id=? AND state IN('pending','running') ORDER BY id LIMIT 64", (resource,))]
+                    snapshot['direct_children'] = [dict(row) for row in connection.execute(
+                        "SELECT b.id,b.desired,b.state,b.cleanup FROM sandboxes b JOIN sandbox_scopes s ON s.sandbox_id=b.id WHERE s.parent_id=? ORDER BY b.id LIMIT 64", (resource,))]
+            snapshot['sqlite_read_only_connection_closed'] = True
+        except (sqlite3.Error, OSError) as error:
+            snapshot['diagnostic_error'] = str(error)[:512]
+        if not hasattr(self, 'operation_wait_failures'):
+            self.operation_wait_failures = []
+        self.operation_wait_failures.append(snapshot)
+        raise AssertionError(f"operation did not finish: {identity}; last observation: {record}")
 
     def create(self, ttl=120, image=None, memory=268435456):
         body = {"profile": "local-gvisor" if self.args.runtime == "runsc" else "local-runc-dev",
@@ -936,6 +958,7 @@ assert not alive,alive
             evidence["artifact_backend"] = self.args.artifact_backend
             evidence["code_contexts"] = getattr(self, "context_observations", [])
             evidence["context_startup_observations"] = getattr(self, "context_startup_observations", [])
+            evidence["operation_wait_failures"] = getattr(self, "operation_wait_failures", [])
             evidence["contexts_only"] = self.args.contexts_only
             evidence["expected_code_languages"] = self.args.code_languages
             rendered = json.dumps(evidence, indent=2)

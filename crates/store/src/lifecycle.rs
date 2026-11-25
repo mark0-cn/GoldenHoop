@@ -160,7 +160,9 @@ impl Store {
     }
 
     pub async fn work(&self) -> Result<Vec<StoredSandbox>, ApiError> {
-        sqlx::query("SELECT b.* FROM sandboxes b WHERE b.cleanup<>'complete' OR EXISTS(SELECT 1 FROM executions e WHERE e.sandbox_id=b.id AND e.state NOT IN('succeeded','failed','cancelled','timed_out')) OR EXISTS(SELECT 1 FROM code_contexts c WHERE c.sandbox_id=b.id AND c.cleanup!='complete') ORDER BY b.id")
+        // Collection and lifecycle acknowledgement are separate durable writes.
+        // A restart between them must still settle the existing operation.
+        sqlx::query("SELECT b.* FROM sandboxes b WHERE b.cleanup<>'complete' OR EXISTS(SELECT 1 FROM executions e WHERE e.sandbox_id=b.id AND e.state NOT IN('succeeded','failed','cancelled','timed_out')) OR EXISTS(SELECT 1 FROM code_contexts c WHERE c.sandbox_id=b.id AND c.cleanup!='complete') OR b.id IN(SELECT resource_id FROM operations WHERE kind IN('create','pause','resume','terminate') AND state IN('pending','running')) ORDER BY b.id")
             .fetch_all(&self.pool)
             .await
             .map_err(db)?
