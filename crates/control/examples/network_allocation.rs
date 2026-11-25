@@ -2,9 +2,14 @@
 use chrono::{Duration, Utc};
 use clap::{Parser, ValueEnum};
 use goldenhoop_docker::{
-    DockerConfig, DockerDriver, DockerNetworkProvider, DockerProfile, NetworkPlan,
+    DockerConfig, DockerControllerProvider, DockerDriver, DockerNetworkProvider, DockerProfile,
+    NetworkPlan,
 };
-use goldenhoop_egress::{Allocation, NetworkIdentity};
+use goldenhoop_egress::{
+    Allocation, NetworkIdentity,
+    controller::{CallError, Reply as ControllerReply, Request as ControllerRequest},
+    native::{NativeBridgeObservation, NativeBridgePlan},
+};
 use goldenhoop_protocol::*;
 use goldenhoop_runtime::RuntimeDriver;
 use goldenhoop_store::{
@@ -23,6 +28,10 @@ enum Action {
     RejectNonempty,
     Collect,
     Confirm,
+    ControllerCreate,
+    ControllerRecover,
+    ControllerRun,
+    ControllerCollect,
 }
 #[derive(Parser)]
 struct Args {
@@ -44,6 +53,10 @@ struct Args {
     leading_zero_subnet: bool,
     #[arg(long)]
     absence_json: Option<String>,
+    #[arg(long)]
+    controller_image: Option<String>,
+    #[arg(long)]
+    fault_after_controller: bool,
 }
 fn invalid() -> ApiError {
     ApiError::new(
@@ -81,7 +94,157 @@ async fn plan(store: &Store, record: &NetworkAllocation) -> Result<NetworkPlan, 
         expires_at: store.sandbox(record.sandbox_id).await?.sandbox.expires_at,
     })
 }
+async fn controller_call(
+    session: &mut goldenhoop_docker::ControllerSession,
+    request: ControllerRequest,
+) -> Result<Value, ApiError> {
+    match session
+        .call(
+            request,
+            tokio::time::Instant::now() + std::time::Duration::from_secs(5),
+        )
+        .await
+        .map_err(|_| invalid())?
+    {
+        ControllerReply::Result(value) => Ok(value),
+        ControllerReply::Error(error) => Err(error),
+    }
+}
+
+async fn exercise_controller(
+    args: &Args,
+    store: &Store,
+    provider: &DockerNetworkProvider,
+    record: &NetworkAllocation,
+    network: &NetworkPlan,
+) -> Result<Value, ApiError> {
+    // This private contract reconstructs a checkpoint from the actual database
+    // and verifies the original provider before any privileged process write.
+    // It does not implement the production worker's controller dispatch journal.
+    let native = record.native.as_ref().ok_or_else(invalid)?;
+    require(
+        record.phase == NetworkPhase::Provisioning
+            && record.binding.is_none()
+            && record.token == Some(network.provisioning_token),
+    )?;
+    let observed = provider.lookup(network).await?.ok_or_else(invalid)?;
+    require(observed.network_id == native.network_id && observed.attached_endpoints == 0)?;
+    let sandbox = store.sandbox(record.sandbox_id).await?;
+    require(
+        sandbox.sandbox.expires_at == network.expires_at && sandbox.sandbox.expires_at > Utc::now(),
+    )?;
+    let controllers =
+        DockerControllerProvider::connect(args.controller_image.as_deref().ok_or_else(invalid)?)
+            .await?;
+    let plan = controllers.plan(NativeBridgePlan {
+        identity: record.identity(),
+        allocation: native.allocation.clone(),
+        provisioning_token: network.provisioning_token,
+        expires_at: network.expires_at,
+    })?;
+    frame(&json!({"controller_plan":plan,"journal_native_checkpoint":native}));
+    if matches!(args.action, Action::ControllerCreate) {
+        let created = controllers.create_fresh(&plan).await?;
+        frame(&json!({"created_controller":created}));
+        if args.fault_after_controller {
+            eprintln!(
+                "controlled exit after controller creation before caller acknowledgement or start"
+            );
+            std::process::exit(77);
+        }
+        return Ok(json!({"controller":created,"workload_or_packet_publication":false}));
+    }
+    let actual = controllers.lookup(&plan).await?.ok_or_else(invalid)?;
+    if matches!(args.action, Action::ControllerRecover) {
+        return Ok(json!({"controller":actual,"creation_replayed":false,"start_replayed":false}));
+    }
+    if matches!(args.action, Action::ControllerCollect) {
+        let removed = controllers.collect(&plan, &actual.container_id).await?;
+        let replay = controllers.collect(&plan, &actual.container_id).await?;
+        require(
+            removed.provider_absent
+                && replay.provider_absent
+                && controllers.lookup(&plan).await?.is_none(),
+        )?;
+        return Ok(
+            json!({"removed":removed,"repeated_collection":replay,"native_collection_attested":false}),
+        );
+    }
+    let mut refusals = BTreeSet::new();
+    for field in 0..4 {
+        let mut wrong = plan.clone();
+        match field {
+            0 => wrong.native.provisioning_token = Uuid::new_v4(),
+            1 => wrong.native.expires_at += Duration::seconds(1),
+            2 => wrong.native.allocation.ifindex += 1,
+            _ => wrong.native.identity.profile = "foreign-profile".into(),
+        };
+        require(
+            controllers.lookup(&wrong).await.is_err()
+                && controllers
+                    .collect(&wrong, &actual.container_id)
+                    .await
+                    .is_err(),
+        )?;
+        refusals.insert(format!("foreign_plan_{field}"));
+    }
+    let foreign = "0".repeat(64);
+    require(
+        controllers.collect(&plan, &foreign).await.is_err()
+            && controllers.start_created(&plan, &foreign).await.is_err(),
+    )?;
+    require(
+        controllers
+            .lookup(&plan)
+            .await?
+            .is_some_and(|c| c.container_id == actual.container_id && c.status == "created"),
+    )?;
+    let mut session = controllers
+        .start_created(&plan, &actual.container_id)
+        .await?;
+    let result=async {
+        let mut wrong=plan.native.allocation.clone();wrong.ifindex+=1;
+        require(matches!(session.call(ControllerRequest::Open {allocation:wrong},tokio::time::Instant::now()+std::time::Duration::from_secs(5)).await,Err(CallError::InvalidRequest)))?;
+        let unopened=controller_call(&mut session,ControllerRequest::Inspect {}).await.unwrap_err();require(unopened.code==ErrorCode::InvalidState && !session.is_uncertain())?;
+        let bound=controller_call(&mut session,ControllerRequest::BindNative {plan:plan.native.clone()}).await?;
+        let alias:NativeBridgeObservation=serde_json::from_value(bound.clone()).map_err(|_|invalid())?;
+        require(alias.identity_sha256==plan.native.identity.digest() && alias.allocation.owner()==plan.native.allocation.owner() && alias.alias==plan.native.allocation.owner() && alias.provisioning_token==plan.native.provisioning_token)?;
+        let opened=controller_call(&mut session,ControllerRequest::Open {allocation:plan.native.allocation.clone()}).await?;
+        require(opened["installed"]==false && opened["revision"].is_null() && opened["uncertain"]==false)?;
+        let refused=controller_call(&mut session,ControllerRequest::BindNative {plan:plan.native.clone()}).await.unwrap_err();require(refused.code==ErrorCode::Conflict)?;
+        require(matches!(session.call(ControllerRequest::Inspect {},tokio::time::Instant::now()).await,Err(CallError::ExpiredDeadline)))?;
+        let inspected=controller_call(&mut session,ControllerRequest::Inspect {}).await?;require(inspected==opened)?;
+        require(controllers.create_fresh(&plan).await.is_err() && controllers.start_created(&plan,&actual.container_id).await.is_err())?;
+        Ok::<Value,ApiError>(json!({"native_alias":bound,"manager":opened,"foreign_refusals":refusals,"duplicate_create_start_refused":true,"expired_local_call_did_not_fence_channel":!session.is_uncertain()}))
+    }.await;
+    let exited = session.close().await;
+    if result.is_err() || exited.is_err() {
+        let cleanup = controllers.collect(&plan, &actual.container_id).await;
+        frame(&json!({"controller_failure_collection":cleanup.as_ref().ok()}));
+    }
+    let result = result?;
+    let exited = exited?;
+    require(
+        controllers
+            .start_created(&plan, &actual.container_id)
+            .await
+            .is_err(),
+    )?;
+    Ok(
+        json!({"exchange":result,"exited":exited,"exited_controller_not_restarted":true,"workload_or_packet_publication":false}),
+    )
+}
+
 async fn exercise(args: &Args, store: &Store) -> Result<Value, ApiError> {
+    let controller = matches!(
+        args.action,
+        Action::ControllerCreate
+            | Action::ControllerRecover
+            | Action::ControllerRun
+            | Action::ControllerCollect
+    );
+    require(controller || (args.controller_image.is_none() && !args.fault_after_controller))?;
+    require(!args.fault_after_controller || matches!(args.action, Action::ControllerCreate))?;
     require(!args.leading_zero_subnet || matches!(args.action, Action::Init))?;
     require(
         matches!(args.action, Action::Native)
@@ -154,8 +317,15 @@ async fn exercise(args: &Args, store: &Store) -> Result<Value, ApiError> {
     let id = args.sandbox.ok_or_else(invalid)?;
     let record = store.network_allocation(id).await?;
     let plan = plan(store, &record).await?;
+    if controller {
+        return exercise_controller(args, store, &provider, &record, &plan).await;
+    }
     match args.action {
         Action::Init => unreachable!(),
+        Action::ControllerCreate
+        | Action::ControllerRecover
+        | Action::ControllerRun
+        | Action::ControllerCollect => unreachable!("handled above"),
         Action::Recover => {
             let observed = provider.lookup(&plan).await?.ok_or_else(invalid)?;
             Ok(json!({"provider":observed,"journal":record,"creation_replayed":false}))

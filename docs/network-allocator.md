@@ -2,6 +2,8 @@
 
 Status: schema-7 private allocator metadata, an immutable native-identity checkpoint, a separate owned Docker bridge provider and a Rust native bridge alias binder are implemented. File-backed metadata tests use synthetic provider/kernel observations; separate backend contracts exercise actual Docker and native kernel observations. Production workload/controller integration, policy revision recovery and isolated-child network provisioning remain incomplete. No NetworkPolicy capability is advertised by these components.
 
+The [trusted controller provider](network-controller.md) now adds pinned Docker process creation, checked host placement, private Rust stdio and process collection. Its production dispatch journal and worker composition remain incomplete.
+
 The trusted worker must reserve a generation before any Docker network creation. The journal derives its exact network name and bridge name from that generation, binds it to the installation, sandbox and profile, and records a provisioning token before external I/O. A crash retains that intent and token. Recovery must inspect the planned owned resource; retrying network creation from an absent response is refused. Repeating an identical reservation is idempotent; changing generation or identity is not.
 
 Only a fresh pending root sandbox can reserve this initial allocator record. A running workload cannot acquire it retroactively. Isolated children return UnsupportedCapability until their allocator and ancestor accounting are integrated; the complete M0-M6 objective still requires that integration. Existing default-deny production runtime behavior is unchanged.

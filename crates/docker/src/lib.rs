@@ -16,9 +16,14 @@ use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
 
 mod contexts;
+mod controllers;
 mod isolated;
 mod networks;
 mod sessions;
+pub use controllers::{
+    ControllerObservation, ControllerPlan, ControllerRemoval, ControllerSession,
+    DockerControllerProvider,
+};
 pub use networks::{DockerNetworkProvider, NetworkObservation, NetworkPlan, NetworkRemoval};
 struct ProbeSupport {
     diagnostics: bool,

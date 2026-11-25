@@ -17,7 +17,8 @@ pub struct NativeBridgePlan {
 }
 
 impl NativeBridgePlan {
-    pub fn validate_at(&self, now: DateTime<Utc>) -> Result<(), ApiError> {
+    /// Identity checks also used while collecting an expired dispatch.
+    pub fn validate(&self) -> Result<(), ApiError> {
         self.identity.validate()?;
         self.allocation.validate()?;
         if self.provisioning_token.is_nil()
@@ -31,6 +32,11 @@ impl NativeBridgePlan {
                 "native bridge plan identity differs",
             ));
         }
+        Ok(())
+    }
+
+    pub fn validate_at(&self, now: DateTime<Utc>) -> Result<(), ApiError> {
+        self.validate()?;
         if self.expires_at <= now {
             return Err(error(
                 ErrorCode::DeadlineExceeded,
