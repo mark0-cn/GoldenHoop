@@ -99,7 +99,7 @@ impl Worker {
                     id,
                     spec: stored.context.spec.clone(),
                 };
-                match driver.rpc_reply(handle, &request).await? {
+                match self.rpc_reply(driver, handle, &request).await? {
                     AgentReply::Success(AgentResponse::CodeContext(actual)) => {
                         if identity(&actual, &stored).is_err() {
                             return self
@@ -139,8 +139,8 @@ impl Worker {
             }
             stored = self.store.code_context(id).await?;
         }
-        let actual = match driver
-            .rpc_reply(handle, &AgentRequest::CodeContextGet { id })
+        let actual = match self
+            .rpc_reply(driver, handle, &AgentRequest::CodeContextGet { id })
             .await?
         {
             AgentReply::Success(AgentResponse::CodeContext(actual)) => actual,
@@ -169,8 +169,9 @@ impl Worker {
         }
         for _ in 0..4 {
             let cursor = self.store.code_context(id).await?.cursor;
-            let events = match driver
+            let events = match self
                 .rpc_reply(
+                    driver,
                     handle,
                     &AgentRequest::CodeContextEvents { id, after: cursor },
                 )
@@ -230,8 +231,8 @@ impl Worker {
                 .await
                 .entry(id)
                 .or_insert_with(Instant::now);
-            match driver
-                .rpc_reply(handle, &AgentRequest::CodeContextClose { id })
+            match self
+                .rpc_reply(driver, handle, &AgentRequest::CodeContextClose { id })
                 .await?
             {
                 AgentReply::Success(AgentResponse::CodeContext(record))
@@ -286,7 +287,7 @@ impl Worker {
                     id: run.run.id,
                     spec: run.spec,
                 };
-                match driver.rpc_reply(handle, &request).await? {
+                match self.rpc_reply(driver, handle, &request).await? {
                     AgentReply::Success(AgentResponse::CodeRun(record))
                         if record.id == run.run.id && record.context_id == id => {}
                     AgentReply::Error(error) if error.code != ErrorCode::Conflict => {
@@ -304,8 +305,9 @@ impl Worker {
                     }
                 }
             } else {
-                match driver
+                match self
                     .rpc_reply(
+                        driver,
                         handle,
                         &AgentRequest::CodeRunGet {
                             context_id: id,

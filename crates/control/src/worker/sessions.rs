@@ -12,8 +12,12 @@ impl Worker {
         let id = stored.execution.id;
         for pending in self.store.session_control_work(id).await? {
             let sequence = pending.request.sequence;
-            let receipt = match driver
-                .rpc(handle, &AgentRequest::SessionControlStatus { id, sequence })
+            let receipt = match self
+                .rpc(
+                    driver,
+                    handle,
+                    &AgentRequest::SessionControlStatus { id, sequence },
+                )
                 .await
             {
                 Ok(AgentResponse::SessionControl(receipt)) => receipt,
@@ -47,8 +51,9 @@ impl Worker {
                             .authorize_feature(handle.sandbox_id, Capability::Pty)
                             .await?;
                     }
-                    match driver
+                    match self
                         .rpc(
+                            driver,
                             handle,
                             &AgentRequest::SessionControl {
                                 id,

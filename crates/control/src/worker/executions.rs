@@ -37,7 +37,10 @@ impl Worker {
                 .entry(id)
                 .or_insert_with(Instant::now);
         }
-        let mut actual = match driver.rpc(handle, &AgentRequest::Inspect { id }).await {
+        let mut actual = match self
+            .rpc(driver, handle, &AgentRequest::Inspect { id })
+            .await
+        {
             Ok(AgentResponse::Execution(record)) => normalize(record, &stored)?,
             Ok(_) => return Err(unexpected()),
             Err(error) if error.code == ErrorCode::NotFound => {
@@ -100,7 +103,7 @@ impl Worker {
                         command: stored.spec.clone(),
                     }
                 };
-                match driver.rpc(handle, &start).await {
+                match self.rpc(driver, handle, &start).await {
                     Ok(AgentResponse::Execution(record)) => normalize(record, &stored)?,
                     Ok(_) => return Err(unexpected()),
                     Err(error)
@@ -137,7 +140,7 @@ impl Worker {
             }
         };
         if stored.cancel_requested && !actual.state.is_terminal() {
-            match driver.rpc(handle, &AgentRequest::Cancel { id }).await {
+            match self.rpc(driver, handle, &AgentRequest::Cancel { id }).await {
                 Ok(AgentResponse::Execution(record)) => actual = normalize(record, &stored)?,
                 Ok(_) => return Err(unexpected()),
                 Err(error) => {
@@ -156,8 +159,9 @@ impl Worker {
                 return self.execution_unknown(handle, driver, stored, &error).await;
             }
         }
-        let AgentResponse::Events(mut events) = driver
+        let AgentResponse::Events(mut events) = self
             .rpc(
+                driver,
                 handle,
                 &AgentRequest::Events {
                     id,

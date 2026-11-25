@@ -2,6 +2,7 @@ mod artifacts;
 mod contexts;
 mod executions;
 mod lifecycle;
+mod network_policy;
 mod networks;
 mod sessions;
 
@@ -43,6 +44,7 @@ pub struct Worker {
     artifacts: goldenhoop_artifacts::BlobStore,
     artifact_concurrency: Arc<Semaphore>,
     network_controller_image: Option<String>,
+    network_tasks: Mutex<HashMap<Uuid, network_policy::NetworkTask>>,
 }
 
 impl Worker {
@@ -135,6 +137,7 @@ impl Worker {
             artifacts,
             artifact_concurrency: Arc::new(Semaphore::new(2)),
             network_controller_image,
+            network_tasks: Mutex::new(HashMap::new()),
         }))
     }
 
@@ -244,6 +247,18 @@ impl Worker {
         {
             tasks.shutdown().await;
         }
+        let ids = self
+            .network_tasks
+            .lock()
+            .await
+            .keys()
+            .copied()
+            .collect::<Vec<_>>();
+        for id in ids {
+            if let Err(error) = self.stop_network_task(id).await {
+                report("network_session_shutdown_unconfirmed", &error);
+            }
+        }
     }
 
     pub async fn heartbeat(self: Arc<Self>, mut shutdown: watch::Receiver<bool>) {
@@ -350,6 +365,7 @@ async fn diagnostics(
         )
     })?;
     let runtime = if let Some(handle) = worker.recovered_handle(&stored, driver).await? {
+        worker.require_network_dispatch(call.sandbox_id).await?;
         match driver.diagnostics(&handle).await {
             Ok(sample) => Some(sample),
             Err(error) if error.code == ErrorCode::NotFound => None,
@@ -411,5 +427,5 @@ async fn files(
             "runtime handle is not available",
         )
     })?;
-    Ok(Json(driver.rpc(&handle, &call.request).await?))
+    Ok(Json(worker.rpc(driver, &handle, &call.request).await?))
 }

@@ -15,6 +15,59 @@ fn unknown() -> ApiError {
     )
 }
 
+/// A fresh, durably fenced enforcement epoch. There is no stream reattachment
+/// or replay of a dispatched start; recovery collects that epoch first.
+pub async fn start_controller(
+    store: &Store,
+    reserved: &NetworkController,
+) -> Result<(NetworkController, goldenhoop_docker::ControllerSession), ApiError> {
+    let current = store
+        .network_controller(reserved.sandbox_id, reserved.controller_generation)
+        .await?;
+    if current.phase != ControllerPhase::Reserved
+        || current.revision != reserved.revision
+        || current.plan.controller()?.purpose != goldenhoop_egress::ControllerPurpose::Enforce
+    {
+        return Err(unknown());
+    }
+    let provider = DockerControllerProvider::connect(current.plan.image_id()).await?;
+    let creating = store
+        .begin_controller_create(
+            current.sandbox_id,
+            current.controller_generation,
+            current.revision,
+        )
+        .await?;
+    let actual = provider.create_fresh(creating.plan.controller()?).await?;
+    let created = store
+        .record_controller_created(
+            creating.sandbox_id,
+            creating.controller_generation,
+            creating.create_token.ok_or_else(unknown)?,
+            &actual.container_id,
+        )
+        .await?;
+    let starting = store
+        .begin_controller_start(
+            created.sandbox_id,
+            created.controller_generation,
+            created.revision,
+        )
+        .await?;
+    let session = provider
+        .start_created(starting.plan.controller()?, &actual.container_id)
+        .await?;
+    let running = store
+        .record_controller_running(
+            starting.sandbox_id,
+            starting.controller_generation,
+            starting.start_token.ok_or_else(unknown)?,
+            &actual.container_id,
+        )
+        .await?;
+    Ok((running, session))
+}
+
 pub async fn collect(
     store: &Store,
     mut record: NetworkController,

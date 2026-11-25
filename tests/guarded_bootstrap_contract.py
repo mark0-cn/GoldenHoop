@@ -157,6 +157,9 @@ class Contract(RecoveryContract):
                 raise RuntimeError('production worker did not confirm bootstrap collection')
             time.sleep(0.25)
 
+    def verify_collected_publication(self,current):
+        assert current['sandbox']['state']=='terminated' and not any(row['kind']=='create' and row['state']=='succeeded' for row in current['operations'])
+
     def run(self):
         failure = None
         try:
@@ -270,7 +273,7 @@ class Contract(RecoveryContract):
             assert len(starts)==(1 if self.args.mode=='full' else 0)
             self.after_startup()
             current=self.recover_with_worker()
-            assert current['sandbox']['state']=='terminated' and not any(row['kind']=='create' and row['state']=='succeeded' for row in current['operations'])
+            self.verify_collected_publication(current)
             assert current['profiles'] and all(not {'network_policy','secret_injection'}.intersection(p['capabilities']) for p in current['profiles'])
             final=self.audit();assert not final['bridge_exists'] and not final['owned_tables']
             self.report['independent_native_absence_after_worker_recovery']=final

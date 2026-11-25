@@ -152,7 +152,7 @@ fn row(value: &sqlx::sqlite::SqliteRow, installation: Uuid) -> Result<NetworkCon
     }
     Ok(record)
 }
-async fn source(
+pub(super) async fn source(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     id: Uuid,
     generation: Uuid,
@@ -263,6 +263,22 @@ async fn live(
     }
     match plan.purpose {
         ControllerPurpose::Enforce => {
+            if matches!(
+                sandbox.sandbox.state,
+                SandboxState::Unknown
+                    | SandboxState::Paused
+                    | SandboxState::Pausing
+                    | SandboxState::Resuming
+            ) {
+                // These recovery states require an explicitly staged complete
+                // control record; legacy partial allocations stay fenced.
+                let managed: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM network_policies WHERE sandbox_id=? AND allocation_generation=?")
+                    .bind(value.sandbox_id.to_string()).bind(value.allocation_generation.to_string())
+                    .fetch_one(&mut **tx).await.map_err(db)?;
+                if network.phase != NetworkPhase::Bound || managed != 1 {
+                    return Err(conflict());
+                }
+            }
             if !matches!(
                 network.phase,
                 NetworkPhase::Provisioning | NetworkPhase::Bound
@@ -270,7 +286,13 @@ async fn live(
                 || sandbox.sandbox.desired_state != DesiredState::Running
                 || !matches!(
                     sandbox.sandbox.state,
-                    SandboxState::Pending | SandboxState::Starting | SandboxState::Running
+                    SandboxState::Pending
+                        | SandboxState::Starting
+                        | SandboxState::Running
+                        | SandboxState::Unknown
+                        | SandboxState::Paused
+                        | SandboxState::Pausing
+                        | SandboxState::Resuming
                 )
             {
                 return Err(conflict());

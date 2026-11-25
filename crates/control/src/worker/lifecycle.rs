@@ -44,11 +44,27 @@ impl Worker {
 
     pub(super) async fn reconcile(&self, id: Uuid) -> Result<(), ApiError> {
         let mut stored = self.store.sandbox(id).await?;
-        // An owned-network journal cannot fall through to the none-network
-        // runtime path. Until live network orchestration is verified, fence its
-        // original creation and collect it through the production worker.
+        // Only explicitly staged complete allocations enter live control.
+        // Partial/legacy journals cannot fall through to none-network creation.
         match self.store.network_allocation(id).await {
             Ok(network) if stored.sandbox.desired_state != DesiredState::Terminated => {
+                match self.store.network_policy(id).await {
+                    Ok(_) => {
+                        let driver = self
+                            .drivers
+                            .get(&stored.sandbox.profile)
+                            .cloned()
+                            .ok_or_else(|| {
+                                ApiError::new(
+                                    ErrorCode::UnsupportedCapability,
+                                    "worker has no matching runtime driver",
+                                )
+                            })?;
+                        return self.reconcile_network(stored, driver).await;
+                    }
+                    Err(error) if error.code == ErrorCode::NotFound => {}
+                    Err(error) => return Err(error),
+                }
                 self.store
                     .set_desired(
                         id,
@@ -237,6 +253,7 @@ impl Worker {
         let expired = expired(&stored.sandbox, Utc::now());
         let failed = stored.sandbox.state == SandboxState::Failed
             || execution_state == ExecutionState::Failed;
+        self.stop_network_task(id).await?;
         stored.handle = self.recovered_handle(&stored, driver).await?;
         if !matches!(
             stored.sandbox.state,

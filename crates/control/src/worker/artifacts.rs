@@ -211,8 +211,9 @@ impl Worker {
                     "source runtime handle is absent",
                 )
             })?;
-        let reply = driver
+        let reply = self
             .rpc(
+                driver,
                 &handle,
                 &AgentRequest::ReadFile {
                     path: stored.request.path.clone(),
