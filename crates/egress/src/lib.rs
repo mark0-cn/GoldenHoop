@@ -1,8 +1,10 @@
 //! Trusted host packet-filter adapter. No production capability is published.
 //! The caller must supply a journal-bound allocation over private stdio.
+mod collection;
 pub mod controller;
+pub use collection::CollectionReceipt;
 mod controller_plan;
-pub use controller_plan::ControllerPlan;
+pub use controller_plan::{COLLECTION_SECONDS, ControllerPlan, ControllerPurpose};
 pub mod dns;
 mod identity;
 pub use identity::NetworkIdentity;

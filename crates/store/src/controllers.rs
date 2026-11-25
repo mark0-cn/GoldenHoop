@@ -1,6 +1,8 @@
 //! Durable trusted-controller identity and dispatch fences; never packet grants.
 use super::*;
-use goldenhoop_egress::{ControllerPlan, native::NativeBridgePlan};
+use goldenhoop_egress::{
+    COLLECTION_SECONDS, ControllerPlan, ControllerPurpose, native::NativeBridgePlan,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -194,23 +196,46 @@ async fn live(
         .map_err(db)?;
     let sandbox = sandbox_row(&sandbox)?;
     if network.generation != value.allocation_generation
-        || !matches!(
-            network.phase,
-            NetworkPhase::Provisioning | NetworkPhase::Bound
-        )
-        || network.token != Some(value.plan.native.provisioning_token)
         || native.network_id != value.network_id
         || fingerprint(&native.allocation)? != fingerprint(&value.plan.native.allocation)?
         || sandbox.sandbox.profile != value.plan.native.identity.profile
         || sandbox.sandbox.expires_at != value.plan.native.expires_at
-        || sandbox.sandbox.desired_state != DesiredState::Running
         || sandbox.sandbox.cleanup == CleanupState::Complete
-        || !matches!(
-            sandbox.sandbox.state,
-            SandboxState::Pending | SandboxState::Starting | SandboxState::Running
-        )
     {
         return Err(conflict());
+    }
+    match value.plan.purpose {
+        ControllerPurpose::Enforce => {
+            if !matches!(
+                network.phase,
+                NetworkPhase::Provisioning | NetworkPhase::Bound
+            ) || network.token != Some(value.plan.native.provisioning_token)
+                || sandbox.sandbox.desired_state != DesiredState::Running
+                || !matches!(
+                    sandbox.sandbox.state,
+                    SandboxState::Pending | SandboxState::Starting | SandboxState::Running
+                )
+            {
+                return Err(conflict());
+            }
+        }
+        ControllerPurpose::Collect => {
+            if network.phase != NetworkPhase::Collecting
+                || (sandbox.sandbox.desired_state != DesiredState::Terminated
+                    && !goldenhoop_core::expired(&sandbox.sandbox, Utc::now())
+                    && (sandbox.ever_running || sandbox.sandbox.state != SandboxState::Failed))
+                || super::networks::provisioning_token(
+                    tx,
+                    value.sandbox_id,
+                    value.allocation_generation,
+                    value.installation_id,
+                )
+                .await?
+                    != value.plan.native.provisioning_token
+            {
+                return Err(conflict());
+            }
+        }
     }
     Ok(())
 }
@@ -318,6 +343,39 @@ impl Store {
         generation: Uuid,
         image_id: &str,
     ) -> Result<NetworkController, ApiError> {
+        self.reserve_controller(
+            id,
+            allocation_generation,
+            generation,
+            image_id,
+            ControllerPurpose::Enforce,
+        )
+        .await
+    }
+    pub async fn reserve_network_collector(
+        &self,
+        id: Uuid,
+        allocation_generation: Uuid,
+        generation: Uuid,
+        image_id: &str,
+    ) -> Result<NetworkController, ApiError> {
+        self.reserve_controller(
+            id,
+            allocation_generation,
+            generation,
+            image_id,
+            ControllerPurpose::Collect,
+        )
+        .await
+    }
+    async fn reserve_controller(
+        &self,
+        id: Uuid,
+        allocation_generation: Uuid,
+        generation: Uuid,
+        image_id: &str,
+        purpose: ControllerPurpose,
+    ) -> Result<NetworkController, ApiError> {
         if generation.is_nil() {
             return Err(ApiError::new(
                 ErrorCode::InvalidRequest,
@@ -336,6 +394,7 @@ impl Store {
             if value.sandbox_id != id
                 || value.allocation_generation != allocation_generation
                 || value.plan.image_id != image_id
+                || value.plan.purpose != purpose
             {
                 return Err(conflict());
             }
@@ -343,16 +402,27 @@ impl Store {
             return Ok(value);
         }
         require_collected(&mut tx, id).await?;
-        let count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM network_controllers WHERE sandbox_id=?")
-                .bind(id.to_string())
-                .fetch_one(&mut *tx)
-                .await
-                .map_err(db)?;
-        if count >= 128 {
+        let previous = sqlx::query("SELECT * FROM network_controllers WHERE sandbox_id=?")
+            .bind(id.to_string())
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(db)?;
+        if previous.len() > 256 {
+            return Err(conflict());
+        }
+        let previous = previous
+            .iter()
+            .map(|item| row(item, self.installation_id))
+            .collect::<Result<Vec<_>, _>>()?;
+        if previous
+            .iter()
+            .filter(|record| record.plan.purpose == purpose)
+            .count()
+            >= 128
+        {
             return Err(ApiError::new(
                 ErrorCode::QuotaExceeded,
-                "controller history budget exhausted",
+                "controller purpose history budget exhausted",
             ));
         }
         let network = super::networks::source(&mut tx, id, self.installation_id).await?;
@@ -373,10 +443,23 @@ impl Store {
             controller_generation: generation,
             network_id: native.network_id,
             plan: ControllerPlan {
+                purpose,
+                collection_deadline: (purpose == ControllerPurpose::Collect)
+                    .then(|| Utc::now() + chrono::Duration::seconds(COLLECTION_SECONDS)),
                 native: NativeBridgePlan {
                     identity: network.identity(),
                     allocation: native.allocation,
-                    provisioning_token: network.token.ok_or_else(conflict)?,
+                    provisioning_token: if purpose == ControllerPurpose::Enforce {
+                        network.token.ok_or_else(conflict)?
+                    } else {
+                        super::networks::provisioning_token(
+                            &mut tx,
+                            id,
+                            allocation_generation,
+                            self.installation_id,
+                        )
+                        .await?
+                    },
                     expires_at: sandbox.sandbox.expires_at,
                 },
                 image_id: image_id.to_owned(),

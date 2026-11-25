@@ -4,6 +4,7 @@ use bollard::{Docker, container::LogOutput, models::*, query_parameters::*};
 use chrono::{DateTime, Utc};
 use futures_util::StreamExt;
 pub use goldenhoop_egress::ControllerPlan;
+use goldenhoop_egress::ControllerPurpose;
 use goldenhoop_egress::{
     controller::{CallError, Client, MAX_FRAME, Reply, Request},
     native::NativeBridgePlan,
@@ -167,6 +168,8 @@ impl DockerControllerProvider {
             native,
             image_id: self.image_id.clone(),
             controller_generation: Some(generation),
+            purpose: ControllerPurpose::Enforce,
+            collection_deadline: None,
         };
         self.check(&plan)?;
         Ok(plan)
@@ -371,6 +374,14 @@ impl ControllerSession {
         self.client.as_ref().is_none_or(Client::is_uncertain)
     }
     pub async fn call(&mut self, request: Request, deadline: Instant) -> Result<Reply, CallError> {
+        if self.plan.purpose == ControllerPurpose::Collect
+            && !matches!(
+                &request,
+                Request::Open { .. } | Request::Inspect {} | Request::Remove { .. }
+            )
+        {
+            return Err(CallError::InvalidRequest);
+        }
         match &request {
             Request::Open { allocation }
                 if allocation.owner() != self.plan.native.allocation.owner() =>
@@ -387,8 +398,8 @@ impl ControllerSession {
         }
         let remaining = self
             .plan
-            .native
-            .expires_at
+            .dispatch_deadline()
+            .map_err(|_| CallError::InvalidRequest)?
             .signed_duration_since(Utc::now())
             .to_std()
             .map_err(|_| CallError::ExpiredDeadline)?;

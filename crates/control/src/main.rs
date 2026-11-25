@@ -107,6 +107,8 @@ enum Role {
         agent_image: String,
         #[arg(long, env = "GOLDENHOOP_KERNEL_PROBE_IMAGE")]
         kernel_probe_image: Option<String>,
+        #[arg(long, env = "GOLDENHOOP_EGRESS_CONTROLLER_IMAGE")]
+        egress_controller_image: Option<String>,
         #[arg(long)]
         allow_runc_development: bool,
         #[command(flatten)]
@@ -144,6 +146,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Role::Worker {
             agent_image,
             kernel_probe_image,
+            egress_controller_image,
             allow_runc_development,
             artifacts,
         } => {
@@ -168,6 +171,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 allow_runc_development,
                 format!("http://{}", listener.local_addr()?),
                 artifacts,
+                egress_controller_image,
             )
             .await?;
             let router = worker.router()?;

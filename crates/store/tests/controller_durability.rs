@@ -639,7 +639,7 @@ async fn schema_seven_upgrade_preserves_native_history_bytes_and_existing_operat
             let current:String=sqlx::query_scalar("SELECT payload FROM network_allocations WHERE sandbox_id=?").bind(id.to_string()).fetch_one(&mut connection).await?;
             let history:Vec<String>=sqlx::query_scalar("SELECT payload FROM network_allocation_events WHERE sandbox_id=? ORDER BY revision").bind(id.to_string()).fetch_all(&mut connection).await?;
             Ok::<_,sqlx::Error>((version,current,history))
-        }.await;connection.close().await.unwrap();let after=result.unwrap();assert_eq!(after.0,"8");assert_eq!((after.1,after.2),before);
+        }.await;connection.close().await.unwrap();let after=result.unwrap();assert_eq!(after.0,"9");assert_eq!((after.1,after.2),before);
         reserve(&upgraded,&network).await;
     }).await;
 }
@@ -762,4 +762,115 @@ async fn missing_native_checkpoint_cancellation_and_expired_metadata_refuse_new_
         );
     })
     .await;
+}
+
+#[tokio::test]
+async fn collector_uses_original_identity_after_expiry_only_inside_network_collection() {
+    checked(|fixture| async move {
+        let store = fixture.open().await;
+        let network = allocation(&store, 100).await;
+        let id = network.sandbox_id;
+        assert!(
+            store
+                .reserve_network_collector(id, network.generation, Uuid::new_v4(), &image())
+                .await
+                .is_err()
+        );
+        let mut sandbox = store.sandbox(id).await.unwrap().sandbox;
+        sandbox.created_at -= Duration::seconds(601);
+        sandbox.expires_at -= Duration::seconds(601);
+        sandbox.observed_at = sandbox.observed_at.map(|t| t - Duration::seconds(601));
+        let mut connection =
+            SqliteConnection::connect_with(&SqliteConnectOptions::new().filename(&fixture.path))
+                .await
+                .unwrap();
+        let result = sqlx::query("UPDATE sandboxes SET payload=? WHERE id=?")
+            .bind(serde_json::to_string(&sandbox).unwrap())
+            .bind(id.to_string())
+            .execute(&mut connection)
+            .await;
+        connection.close().await.unwrap();
+        result.unwrap();
+        let collecting = store
+            .begin_network_collection(id, network.generation, network.revision)
+            .await
+            .unwrap();
+        let reserved = store
+            .reserve_network_collector(id, network.generation, Uuid::new_v4(), &image())
+            .await
+            .unwrap();
+        assert_eq!(
+            reserved.plan.purpose,
+            goldenhoop_egress::ControllerPurpose::Collect
+        );
+        assert_eq!(
+            reserved.plan.native.provisioning_token,
+            network.token.unwrap()
+        );
+        assert_ne!(
+            Some(reserved.plan.native.provisioning_token),
+            collecting.token
+        );
+        assert_eq!(reserved.plan.native.expires_at, sandbox.expires_at);
+        assert!(reserved.plan.native.validate_at(Utc::now()).is_err());
+        reserved.plan.validate_dispatch_at(Utc::now()).unwrap();
+        let creating = store
+            .begin_controller_create(id, reserved.controller_generation, reserved.revision)
+            .await
+            .unwrap();
+        let created = store
+            .record_controller_created(
+                id,
+                creating.controller_generation,
+                creating.create_token.unwrap(),
+                &"b".repeat(64),
+            )
+            .await
+            .unwrap();
+        let starting = store
+            .begin_controller_start(id, created.controller_generation, created.revision)
+            .await
+            .unwrap();
+        let running = store
+            .record_controller_running(
+                id,
+                starting.controller_generation,
+                starting.start_token.unwrap(),
+                &"b".repeat(64),
+            )
+            .await
+            .unwrap();
+        assert_eq!(running.phase, ControllerPhase::Running);
+        assert!(
+            store
+                .reserve_network_controller(id, network.generation, Uuid::new_v4(), &image())
+                .await
+                .is_err()
+        );
+        collect(&store, &running).await;
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn schema_eight_controller_payload_and_history_bytes_survive_purpose_upgrade() {
+    checked(|fixture|async move {
+        let store=fixture.open().await;let network=allocation(&store,100).await;let reserved=reserve(&store,&network).await;
+        let creating=store.begin_controller_create(network.sandbox_id,reserved.controller_generation,reserved.revision).await.unwrap();store.close().await;
+        let options=SqliteConnectOptions::new().filename(&fixture.path);let mut connection=SqliteConnection::connect_with(&options).await.unwrap();
+        let before=async {
+            sqlx::query("UPDATE meta SET value='8' WHERE key='schema_version'").execute(&mut connection).await?;
+            let payload:String=sqlx::query_scalar("SELECT payload FROM network_controllers WHERE controller_generation=?").bind(creating.controller_generation.to_string()).fetch_one(&mut connection).await?;
+            let history:Vec<String>=sqlx::query_scalar("SELECT payload FROM network_controller_events WHERE controller_generation=? ORDER BY revision").bind(creating.controller_generation.to_string()).fetch_all(&mut connection).await?;
+            Ok::<_,sqlx::Error>((payload,history))
+        }.await;connection.close().await.unwrap();let before=before.unwrap();assert!(!serde_json::from_str::<serde_json::Value>(&before.0).unwrap()["plan"].as_object().unwrap().contains_key("purpose"));
+        let upgraded=fixture.open().await;let actual=upgraded.network_controller(network.sandbox_id,creating.controller_generation).await.unwrap();assert_eq!(actual.phase,ControllerPhase::Creating);assert_eq!(actual.create_token,creating.create_token);assert_eq!(actual.plan.purpose,goldenhoop_egress::ControllerPurpose::Enforce);
+        let mut connection=SqliteConnection::connect_with(&options).await.unwrap();let after=async {
+            let version:String=sqlx::query_scalar("SELECT value FROM meta WHERE key='schema_version'").fetch_one(&mut connection).await?;
+            let payload:String=sqlx::query_scalar("SELECT payload FROM network_controllers WHERE controller_generation=?").bind(creating.controller_generation.to_string()).fetch_one(&mut connection).await?;
+            let history:Vec<String>=sqlx::query_scalar("SELECT payload FROM network_controller_events WHERE controller_generation=? ORDER BY revision").bind(creating.controller_generation.to_string()).fetch_all(&mut connection).await?;
+            Ok::<_,sqlx::Error>((version,payload,history))
+        }.await;connection.close().await.unwrap();let after=after.unwrap();assert_eq!(after.0,"9");assert_eq!((after.1,after.2),before);
+        assert!(upgraded.begin_controller_create(network.sandbox_id,creating.controller_generation,actual.revision).await.is_err());
+    }).await;
 }

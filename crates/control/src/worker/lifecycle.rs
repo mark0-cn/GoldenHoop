@@ -44,6 +44,24 @@ impl Worker {
 
     pub(super) async fn reconcile(&self, id: Uuid) -> Result<(), ApiError> {
         let mut stored = self.store.sandbox(id).await?;
+        // An owned-network journal cannot fall through to the none-network
+        // runtime path. Until live network orchestration is verified, fence its
+        // original creation and collect it through the production worker.
+        match self.store.network_allocation(id).await {
+            Ok(network) if stored.sandbox.desired_state != DesiredState::Terminated => {
+                self.store
+                    .set_desired(
+                        id,
+                        DesiredState::Terminated,
+                        &format!("network-recovery-{}", network.generation),
+                    )
+                    .await?;
+                stored = self.store.sandbox(id).await?;
+            }
+            Ok(_) => {}
+            Err(error) if error.code == ErrorCode::NotFound => {}
+            Err(error) => return Err(error),
+        }
         let driver = self.drivers.get(&stored.sandbox.profile).ok_or_else(|| {
             ApiError::new(
                 ErrorCode::UnsupportedCapability,
@@ -293,6 +311,7 @@ impl Worker {
             .await?;
             return Ok(());
         }
+        self.collect_network(&stored).await?;
         self.save(
             stored,
             if failed {

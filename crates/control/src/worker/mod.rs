@@ -2,6 +2,7 @@ mod artifacts;
 mod contexts;
 mod executions;
 mod lifecycle;
+mod networks;
 mod sessions;
 
 use std::{
@@ -41,6 +42,7 @@ pub struct Worker {
     context_closures: Mutex<HashMap<Uuid, Instant>>,
     artifacts: goldenhoop_artifacts::BlobStore,
     artifact_concurrency: Arc<Semaphore>,
+    network_controller_image: Option<String>,
 }
 
 impl Worker {
@@ -51,6 +53,7 @@ impl Worker {
         allow_runc_development: bool,
         endpoint: String,
         artifacts: goldenhoop_artifacts::BlobStore,
+        network_controller_image: Option<String>,
     ) -> Result<Arc<Self>, ApiError> {
         if artifacts.installation_id() != store.installation_id() {
             return Err(ApiError::new(
@@ -59,6 +62,9 @@ impl Worker {
             ));
         }
         store.bind_artifact_backend(artifacts.binding()).await?;
+        if let Some(image) = &network_controller_image {
+            goldenhoop_docker::DockerControllerProvider::connect(image).await?;
+        }
         let mut drivers = HashMap::new();
         let mut profiles = Vec::new();
         for profile in [DockerProfile::Gvisor, DockerProfile::RuncDevelopment] {
@@ -128,6 +134,7 @@ impl Worker {
             context_closures: Mutex::new(HashMap::new()),
             artifacts,
             artifact_concurrency: Arc::new(Semaphore::new(2)),
+            network_controller_image,
         }))
     }
 

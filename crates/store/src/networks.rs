@@ -254,6 +254,25 @@ pub(super) async fn source(
         .ok_or_else(|| not_found("network allocation"))?;
     network_row(&row, installation)
 }
+pub(super) async fn provisioning_token(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    id: Uuid,
+    generation: Uuid,
+    installation: Uuid,
+) -> Result<Uuid, ApiError> {
+    let rows=sqlx::query("SELECT payload FROM network_allocation_events WHERE sandbox_id=? ORDER BY revision LIMIT 128").bind(id.to_string()).fetch_all(&mut **tx).await.map_err(db)?;
+    for row in rows {
+        let value: NetworkAllocation = decode(row.try_get("payload").map_err(db)?)?;
+        value.validate(installation)?;
+        if value.sandbox_id != id || value.generation != generation {
+            return Err(internal());
+        }
+        if value.phase == NetworkPhase::Provisioning {
+            return value.token.ok_or_else(internal);
+        }
+    }
+    Err(internal())
+}
 pub(super) async fn save(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     value: &mut NetworkAllocation,

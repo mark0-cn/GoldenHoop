@@ -61,6 +61,10 @@ struct Args {
     controller_generation: Option<Uuid>,
     #[arg(long)]
     fault_after_controller: bool,
+    #[arg(long, default_value_t = 600)]
+    ttl_seconds: u64,
+    #[arg(long)]
+    controller_leave_quarantine: bool,
 }
 fn invalid() -> ApiError {
     ApiError::new(
@@ -295,7 +299,8 @@ async fn exercise_controller(
         require(matches!(session.call(ControllerRequest::Inspect {},tokio::time::Instant::now()).await,Err(CallError::ExpiredDeadline)))?;
         let inspected=controller_call(&mut session,ControllerRequest::Inspect {}).await?;require(inspected==opened)?;
         require(controllers.create_fresh(&plan).await.is_err() && controllers.start_created(&plan,&actual.container_id).await.is_err())?;
-        Ok::<Value,ApiError>(json!({"native_alias":bound,"manager":opened,"foreign_refusals":refusals,"duplicate_create_start_refused":true,"expired_local_call_did_not_fence_channel":!session.is_uncertain()}))
+        let quarantine=if args.controller_leave_quarantine {let observed=controller_call(&mut session,ControllerRequest::Install {}).await?;require(observed["installed"]==true && observed["revision"]==0 && observed["uncertain"]==false)?;Some(observed)} else {None};
+        Ok::<Value,ApiError>(json!({"native_alias":bound,"manager":opened,"quarantine":quarantine,"foreign_refusals":refusals,"duplicate_create_start_refused":true,"expired_local_call_did_not_fence_channel":!session.is_uncertain()}))
     }.await;
     let exited = session.close().await;
     if result.is_err() || exited.is_err() {
@@ -316,11 +321,12 @@ async fn exercise_controller(
                 .is_err(),
     )?;
     Ok(
-        json!({"exchange":result,"exited":exited,"journal":running,"exited_controller_not_restarted":true,"workload_or_packet_publication":false}),
+        json!({"exchange":result,"exited":exited,"journal":running,"exited_controller_not_restarted":true,"workload_publication":false,"packet_permissions_granted":false,"quarantine_installed":args.controller_leave_quarantine}),
     )
 }
 
 async fn exercise(args: &Args, store: &Store) -> Result<Value, ApiError> {
+    require(!args.controller_leave_quarantine || matches!(args.action, Action::ControllerRun))?;
     let controller = matches!(
         args.action,
         Action::ControllerCreate
@@ -360,7 +366,7 @@ async fn exercise(args: &Args, store: &Store) -> Result<Value, ApiError> {
                 && !profile.capabilities.contains(&Capability::NetworkPolicy),
         )?;
         let request: CreateSandbox = serde_json::from_value(
-            json!({"profile":profile.id,"image":args.agent_image,"ttl_seconds":600}),
+            json!({"profile":profile.id,"image":args.agent_image,"ttl_seconds":args.ttl_seconds}),
         )
         .map_err(|_| invalid())?;
         let created = store

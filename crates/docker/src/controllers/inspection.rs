@@ -12,7 +12,12 @@ fn labels(
         (SANDBOX_LABEL.into(), identity.sandbox_id.to_string()),
         (PROFILE_LABEL.into(), identity.profile.clone()),
         (ROLE_LABEL.into(), ROLE.into()),
-        (EXPIRY_LABEL.into(), plan.native.expires_at.to_rfc3339()),
+        (
+            EXPIRY_LABEL.into(),
+            plan.dispatch_deadline()
+                .expect("validated controller deadline")
+                .to_rfc3339(),
+        ),
         (
             PLAN.into(),
             serde_json::to_string(plan).expect("serializable controller plan"),
@@ -27,7 +32,11 @@ pub(super) fn request(
     ContainerCreateBody {
         image: Some(plan.image_id.clone()),
         user: Some("0:0".into()),
-        entrypoint: Some(vec![PATH.into()]),
+        entrypoint: Some(if plan.purpose == ControllerPurpose::Collect {
+            vec![PATH.into(), "--collection-only".into()]
+        } else {
+            vec![PATH.into()]
+        }),
         cmd: Some(vec![]),
         working_dir: Some("/".into()),
         env: Some(vec![ENV.into()]),
@@ -80,7 +89,8 @@ pub(super) fn observe(
     if value.name.as_deref() != Some(format!("/{}", plan.name()).as_str())
         || value.image.as_deref() != Some(&plan.image_id)
         || value.path.as_deref() != Some(PATH)
-        || value.args.as_ref().is_none_or(|v| !v.is_empty())
+        || value.args.as_ref()
+            != Some(&expected.entrypoint.as_ref().expect("fixed entrypoint")[1..].to_vec())
         || value.mounts.as_ref().is_none_or(|v| !v.is_empty())
         || config.image.as_deref() != Some(&plan.image_id)
         || config.labels != expected.labels

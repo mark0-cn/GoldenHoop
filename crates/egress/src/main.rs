@@ -15,14 +15,27 @@ mod server {
         Source(serde_json::Value),
         Listening(Listening),
         Native(goldenhoop_egress::native::NativeBridgeObservation),
+        Collected(goldenhoop_egress::CollectionReceipt),
     }
 
     async fn execute(
+        collection_only: bool,
         manager: &mut Option<Manager>,
         frontend: &mut Option<goldenhoop_egress::frontend::Frontend>,
         queries: &tokio::sync::mpsc::Sender<goldenhoop_egress::frontend::QueryRequest>,
         request: Request,
     ) -> Result<Reply, ApiError> {
+        if collection_only
+            && !matches!(
+                &request,
+                Request::Open { .. } | Request::Inspect {} | Request::Remove { .. }
+            )
+        {
+            return Err(ApiError::new(
+                ErrorCode::Forbidden,
+                "collection controller refuses enforcement commands",
+            ));
+        }
         if let Request::BindNative { plan } = request {
             if manager.is_some() {
                 return Err(ApiError::new(
@@ -108,6 +121,14 @@ mod server {
                 if let Some(frontend) = frontend.take() {
                     frontend.shutdown().await;
                 }
+                if collection_only {
+                    return Ok(Reply::Collected(goldenhoop_egress::CollectionReceipt {
+                        allocation: manager.allocation().clone(),
+                        bridge_absent: true,
+                        owned_tables_absent: true,
+                        observed_at: chrono::Utc::now(),
+                    }));
+                }
                 Ok(observed)
             }
             Request::Open { .. } | Request::BindNative { .. } => unreachable!("handled above"),
@@ -134,7 +155,11 @@ mod server {
             println!("{}", serde_json::to_string(&result)?);
             return Ok(());
         }
-        if std::env::args_os().len() != 1 {
+        let collection_only = std::env::args_os().len() == 2
+            && std::env::args_os()
+                .nth(1)
+                .is_some_and(|arg| arg == "--collection-only");
+        if std::env::args_os().len() != 1 && !collection_only {
             return Err("manager accepts private JSON-line control on stdio only".into());
         }
         let mut manager: Option<Manager> = None;
@@ -169,7 +194,15 @@ mod server {
             let response = if frame_valid {
                 match serde_json::from_slice::<Envelope>(&bytes) {
                     Ok(frame) => {
-                        match execute(&mut manager, &mut frontend, &queries, frame.command).await {
+                        match execute(
+                            collection_only,
+                            &mut manager,
+                            &mut frontend,
+                            &queries,
+                            frame.command,
+                        )
+                        .await
+                        {
                             Ok(value) => json!({"id":frame.id,"result":value}),
                             Err(error) => json!({"id":frame.id,"error":error}),
                         }

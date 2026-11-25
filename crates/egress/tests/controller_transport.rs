@@ -358,3 +358,50 @@ async fn actual_controller_stdio_refuses_unopened_operations_and_exits_after_eof
         .unwrap();
     assert!(status.success());
 }
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn actual_collection_only_binary_refuses_enforcement_before_any_allocation() {
+    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_goldenhoop-egress"))
+        .arg("--collection-only")
+        .env_clear()
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut client = Client::new(child.stdout.take().unwrap(), child.stdin.take().unwrap());
+    for command in [
+        Request::Install {},
+        Request::Apply {
+            expected_revision: 0,
+            config: Default::default(),
+        },
+        Request::Renew {
+            expected_revision: 0,
+        },
+        Request::Quarantine {
+            expected_revision: 0,
+        },
+        Request::EnableEthernet {
+            expected_revision: 0,
+        },
+    ] {
+        assert!(
+            matches!(client.call(command,deadline()).await.unwrap(),Reply::Error(error) if error.code==ErrorCode::Forbidden)
+        );
+        assert!(!client.is_uncertain());
+    }
+    assert!(
+        matches!(client.call(Request::Inspect {},deadline()).await.unwrap(),Reply::Error(error) if error.code==ErrorCode::InvalidState)
+    );
+    drop(client);
+    assert!(
+        tokio::time::timeout(Duration::from_secs(5), child.wait())
+            .await
+            .unwrap()
+            .unwrap()
+            .success()
+    );
+}

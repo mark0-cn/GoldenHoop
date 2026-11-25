@@ -52,6 +52,9 @@ pub struct Manager {
 }
 
 impl Manager {
+    pub fn allocation(&self) -> &Allocation {
+        &self.allocation
+    }
     pub async fn new(allocation: Allocation) -> Result<Self, ApiError> {
         allocation.validate()?;
         crate::host::authority()?;

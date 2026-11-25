@@ -40,6 +40,31 @@ fn historical_controller_identity_is_collectible_but_never_authorizes_dispatch()
 }
 
 #[test]
+fn collection_purpose_has_a_bounded_separate_deadline_and_cannot_extend_a_workload() {
+    let (_, mut plan, _) = captured();
+    plan.controller_generation = Some(Uuid::new_v4());
+    let now = Utc::now();
+    plan.native.expires_at = now - chrono::Duration::seconds(1);
+    assert_eq!(
+        plan.validate_dispatch_at(now).unwrap_err().code,
+        ErrorCode::DeadlineExceeded
+    );
+    plan.purpose = ControllerPurpose::Collect;
+    plan.collection_deadline = Some(now + chrono::Duration::seconds(60));
+    plan.validate_dispatch_at(now).unwrap();
+    assert!(plan.native.validate_at(now).is_err());
+    plan.collection_deadline = Some(now + chrono::Duration::seconds(61));
+    assert!(plan.validate_dispatch_at(now).is_err());
+    plan.collection_deadline = Some(now);
+    assert!(plan.validate_dispatch_at(now).is_err());
+    plan.collection_deadline = None;
+    assert!(plan.validate().is_err());
+    plan.purpose = ControllerPurpose::Enforce;
+    plan.collection_deadline = Some(now + chrono::Duration::seconds(60));
+    assert!(plan.validate().is_err());
+}
+
+#[test]
 fn actual_inspection_mutations_cannot_forge_ownership_weaken_placement_or_infer_process_success() {
     use serde_json::json;
     let (expected, plan, original) = captured();
@@ -129,6 +154,8 @@ fn expired_controller_identity_remains_collectible_without_authorizing_new_dispa
         profile: "local-gvisor".into(),
     };
     let plan = ControllerPlan {
+        purpose: ControllerPurpose::Enforce,
+        collection_deadline: None,
         controller_generation: Some(Uuid::new_v4()),
         image_id: format!("sha256:{}", "a".repeat(64)),
         native: NativeBridgePlan {
