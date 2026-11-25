@@ -48,16 +48,48 @@ class ContextCases:
             return self.wait_context(value["id"])
         return value
 
-    def wait_context(self, identity, target="ready", timeout=40):
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            value = self.request("GET", f"/v1/code-contexts/{identity}")
-            if value["state"] == target and (target == "ready" or value["cleanup"] == "complete"):
-                return value
-            if target == "ready":
-                assert value["state"] not in ("closed", "failed", "unknown"), value
-            time.sleep(.1)
-        raise AssertionError(("context did not reach expected state", value, target))
+    def startup_observation(self, identity, sandbox):
+        record={"context_id":identity,"sandbox_id":sandbox,"started_at_unix":time.time(),"samples":[]}
+        if not hasattr(self,"context_startup_observations"):self.context_startup_observations=[]
+        assert len(self.context_startup_observations)<128
+        self.context_startup_observations.append(record)
+        try:
+            container=self.container(sandbox)
+            native=json.loads(docker("inspect",container))[0]
+            labels=native["Config"]["Labels"]
+            assert labels["dev.goldenhoop.installation"]==self.installation and labels["dev.goldenhoop.sandbox"]==sandbox
+            record["container_id"]=container;record["image_id"]=native["Image"]
+            record["actual_boundary"]={key:native["HostConfig"].get(key) for key in ("Runtime","Memory","MemorySwap","NanoCpus","PidsLimit")}
+        except Exception as error:record["boundary_observation_error"]=str(error)
+        return record
+
+    def wait_context(self, identity, target="ready", timeout=40, observe_sandbox=None):
+        started=time.monotonic();next_sample=started
+        record=self.startup_observation(identity,observe_sandbox) if observe_sandbox else None
+        deadline = started + timeout
+        value=None
+        try:
+            while time.monotonic() < deadline:
+                value = self.request("GET", f"/v1/code-contexts/{identity}")
+                if record is not None and len(record["samples"])<32 and (time.monotonic()>=next_sample or value["state"] in ("ready","closed","failed","unknown")):
+                    sample={"elapsed_seconds":time.monotonic()-started,"context_state":value["state"]}
+                    try:
+                        actual=self.request("GET",f"/v1/sandboxes/{observe_sandbox}/diagnostics")
+                        sample["runtime"]=actual["runtime"]
+                        sample["sandbox_state"]=actual["sandbox"]["state"]
+                    except Exception as error:sample["observation_error"]=str(error)
+                    sample["observation_completed_after_seconds"]=time.monotonic()-started
+                    record["samples"].append(sample);next_sample=time.monotonic()+2
+                if value["state"] == target and (target == "ready" or value["cleanup"] == "complete"):
+                    return value
+                if target == "ready":
+                    assert value["state"] not in ("closed", "failed", "unknown"), value
+                time.sleep(.1)
+            raise AssertionError(("context did not reach expected state", value, target))
+        finally:
+            if record is not None:
+                record["finished_after_seconds"]=time.monotonic()-started
+                record["final_context"]=value
 
     def close_context(self, identity):
         self.request("DELETE", f"/v1/code-contexts/{identity}", key=str(uuid.uuid4()))
@@ -165,7 +197,8 @@ assert not [child for parent in Path('/tmp').glob('ghctx-*') for child in parent
                     key=str(uuid.uuid4())
                     spec={"language":language}
                     context=self.request("POST",f"/v1/sandboxes/{sandbox}/code-contexts",spec,key)
-                    ready=self.wait_context(context['id'])
+                    observation={"observe_sandbox":sandbox} if self.args.context_startup_observations else {}
+                    ready=self.wait_context(context['id'],**observation)
                     assert ready['spec']['language']==language and ready['kernel_info']['language_info']['name']==language
                     first,second,error=SAMPLES[language]
                     run_key=str(uuid.uuid4())

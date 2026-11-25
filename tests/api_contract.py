@@ -935,12 +935,13 @@ assert not alive,alive
             evidence["artifact_residue"] = getattr(self, "artifact_residue", None)
             evidence["artifact_backend"] = self.args.artifact_backend
             evidence["code_contexts"] = getattr(self, "context_observations", [])
+            evidence["context_startup_observations"] = getattr(self, "context_startup_observations", [])
             evidence["contexts_only"] = self.args.contexts_only
             evidence["expected_code_languages"] = self.args.code_languages
             rendered = json.dumps(evidence, indent=2)
             if self.args.output:
                 Path(self.args.output).parent.mkdir(parents=True, exist_ok=True)
-                Path(self.args.output).write_text(rendered + "\n", encoding="utf-8")
+                Path(self.args.output).write_text(rendered + "\n", encoding="utf-8", newline="\n")
                 print(json.dumps({"result": evidence["result"], "cleanup": evidence["cleanup"],
                                   "cases": len(evidence["cases"]), "artifact_backend": self.args.artifact_backend,
                                   "temporary_files_removed": evidence["temporary_files_removed"],
@@ -964,6 +965,7 @@ if __name__ == "__main__":
     parser.add_argument("--kernel-image")
     parser.add_argument("--code-languages",nargs='+',choices=['python','java','go','typescript','bash','javascript'],default=['python'])
     parser.add_argument("--contexts-only", action="store_true")
+    parser.add_argument("--context-startup-observations", action="store_true")
     parser.add_argument("--isolated-only", action="store_true")
     parser.add_argument("--artifact-backend", choices=("local", "s3"), default="local")
     parser.add_argument("--remove-artifact-fixture-image", action="store_true")
