@@ -448,6 +448,11 @@ impl Store {
                 "resume" => sandbox.state == SandboxState::Running,
                 "pause" => sandbox.state == SandboxState::Paused,
                 "terminate" => sandbox.cleanup == CleanupState::Complete,
+                "network_profile_probe" => {
+                    stored.ever_running
+                        && sandbox.state == SandboxState::Terminated
+                        && sandbox.cleanup == CleanupState::Complete
+                }
                 _ => false,
             }
         {

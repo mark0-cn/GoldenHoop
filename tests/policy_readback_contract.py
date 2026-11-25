@@ -46,7 +46,21 @@ class Contract:
             actual=json.loads(self.docker('inspect',self.container).stdout)[0];self.report['actual_container']=actual;self.save()
             assert actual['HostConfig']['NetworkMode']=='none' and not actual['Mounts'] and actual['HostConfig']['ReadonlyRootfs'] and actual['HostConfig']['CapAdd'] in (['NET_ADMIN'],['CAP_NET_ADMIN'])
             generation=str(uuid.uuid4());bridge='ghn'+generation.replace('-','')[:12]
-            self.native('ip','link','add',bridge,'type','bridge');self.native('ip','addr','add','192.0.2.1/24','dev',bridge);self.native('ip','addr','add','fd42::1/64','dev',bridge);self.native('ip','link','set',bridge,'up')
+            self.native('ip','link','add',bridge,'type','bridge');self.native('ip','addr','add','192.0.2.1/24','dev',bridge)
+            # This unique address has no peers in the fixture's none-network
+            # namespace. Make it usable immediately; production DAD is unchanged.
+            self.native('ip','-6','addr','add','fd42::1/64','dev',bridge,'nodad');self.native('ip','link','set',bridge,'up')
+            ready_script = '''
+import json,socket,subprocess,sys
+links=json.loads(subprocess.check_output(['ip','--json','addr','show','dev',sys.argv[1]]))
+addresses=[a for link in links for a in link.get('addr_info',[]) if a.get('local')=='fd42::1']
+assert len(addresses)==1 and not addresses[0].get('tentative') and not addresses[0].get('dadfailed')
+assert not {'tentative','dadfailed'}.intersection(addresses[0].get('flags',[]))
+with socket.socket(socket.AF_INET6,socket.SOCK_STREAM) as tcp, socket.socket(socket.AF_INET6,socket.SOCK_DGRAM) as udp:
+ tcp.bind(('fd42::1',0));udp.bind(('fd42::1',0))
+ print(json.dumps({'address':addresses[0],'tcp_bind':tcp.getsockname(),'udp_bind':udp.getsockname(),'scope':'Fixture-only address binding precondition; no packet, policy or Ready receipt.'}))
+'''
+            self.report['fixture_ipv6_bind_precondition']=json.loads(self.native('python3','-B','-c',ready_script,bridge).stdout);self.save()
             link=json.loads(self.native('ip','--json','link','show','dev',bridge).stdout)[0]
             allocation={'installation_id':str(uuid.uuid4()),'sandbox_id':str(uuid.uuid4()),'generation':generation,'bridge':bridge,'ifindex':link['ifindex']};self.report['allocation']=allocation
             basic={'policies':[{'default_action':'deny','rules':[{'destination':'192.0.2.2','ports':[443],'action':'allow'},{'destination':'198.51.100.0/24','ports':[80,443],'action':'deny'},{'destination':'2001:db8::/32','ports':[],'action':'allow'}]},{'default_action':'allow','rules':[{'destination':'*','ports':[25],'action':'deny'}]}],'deny_always':[{'destination':'203.0.113.0/24','ports':[],'action':'deny'}],'allow_always':[{'destination':'203.0.114.4','ports':[8443],'action':'allow'}],'tcp_cap':[443,8443]}

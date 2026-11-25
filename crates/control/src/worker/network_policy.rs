@@ -25,6 +25,12 @@ fn unavailable() -> ApiError {
         "owned network has no current worker-held policy lease",
     )
 }
+fn dispatch_error(reason: &'static str) -> ApiError {
+    ApiError::new(
+        ErrorCode::BackendUnavailable,
+        format!("protected dispatch is unavailable: {reason}"),
+    )
+}
 impl Worker {
     /// None-network profiles retain their existing dispatch path. Owned network
     /// work requires both the current desired metadata and this process's lease.
@@ -35,16 +41,24 @@ impl Worker {
             Ok(value) => value,
         };
         if allocation.phase != goldenhoop_store::NetworkPhase::Bound {
-            return Err(unavailable());
+            return Err(dispatch_error("allocation is not bound"));
         }
         let tasks = self.network_tasks.lock().await;
-        let task = tasks.get(&id).ok_or_else(unavailable)?;
-        let live = task.live.borrow().clone().ok_or_else(unavailable)?;
-        if task.task.is_finished()
-            || task.live.has_changed().is_err()
-            || live.until <= LeaseInstant::now()
-        {
-            return Err(unavailable());
+        let task = tasks
+            .get(&id)
+            .ok_or_else(|| dispatch_error("controller task is absent"))?;
+        let live = task
+            .live
+            .borrow()
+            .clone()
+            .ok_or_else(|| dispatch_error("controller has not published a private lease"))?;
+        if task.task.is_finished() || task.live.has_changed().is_err() {
+            return Err(dispatch_error(
+                "controller task or publication channel ended",
+            ));
+        }
+        if live.until <= LeaseInstant::now() {
+            return Err(dispatch_error("published private readiness expired"));
         }
         // Do not keep the task-map mutex across a store operation.
         drop(tasks);
@@ -55,16 +69,39 @@ impl Worker {
             .await?;
         if current.phase != NetworkPolicyPhase::Active
             || current.allocation_generation != allocation.generation
-            || controller.phase != goldenhoop_store::ControllerPhase::Running
-            || controller.container_id.as_ref() != Some(&live.owner.container_id)
-            || current.desired_revision != live.desired_revision
-            || current.owner.as_ref() != Some(&live.owner)
-            || live.owner.worker_id != self.registration.id
-            || self.store.worker().await?.id != self.registration.id
-            || self.store.effective_desired(id).await? != DesiredState::Running
-            || live.until <= LeaseInstant::now()
         {
-            return Err(unavailable());
+            return Err(dispatch_error(
+                "policy is not active for the current allocation",
+            ));
+        }
+        if controller.phase != goldenhoop_store::ControllerPhase::Running
+            || controller.container_id.as_ref() != Some(&live.owner.container_id)
+        {
+            return Err(dispatch_error(
+                "controller is not the observed running owner",
+            ));
+        }
+        if current.desired_revision != live.desired_revision
+            || current.owner.as_ref() != Some(&live.owner)
+        {
+            return Err(dispatch_error(
+                "desired revision or controller owner changed",
+            ));
+        }
+        if live.owner.worker_id != self.registration.id
+            || self.store.worker().await?.id != self.registration.id
+        {
+            return Err(dispatch_error("worker registration changed"));
+        }
+        if self.store.effective_desired(id).await? != DesiredState::Running {
+            return Err(dispatch_error(
+                "sandbox or ancestor is not accepting running work",
+            ));
+        }
+        if live.until <= LeaseInstant::now() {
+            return Err(dispatch_error(
+                "private readiness expired during durable validation",
+            ));
         }
         Ok(())
     }
@@ -212,7 +249,7 @@ impl Worker {
             return Ok(());
         }
         self.ensure_network_task(id, driver.clone()).await?;
-        if self.require_network_dispatch(id).await.is_err() {
+        if let Err(error) = self.require_network_dispatch(id).await {
             // A historical Running observation is not Ready during recovery.
             stored = self.store.sandbox(id).await?;
             if stored.sandbox.state == SandboxState::Running {
@@ -220,7 +257,10 @@ impl Worker {
                     stored,
                     SandboxState::Unknown,
                     CleanupState::Unknown,
-                    Some("waiting for fresh protected policy lease".into()),
+                    Some(format!(
+                        "waiting for fresh protected policy lease: {}",
+                        error.message
+                    )),
                 )
                 .await?;
             }

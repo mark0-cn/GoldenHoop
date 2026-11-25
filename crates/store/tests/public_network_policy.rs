@@ -659,6 +659,105 @@ async fn internal_profile_probe_marker_is_atomic_hidden_and_retained_for_recover
 }
 
 #[tokio::test]
+async fn private_probe_completion_requires_running_history_and_collected_normal_termination() {
+    checked(|fixture| async move {
+        let store = fixture.open().await;
+        setup(&store).await;
+        let mut completed = Vec::new();
+        // Synthetic state observations test only the durable operation contract.
+        // They do not establish native application, absence or availability.
+        for (key, ran, terminal) in [
+            ("never-ran", false, SandboxState::Terminated),
+            ("failed-after-running", true, SandboxState::Failed),
+            ("normally-collected", true, SandboxState::Terminated),
+        ] {
+            let request = CreateSandbox::new("policy-tree-test", "fixture");
+            let probe = store
+                .create_network_profile_probe(&profile(), &request, key)
+                .await
+                .unwrap();
+            let id = probe.sandbox.id;
+            store
+                .finish_operations(id, "network_profile_probe", OperationState::Running, None)
+                .await
+                .unwrap();
+            assert!(
+                store
+                    .finish_operations(id, "network_profile_probe", OperationState::Succeeded, None)
+                    .await
+                    .is_err()
+            );
+            if ran {
+                for state in [SandboxState::Starting, SandboxState::Running] {
+                    let mut stored = store.sandbox(id).await.unwrap();
+                    stored.sandbox.state = state;
+                    store.observe(stored).await.unwrap();
+                }
+            }
+            store
+                .set_desired(id, DesiredState::Terminated, &format!("close-{key}"))
+                .await
+                .unwrap();
+            let mut stored = store.sandbox(id).await.unwrap();
+            stored.sandbox.state = SandboxState::Stopping;
+            stored.sandbox.cleanup = CleanupState::Pending;
+            store.observe(stored).await.unwrap();
+            assert!(
+                store
+                    .finish_operations(id, "network_profile_probe", OperationState::Succeeded, None)
+                    .await
+                    .is_err()
+            );
+            let mut stored = store.sandbox(id).await.unwrap();
+            stored.sandbox.state = terminal;
+            stored.sandbox.cleanup = CleanupState::Complete;
+            store.observe(stored).await.unwrap();
+            assert_eq!(
+                store.operation(probe.operation.id).await.unwrap().state,
+                OperationState::Running
+            );
+            assert!(
+                store
+                    .finish_operations(id, "unrecognized_kind", OperationState::Succeeded, None)
+                    .await
+                    .is_err()
+            );
+            let result = store
+                .finish_operations(id, "network_profile_probe", OperationState::Succeeded, None)
+                .await;
+            if ran && terminal == SandboxState::Terminated {
+                result.unwrap();
+                completed.push(probe.operation.id);
+            } else {
+                assert_eq!(result.unwrap_err().code, ErrorCode::InvalidState);
+                store
+                    .finish_operations(id, "network_profile_probe", OperationState::Failed, None)
+                    .await
+                    .unwrap();
+            }
+        }
+        assert!(store.network_profile_probes().await.unwrap().is_empty());
+        assert!(
+            store
+                .list_sandboxes(None, 100)
+                .await
+                .unwrap()
+                .items
+                .is_empty()
+        );
+        store.close().await;
+        let reopened = fixture.open().await;
+        for id in completed {
+            let operation = reopened.operation(id).await.unwrap();
+            assert_eq!(operation.state, OperationState::Succeeded);
+            assert!(operation.finished_at.is_some());
+        }
+        assert!(reopened.network_profile_probes().await.unwrap().is_empty());
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn pause_resume_does_not_supersede_independent_pending_policy_intent() {
     checked(|fixture| async move {
         let store = fixture.open().await;

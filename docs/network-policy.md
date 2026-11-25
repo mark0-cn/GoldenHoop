@@ -6,19 +6,31 @@ retain none-network isolation and do not advertise `NetworkPolicy`. New public
 creation, environment-probe and five-level runtime gates require their own
 supported-host acceptance; private staged contracts do not establish them.
 
-At ae75dbc, both actual public policy gates pass sixteen groups and all ten host
-records pass. Both automatic creation gates still fail child readiness and leave
-the profile Unavailable; no public creation or hierarchy group is accepted. The
-[immutable failed-run archive](evidence/m3-network-public-recovery-ci-45704303834-archive.json)
-preserves twenty-four records with Complete cleanup. The root can have Active
-policy while its public state waits for a fresh private lease, and the child
-repeatedly pauses and changes controller epoch. Active metadata is not Ready.
-The holder now renews sooner when its verified remaining budget is low, keeping
-the native ten-second maximum and publication fence unchanged. The
-[diagnosis](evidence/m3-network-lease-headroom-diagnosis.json) distinguishes this
-source-supported explanation from a proven cause. Positive supported-host
-creation/hierarchy retesting remains required. Startup metadata polling and
-failure journal observations provide no live authority or native absence proof.
+At 70a2ad2, both actual public policy gates pass sixteen groups. Both automatic
+creation gates still fail child readiness before any private command or public
+creation group is accepted. Earlier renewal did not remove that failure. The
+[immutable network archive](evidence/m3-network-probe-completion-ci-45709448654-archive.json)
+preserves twenty-three records with Complete cleanup, including an independent
+native DNS-listener binding failure whose original cause remains unconfirmed.
+The root repeatedly changes between Running and Unknown while its policy stays
+Active, and the child pauses with desired Running. Active metadata is not Ready.
+
+The current [diagnosis](evidence/m3-network-probe-completion-diagnosis.json)
+separates these failures from a definite, previously unreached completion bug:
+the known private deployment-probe operation could never settle successfully.
+Its durable success guard now requires historical Running, normal Terminated
+and Complete cleanup. Actual root/child commands, policy observations and
+confirmed collection remain mandatory in the worker before advertising support.
+Static dispatch refusal reasons now distinguish the existing readiness checks
+and are retained in the sandbox observation. No check, lease lifetime,
+publication margin, timeout or execution assertion is relaxed.
+
+The independent readback fixture now proves its private IPv6 address can bind
+TCP and UDP before testing the production manager. Its seven local groups pass;
+this does not identify the original hosted binding failure or establish public
+protected creation. Positive supported-host creation/hierarchy retesting remains
+required. Startup metadata and failure journals provide no live authority or
+native absence proof.
 
 ## Deployment
 
