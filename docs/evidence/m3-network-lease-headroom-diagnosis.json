@@ -1,0 +1,97 @@
+{
+  "timestamp": "2026-11-25T21:52:38.137369+00:00",
+  "result": "observed_failure",
+  "immutable_commit": "ae75dbc159690289c5bfe68e552e0edda6ec0ea4",
+  "run_id": 45704303834,
+  "runtimes": [
+    {
+      "runtime": "runc",
+      "raw": "docs/evidence/ci-45704303834/network-ipv4-runc/public-network-create-runc.json",
+      "raw_sha256": "d4f249a81db8b11a74c30d267eb57b1094274cac4b3f08cea142529e21d5dc4a",
+      "metadata_observations": [
+        {
+          "root_id": "25e947ad-8c60-4a40-807a-24e4c36edcce",
+          "sandbox_id": "25e947ad-8c60-4a40-807a-24e4c36edcce",
+          "state": "running",
+          "desired_state": "running",
+          "cleanup": "pending",
+          "reason": null,
+          "policy_phase": "active"
+        },
+        {
+          "root_id": "25e947ad-8c60-4a40-807a-24e4c36edcce",
+          "sandbox_id": "898aba29-227d-4b6d-b9c5-a6ca2dc1d76d",
+          "state": "paused",
+          "desired_state": "running",
+          "cleanup": "pending",
+          "reason": null,
+          "policy_phase": "applying"
+        }
+      ],
+      "policy_history_phases": {
+        "pending": 2,
+        "recovering": 14,
+        "applying": 9,
+        "active": 8,
+        "fenced": 14
+      },
+      "operation_errors": [
+        "protected network deployment probe child readiness: readiness deadline exceeded",
+        "sandbox termination requested"
+      ],
+      "private_commands_accepted": 0,
+      "public_groups_accepted": 0,
+      "cleanup": "complete"
+    },
+    {
+      "runtime": "runsc",
+      "raw": "docs/evidence/ci-45704303834/network-ipv4-runsc/public-network-create-runsc.json",
+      "raw_sha256": "61e91689be8cb73b45111f28c84879c0768ef0ea1c7bae68faea97c30050c8d7",
+      "metadata_observations": [
+        {
+          "root_id": "c0843280-74b2-45a7-9abe-fdcc7e7b2859",
+          "sandbox_id": "214faf56-3adc-4195-bb2e-9afe0783be6f",
+          "state": "paused",
+          "desired_state": "running",
+          "cleanup": "pending",
+          "reason": null,
+          "policy_phase": "fenced"
+        },
+        {
+          "root_id": "c0843280-74b2-45a7-9abe-fdcc7e7b2859",
+          "sandbox_id": "c0843280-74b2-45a7-9abe-fdcc7e7b2859",
+          "state": "unknown",
+          "desired_state": "running",
+          "cleanup": "unknown",
+          "reason": "waiting for fresh protected policy lease",
+          "policy_phase": "active"
+        }
+      ],
+      "policy_history_phases": {
+        "pending": 2,
+        "recovering": 13,
+        "applying": 9,
+        "active": 9,
+        "fenced": 13
+      },
+      "operation_errors": [
+        "protected network deployment probe child readiness: readiness deadline exceeded",
+        "sandbox termination requested"
+      ],
+      "private_commands_accepted": 0,
+      "public_groups_accepted": 0,
+      "cleanup": "complete"
+    }
+  ],
+  "current_source_files_sha256": {
+    "crates/control/src/worker/network_policy.rs": "ba7de9909465523165ffeabf00b67844c1d5c1bd32259978fb9ca0e7916a4d75",
+    "crates/docker/src/guarded/policy.rs": "94a4c35bef05037f48c82092a71c8d6f23c35803c27724cb4d20001fb3d446f2",
+    "crates/egress/src/plan.rs": "b3f9b857445b55cf7f39eb6d615f678d86effe9df62ef035559a81f81ea082f6",
+    "tests/public_network_create_contract.py": "1ceebc4b1d1d42d5c61738f04815f249f9b381e990bb1b8c8113f9a290a9e794"
+  },
+  "confirmed": "Both probes reach child readiness and repeatedly fence/recover child policy while the child is observed Paused with desired Running. The gVisor root is observed Unknown with Active policy, waiting for a fresh protected lease. These are control-state observations, not a captured monotonic ready-until history.",
+  "reviewed_defect": "VerifiedPolicyLease deducts complete exchange latency and can have little remaining usable time. The holder previously waited up to two seconds after a successful exchange regardless of remaining headroom. That wait can outlast its published readiness budget.",
+  "change_under_test": "Renew when remaining verified duration is at most half of the existing ten-second maximum, or the existing two-second interval elapses. The native lease, one-second publication margin, actual validation, source identities, timeouts, resource limits and fail-closed gates are unchanged.",
+  "causal_limit": "Insufficient renewal headroom is a source-supported explanation under investigation, not established as the sole cause of the archived child-readiness failure. Supported-host positive public creation and hierarchy remain unaccepted until actual retest.",
+  "test_observability": "The current harness records bounded changes from one read-only joined metadata query during startup. It does not fabricate acknowledgements, grant leases or change the startup deadline."
+}

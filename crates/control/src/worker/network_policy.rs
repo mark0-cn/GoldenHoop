@@ -399,7 +399,16 @@ async fn hold(
                 applied_revision = Some(intent.desired_revision);
                 lease = Some(next);
                 last = LeaseInstant::now();
-            } else if last.elapsed() >= Duration::from_secs(2) {
+            } else if last.elapsed() >= Duration::from_secs(2)
+                || lease.as_ref().ok_or_else(unavailable)?.remaining()
+                    <= Duration::from_secs(u64::from(goldenhoop_egress::LEASE_SECONDS) / 2)
+            {
+                // Native readback deducts the entire exchange latency. A
+                // successful exchange can therefore leave much less than the
+                // maximum lease. Renew promptly when that remaining budget is
+                // low; a fixed post-exchange delay can expire the published
+                // readiness window even while the controller stays healthy.
+                // The native lifetime and old live-until fence are unchanged.
                 if intent.phase != NetworkPolicyPhase::Active {
                     return Err(unavailable());
                 }

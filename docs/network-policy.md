@@ -6,13 +6,19 @@ retain none-network isolation and do not advertise `NetworkPolicy`. New public
 creation, environment-probe and five-level runtime gates require their own
 supported-host acceptance; private staged contracts do not establish them.
 
-At 41ab2d0, both actual public policy gates pass sixteen groups, including paused
-intent and fresh resume acknowledgements. Both new automatic creation gates
-observe a failed deployment probe and correctly leave the profile Unavailable;
-no public creation or hierarchy group is accepted. The [immutable failed-run
-archive](evidence/m3-network-public-bootstrap-ci-45699039165-archive.json)
-preserves these distinctions. Follow-up diagnostics retain probe-stage errors
-and control-state observations before collection; they grant no live authority.
+At ae75dbc, both actual public policy gates pass sixteen groups and all ten host
+records pass. Both automatic creation gates still fail child readiness and leave
+the profile Unavailable; no public creation or hierarchy group is accepted. The
+[immutable failed-run archive](evidence/m3-network-public-recovery-ci-45704303834-archive.json)
+preserves twenty-four records with Complete cleanup. The root can have Active
+policy while its public state waits for a fresh private lease, and the child
+repeatedly pauses and changes controller epoch. Active metadata is not Ready.
+The holder now renews sooner when its verified remaining budget is low, keeping
+the native ten-second maximum and publication fence unchanged. The
+[diagnosis](evidence/m3-network-lease-headroom-diagnosis.json) distinguishes this
+source-supported explanation from a proven cause. Positive supported-host
+creation/hierarchy retesting remains required. Startup metadata polling and
+failure journal observations provide no live authority or native absence proof.
 
 ## Deployment
 

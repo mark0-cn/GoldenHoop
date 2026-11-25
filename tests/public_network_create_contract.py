@@ -74,11 +74,33 @@ class Contract(ApiContract):
         process = subprocess.Popen(command, env=environment, stdin=subprocess.DEVNULL,
             stdout=handle, stderr=subprocess.STDOUT, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         self.processes[role] = process
+        observations = None
+        previous = None
+        if role == 'worker':
+            observations = {'log': path.name, 'scope': 'read-only metadata; no native lease or absence receipt',
+                'samples': [], 'dropped_samples': 0}
+            self.report.setdefault('startup_state_observations', []).append(observations)
         # Includes a new actual native root/child deployment probe; existing
         # generic API startup and command deadlines are not changed.
         deadline = time.monotonic() + (240 if role == 'worker' else 15)
         while time.monotonic() < deadline:
             assert process.poll() is None, path.read_text(encoding='utf-8', errors='replace')[-8192:]
+            if observations is not None:
+                try:
+                    with closing(sqlite3.connect(self.database.as_uri() + '?mode=ro', uri=True, timeout=0.1)) as connection:
+                        rows = connection.execute("SELECT b.id,s.parent_id,b.state,b.desired,b.cleanup,json_extract(b.payload,'$.reason'),json_extract(p.payload,'$.phase') FROM sandboxes b JOIN sandbox_scopes s ON s.sandbox_id=b.id LEFT JOIN network_policies p ON p.sandbox_id=b.id ORDER BY b.id").fetchall()
+                    if rows != previous:
+                        previous = rows
+                        observations['samples'].append({'at': datetime.now(timezone.utc).isoformat(),
+                            'nodes': [dict(zip(('id', 'parent_id', 'state', 'desired', 'cleanup', 'reason', 'policy_phase'), row)) for row in rows]})
+                        if len(observations['samples']) > 256:
+                            del observations['samples'][0]
+                            observations['dropped_samples'] += 1
+                        self.save()
+                except sqlite3.Error as error:
+                    errors = observations.setdefault('read_errors', [])
+                    if len(errors) < 4:
+                        errors.append(repr(error))
             for line in path.read_text(encoding='utf-8', errors='replace').splitlines():
                 try:
                     event = json.loads(line)
