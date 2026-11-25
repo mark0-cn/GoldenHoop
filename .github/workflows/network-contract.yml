@@ -97,11 +97,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Build the production driver bootstrap and recovery contract
-        run: cargo build --locked -p goldenhoop-control --bin goldenhoopd --example network_allocation
+        run: |
+          cargo build --locked -p goldenhoop-control --bin goldenhoopd --example network_allocation
+          cargo build --locked -p goldenhoop-egress --example quarantine_readback
       - name: Verify guarded source, DNS, destination binding and owned worker collection
         run: python3 -B tests/guarded_bootstrap_contract.py --runtime ${{ matrix.runtime }} --binary target/debug/examples/network_allocation --worker-binary target/debug/goldenhoopd --work-dir .test-work --output evidence/guarded-bootstrap-${{ matrix.runtime }}.json
       - name: Verify collection after actual process exit before trusted-agent start
         run: python3 -B tests/guarded_bootstrap_contract.py --runtime ${{ matrix.runtime }} --mode prepared-exit --binary target/debug/examples/network_allocation --worker-binary target/debug/goldenhoopd --work-dir .test-work --output evidence/guarded-prepared-exit-${{ matrix.runtime }}.json
+      - name: Verify exact DNS recovery after controller replacement and occupied-port refusal
+        run: python3 -B tests/dns_recovery_contract.py --runtime ${{ matrix.runtime }} --binary target/debug/examples/network_allocation --worker-binary target/debug/goldenhoopd --readback-binary target/debug/examples/quarantine_readback --work-dir .test-work --output evidence/dns-recovery-${{ matrix.runtime }}.json
       - name: Verify the IPv4 routed-filter mechanism and scoped collection
         run: python3 -B tests/network_contract.py --runtime ${{ matrix.runtime }} --receiver-publication routed --ci-host-diagnostics --output evidence/network-ipv4-${{ matrix.runtime }}.json
       - name: Verify workload DNS interception, grants, source expiry and controller loss

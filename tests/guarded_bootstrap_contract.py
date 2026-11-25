@@ -41,6 +41,9 @@ if 'destinations' in receipt:
  result['destination_table']=json.loads(p.stdout)
  chains=[row['chain']['name'] for row in result['destination_table']['nftables'] if 'chain' in row]
  assert owner.replace(':','_') in chains and 'destination_version_2' in chains
+ table='gh_e_'+uuid.UUID(allocation['generation']).hex
+ p=subprocess.run(['nft','--json','--numeric','list','table','inet',table],capture_output=True,text=True,timeout=5);assert p.returncode==0,p.stderr
+ result['inet_table']=json.loads(p.stdout)
 print(json.dumps(result))
 '''
 
@@ -77,7 +80,7 @@ class Contract(RecoveryContract):
         try:
             return ProviderContract.invoke(self, action, *extra, expected=expected)
         except BaseException:
-            if action in ('controller-create','controller-run') and self.report['invocations'][-1]['timed_out']:
+            if action in ('controller-create','controller-run','controller-resume') and self.report['invocations'][-1]['timed_out']:
                 self.creation_uncertain = True
                 self.settled = False
             raise
@@ -112,6 +115,9 @@ class Contract(RecoveryContract):
     def runtime_events(self, since, until):
         return [json.loads(line) for line in self.docker('events','--since',since,'--until',until,'--filter','type=container',
                 '--filter','label=dev.goldenhoop.sandbox='+self.sandbox,'--format','{{json .}}').stdout.splitlines()]
+
+    def after_startup(self):
+        """Additional recovery contracts run after startup events are saved."""
 
     def start_upstream(self):
         self.upstream_id=self.docker('run','--detach','--name','goldenhoop-bootstrap-dns-'+self.attempt,
@@ -194,6 +200,7 @@ class Contract(RecoveryContract):
                 bootstrap = result['exchange']['bootstrap']
                 assert bootstrap['missing_floor_refused_before_creation'] and not bootstrap['workload_ready']
                 self.report['bootstrap_result'] = bootstrap
+                self.report['bootstrap_native_alias'] = result['exchange']['native_alias']
                 self.check('an_inet_deny_table_without_the_Ethernet_floor_refuses_runtime_creation')
             actual = self.target_runtime()
             if self.args.mode=='unavailable':
@@ -257,6 +264,7 @@ class Contract(RecoveryContract):
             self.save()
             assert len(creates)==(0 if self.args.mode=='unavailable' else 1)
             assert len(starts)==(1 if self.args.mode=='full' else 0)
+            self.after_startup()
             current=self.recover_with_worker()
             assert current['sandbox']['state']=='terminated' and not any(row['kind']=='create' and row['state']=='succeeded' for row in current['operations'])
             assert current['profiles'] and all(not {'network_policy','secret_injection'}.intersection(p['capabilities']) for p in current['profiles'])

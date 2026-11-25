@@ -9,6 +9,7 @@ use goldenhoop_egress::{
 use serde::{Deserialize, Serialize};
 use std::net::{Ipv4Addr, Ipv6Addr};
 mod protection;
+mod recovery;
 mod source;
 pub use protection::QuarantineProtection;
 #[cfg(test)]

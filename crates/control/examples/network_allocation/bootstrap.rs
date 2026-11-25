@@ -4,6 +4,100 @@ use goldenhoop_docker::{
     ControllerPlan, ControllerSession, QuarantineProtection, WorkloadNetworkPlan,
 };
 
+pub(super) async fn validate_recovery(
+    args: &Args,
+    store: &Store,
+    network: &NetworkAllocation,
+) -> Result<goldenhoop_egress::ProtectedBindingReceipt, ApiError> {
+    let raw = args
+        .controller_resume_binding_json
+        .as_ref()
+        .ok_or_else(invalid)?;
+    require(raw.len() <= 64 * 1024)?;
+    let frozen: goldenhoop_egress::ProtectedBindingReceipt =
+        serde_json::from_str(raw).map_err(|_| invalid())?;
+    frozen.validate()?;
+    let binding = network.binding.as_ref().ok_or_else(invalid)?;
+    let stored = store.sandbox(network.sandbox_id).await?;
+    require(
+        network.phase == NetworkPhase::Bound
+            && binding.allocation.owner() == frozen.allocation.owner()
+            && binding.source == frozen.source
+            && binding.destinations == frozen.destinations
+            && frozen.expires_at == stored.sandbox.expires_at
+            && stored.sandbox.state == SandboxState::Starting
+            && !stored.ever_running
+            && stored.handle.is_some(),
+    )?;
+    Ok(frozen)
+}
+
+pub(super) async fn resume(
+    args: &Args,
+    store: &Store,
+    plan: &ControllerPlan,
+    session: &mut ControllerSession,
+) -> Result<Value, ApiError> {
+    let id = plan.native.identity.sandbox_id;
+    let journal = store.network_allocation(id).await?;
+    let frozen = validate_recovery(args, store, &journal).await?;
+    let stored = store.sandbox(id).await?;
+    let handle = stored.handle.as_ref().ok_or_else(invalid)?;
+    let profile = match plan.native.identity.profile.as_str() {
+        "local-runc-dev" => DockerProfile::RuncDevelopment,
+        "local-gvisor" => DockerProfile::Gvisor,
+        _ => return Err(invalid()),
+    };
+    let driver = DockerDriver::connect(DockerConfig {
+        installation_id: store.installation_id(),
+        agent_image: args.agent_image.clone(),
+        profile,
+        allow_runc_development: matches!(profile, DockerProfile::RuncDevelopment),
+    })
+    .await?;
+    let probing = driver.clone();
+    let observed = tokio::spawn(async move { probing.probe().await })
+        .await
+        .map_err(|_| invalid())?;
+    require(
+        observed.availability == Availability::Available
+            && !observed.capabilities.contains(&Capability::NetworkPolicy),
+    )?;
+    let network = WorkloadNetworkPlan {
+        native: plan.native.clone(),
+        network_id: journal.native_binding().ok_or_else(invalid)?.network_id,
+    };
+    let intent = QuarantineProtection {
+        upstream: args.recovery_dns_upstream.ok_or_else(invalid)?,
+        private_exceptions: frozen.destinations.scope.private_exceptions.clone(),
+        control_addresses: frozen.destinations.scope.control_addresses.clone(),
+    };
+    let recovered = driver
+        .recover_quarantined_network(handle, &network, session, &frozen, &intent)
+        .await?;
+    require(
+        driver
+            .recover_quarantined_network(handle, &network, session, &frozen, &intent)
+            .await
+            .is_err()
+            && !session.is_uncertain(),
+    )?;
+    require(
+        store
+            .network_allocation(id)
+            .await?
+            .binding
+            .as_ref()
+            .map(|b| &b.destinations)
+            == Some(&frozen.destinations),
+    )?;
+    let current = store.sandbox(id).await?;
+    require(current.sandbox.state == SandboxState::Starting && !current.ever_running)?;
+    Ok(
+        json!({"handle":handle,"network":network,"frozen_binding":frozen,"recovered_binding":recovered,"duplicate_recovery_refused":true,"guard":controller_call(session,ControllerRequest::Inspect{}).await?,"stored":current.sandbox,"ever_running":current.ever_running,"workload_ready":false,"user_execution_dispatched":false}),
+    )
+}
+
 pub(super) async fn run(
     args: &Args,
     store: &Store,

@@ -69,6 +69,12 @@ pub enum Request {
         expected_revision: u64,
         upstream: std::net::SocketAddr,
     },
+    RecoverDns {
+        expected_revision: u64,
+        upstream: std::net::SocketAddr,
+        source: crate::SourceScope,
+        destinations: crate::DestinationDefinition,
+    },
     InspectBinding {
         expected_revision: u64,
     },

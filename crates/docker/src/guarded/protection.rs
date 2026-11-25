@@ -148,7 +148,7 @@ impl DockerDriver {
     }
 }
 
-fn validate_receipt(
+pub(super) fn validate_receipt(
     network: &WorkloadNetworkPlan,
     source: &SourceBindingReceipt,
     intent: &QuarantineProtection,

@@ -34,6 +34,7 @@ enum Action {
     ControllerCreate,
     ControllerRecover,
     ControllerRun,
+    ControllerResume,
     ControllerCollect,
     ControllerStartIntent,
 }
@@ -82,6 +83,10 @@ struct Args {
     bootstrap_stop_after_prepare: bool,
     #[arg(long, requires = "bootstrap_workload")]
     bootstrap_dns_upstream: Option<std::net::SocketAddr>,
+    #[arg(long)]
+    controller_resume_binding_json: Option<String>,
+    #[arg(long)]
+    recovery_dns_upstream: Option<std::net::SocketAddr>,
     #[arg(long)]
     workload_image: Option<String>,
 }
@@ -193,7 +198,15 @@ async fn exercise_controller(
     if matches!(args.action, Action::ControllerCreate) {
         let observed = provider.lookup(network).await?.ok_or_else(invalid)?;
         let native = network_record.native_binding().ok_or_else(invalid)?;
-        require(observed.network_id == native.network_id && observed.attached_endpoints == 0)?;
+        let endpoints = if args.controller_resume_binding_json.is_some() {
+            bootstrap::validate_recovery(args, store, network_record).await?;
+            1
+        } else {
+            0
+        };
+        require(
+            observed.network_id == native.network_id && observed.attached_endpoints == endpoints,
+        )?;
         let reserved = store
             .reserve_network_controller(
                 id,
@@ -306,6 +319,10 @@ async fn exercise_controller(
         )
         .await?;
     let result=async {
+        if matches!(args.action,Action::ControllerResume) {
+            let future=Box::pin(bootstrap::resume(args,store,&plan,&mut session));
+            return Ok::<Value,ApiError>(json!({"resume":future.await?}));
+        }
         let mut wrong=plan.native.allocation.clone();wrong.ifindex+=1;
         require(matches!(session.call(ControllerRequest::Open {allocation:wrong},tokio::time::Instant::now()+std::time::Duration::from_secs(5)).await,Err(CallError::InvalidRequest)))?;
         let unopened=controller_call(&mut session,ControllerRequest::Inspect {}).await.unwrap_err();require(unopened.code==ErrorCode::InvalidState && !session.is_uncertain())?;
@@ -351,6 +368,20 @@ async fn exercise_controller(
 }
 
 async fn exercise(args: &Args, store: &Store) -> Result<Value, ApiError> {
+    require(
+        args.controller_resume_binding_json.is_none()
+            || matches!(
+                args.action,
+                Action::ControllerCreate | Action::ControllerResume
+            ),
+    )?;
+    require(
+        !matches!(args.action, Action::ControllerResume)
+            || args.controller_resume_binding_json.is_some(),
+    )?;
+    require(
+        args.recovery_dns_upstream.is_none() || matches!(args.action, Action::ControllerResume),
+    )?;
     require(!args.controller_leave_quarantine || matches!(args.action, Action::ControllerRun))?;
     require(!args.bootstrap_workload || matches!(args.action, Action::ControllerRun))?;
     require(args.workload_image.is_none() || matches!(args.action, Action::Init))?;
@@ -359,6 +390,7 @@ async fn exercise(args: &Args, store: &Store) -> Result<Value, ApiError> {
         Action::ControllerCreate
             | Action::ControllerRecover
             | Action::ControllerRun
+            | Action::ControllerResume
             | Action::ControllerCollect
             | Action::ControllerStartIntent
     );
@@ -456,6 +488,7 @@ async fn exercise(args: &Args, store: &Store) -> Result<Value, ApiError> {
         Action::ControllerCreate
         | Action::ControllerRecover
         | Action::ControllerRun
+        | Action::ControllerResume
         | Action::ControllerCollect
         | Action::ControllerStartIntent => unreachable!("handled above"),
         Action::Recover => {

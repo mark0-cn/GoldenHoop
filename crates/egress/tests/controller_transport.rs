@@ -303,6 +303,32 @@ fn shared_commands_keep_dns_defaults_and_refuse_unexpected_control_fields() {
     );
 }
 
+fn recovery_request() -> Request {
+    serde_json::from_value(json!({"operation":"recover_dns","expected_revision":1,"upstream":"127.0.0.1:19004",
+        "source":{"endpoint":{"port":"veth42","ifindex":73,"mac":"02:00:00:00:00:02","ipv4":"192.0.2.2","ipv6":"fd42::2"},"gateway_mac":"02:00:00:00:00:01","gateway4":"192.0.2.1","gateway6":"fd42::1"},
+        "destinations":{"scope":{"host_addresses":["192.0.2.1","fd42::1"],"control_addresses":[],"private_exceptions":[]},"dns":[{"address":"192.0.2.1","port":40000},{"address":"fd42::1","port":40001}]}
+    })).unwrap()
+}
+
+#[test]
+fn recovery_wire_requires_both_immutable_scopes_and_refuses_new_expiry_authority() {
+    let value = serde_json::to_value(recovery_request()).unwrap();
+    for field in ["source", "destinations"] {
+        let mut missing = value.clone();
+        missing.as_object_mut().unwrap().remove(field);
+        assert!(serde_json::from_value::<Request>(missing).is_err());
+    }
+    for (field, data) in [
+        ("expires_at", json!("2099-01-01T00:00:00Z")),
+        ("remaining_seconds", json!(86400)),
+        ("allow_new_ports", json!(true)),
+    ] {
+        let mut wrong = value.clone();
+        wrong[field] = data;
+        assert!(serde_json::from_value::<Request>(wrong).is_err());
+    }
+}
+
 #[cfg(target_os = "linux")]
 #[tokio::test]
 async fn actual_controller_stdio_refuses_unopened_operations_and_exits_after_eof() {
@@ -335,6 +361,7 @@ async fn actual_controller_stdio_refuses_unopened_operations_and_exits_after_eof
     };
     for (request, expected) in [
         (Request::Inspect {}, ErrorCode::InvalidState),
+        (recovery_request(), ErrorCode::InvalidState),
         (
             Request::ConfigureDns {
                 expected_revision: 0,
@@ -398,6 +425,7 @@ async fn actual_collection_only_binary_refuses_enforcement_before_any_allocation
     let mut client = Client::new(child.stdout.take().unwrap(), child.stdin.take().unwrap());
     for command in [
         Request::Install {},
+        recovery_request(),
         Request::ConfigureDns {
             expected_revision: 0,
             upstream: "127.0.0.1:19004".parse().unwrap(),

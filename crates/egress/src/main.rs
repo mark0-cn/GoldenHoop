@@ -83,6 +83,37 @@ mod server {
             ApiError::new(ErrorCode::InvalidState, "open a trusted allocation first")
         })?;
         match request {
+            Request::RecoverDns {
+                expected_revision,
+                upstream,
+                source,
+                destinations,
+            } => {
+                if frontend.is_some() {
+                    return Err(ApiError::new(
+                        ErrorCode::Conflict,
+                        "DNS frontend is already running",
+                    ));
+                }
+                let bound = native_context.as_ref().ok_or_else(|| {
+                    ApiError::new(
+                        ErrorCode::InvalidState,
+                        "bind original native lifetime before recovery",
+                    )
+                })?;
+                bound.validate_at(chrono::Utc::now())?;
+                let (state, sockets) = manager
+                    .recover_dns(
+                        expected_revision,
+                        upstream,
+                        bound.expires_at,
+                        &source,
+                        &destinations,
+                    )
+                    .await?;
+                *frontend = Some(sockets.serve(queries.clone()));
+                return Ok(Reply::Listening(state));
+            }
             Request::ConfigureDns {
                 expected_revision,
                 upstream,

@@ -87,6 +87,16 @@ impl Manager {
             ));
         }
         let first = crate::frontend::BoundListeners::bind(&gateways).await?;
+        if first
+            .bindings
+            .iter()
+            .any(|b| state.upstream.endpoint() == IpEndpoint::new(b.address(), b.port()))
+        {
+            return Err(error(
+                ErrorCode::InvalidRequest,
+                "upstream is the owned DNS listener",
+            ));
+        }
         let binding = first.bindings.clone();
         self.check_bridge()?;
         let next = expected
@@ -129,6 +139,104 @@ impl Manager {
             ));
         }
         Ok(())
+    }
+
+    /// A newly attached controller must replace any previous policy with deny
+    /// before rebinding the exact immutable DNS endpoints. No lease is restored.
+    pub async fn recover_dns(
+        &mut self,
+        expected: u64,
+        upstream: IpEndpoint,
+        expires_at: chrono::DateTime<chrono::Utc>,
+        source: &crate::SourceScope,
+        destinations: &crate::DestinationDefinition,
+    ) -> Result<(Listening, crate::frontend::BoundListeners), ApiError> {
+        let started = Instant::now();
+        let remaining = crate::binding::remaining_lifetime(expires_at, chrono::Utc::now())?;
+        let deadline = started + remaining;
+        let next = expected
+            .checked_add(1)
+            .ok_or_else(|| error(ErrorCode::Conflict, "egress revision exhausted"))?;
+        if self.uncertain
+            || self.can_renew
+            || self.lease_until.is_some()
+            || self.revision.is_some()
+            || self.dns.is_some()
+            || !self.ethernet_required
+        {
+            return Err(error(
+                ErrorCode::InvalidState,
+                "DNS recovery requires a fresh attached controller",
+            ));
+        }
+        if self.source_scope.as_ref() != Some(source)
+            || self.destinations.as_ref() != Some(destinations)
+        {
+            return Err(error(
+                ErrorCode::Conflict,
+                "recovery differs from immutable native guards",
+            ));
+        }
+        let binding = crate::binding::listeners(&self.allocation, source, destinations)?;
+        let upstream = Upstream::new(upstream)?;
+        if binding.iter().any(|b| {
+            upstream.endpoint().ip() == b.address()
+                && (upstream.endpoint().port() == 53 || upstream.endpoint().port() == b.port())
+        }) {
+            return Err(error(
+                ErrorCode::InvalidRequest,
+                "recovery upstream would recurse into owned DNS",
+            ));
+        }
+        self.expected(expected).await?;
+        if Instant::now() >= deadline {
+            return Err(error(
+                ErrorCode::DeadlineExceeded,
+                "DNS recovery lifetime elapsed",
+            ));
+        }
+        self.dns = Some(DnsState {
+            upstream,
+            deadline,
+            expires_at: Some(expires_at),
+            model: None,
+            config: None,
+            book: None,
+            active: SetNames::bootstrap(),
+            binding: Some(binding.clone()),
+        });
+        let recovered = async {
+            let observed = self
+                .commit(
+                    Plan::quarantine_with_binding(self.allocation.clone(), next, Some(&binding))?,
+                    true,
+                    false,
+                )
+                .await?;
+            self.dns.as_mut().expect("recovered DNS").invalidate(next);
+            // Confirm all deny rules before creating sockets: no queued bytes
+            // from the previous process may borrow a later policy.
+            self.inspect_binding(next).await?;
+            let sockets = crate::frontend::BoundListeners::rebind(&binding).await?;
+            self.check_bridge()?;
+            self.check_lifetime()?;
+            self.inspect_binding(next).await?;
+            Ok((
+                Listening {
+                    state: observed,
+                    binding: binding.v4,
+                    ipv6_binding: binding.v6,
+                },
+                sockets,
+            ))
+        }
+        .await;
+        if recovered.is_err() {
+            self.uncertain = true;
+            self.can_renew = false;
+            self.lease_until = None;
+        }
+        recovered
     }
 
     /// Trusted allocation control only. Configure once, while actual quarantine
