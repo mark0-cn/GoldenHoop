@@ -336,6 +336,17 @@ async fn actual_controller_stdio_refuses_unopened_operations_and_exits_after_eof
     for (request, expected) in [
         (Request::Inspect {}, ErrorCode::InvalidState),
         (
+            Request::BindRuntimeSource {
+                expected_revision: 0,
+                addresses: goldenhoop_egress::EndpointAddresses {
+                    mac: "02:00:00:00:00:02".parse().unwrap(),
+                    ipv4: "192.0.2.2".parse().unwrap(),
+                    ipv6: Some("fd42::2".parse().unwrap()),
+                },
+            },
+            ErrorCode::InvalidState,
+        ),
+        (
             Request::Renew {
                 expected_revision: 7,
             },
@@ -374,6 +385,14 @@ async fn actual_collection_only_binary_refuses_enforcement_before_any_allocation
     let mut client = Client::new(child.stdout.take().unwrap(), child.stdin.take().unwrap());
     for command in [
         Request::Install {},
+        Request::BindRuntimeSource {
+            expected_revision: 0,
+            addresses: goldenhoop_egress::EndpointAddresses {
+                mac: "02:00:00:00:00:02".parse().unwrap(),
+                ipv4: "192.0.2.2".parse().unwrap(),
+                ipv6: Some("fd42::2".parse().unwrap()),
+            },
+        },
         Request::Apply {
             expected_revision: 0,
             config: Default::default(),

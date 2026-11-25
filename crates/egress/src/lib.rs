@@ -14,7 +14,7 @@ mod host;
 pub mod native;
 pub use ethernet::EthernetPlan;
 mod source;
-pub use source::{Endpoint, Mac, SourcePlan, SourceScope};
+pub use source::{Endpoint, EndpointAddresses, Mac, SourceBindingReceipt, SourcePlan, SourceScope};
 mod destinations;
 pub use destinations::{DestinationClass, DestinationScope, ProtectedDestinations};
 mod destination_plan;

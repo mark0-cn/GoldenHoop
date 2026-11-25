@@ -46,6 +46,10 @@ pub enum Request {
         expected_revision: u64,
         endpoint: Endpoint,
     },
+    BindRuntimeSource {
+        expected_revision: u64,
+        addresses: crate::EndpointAddresses,
+    },
     ProtectDestinations {
         expected_revision: u64,
         private_exceptions: Vec<String>,

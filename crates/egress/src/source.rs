@@ -16,6 +16,31 @@ const VERSION: &str = "source_version_1";
 const CHUNK: usize = 64;
 const MAX_DESCRIPTOR: usize = 1024;
 
+/// Trusted provider metadata, cross-checked by the caller. Host port identity
+/// is discovered in the controller's network namespace rather than supplied here.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EndpointAddresses {
+    pub mac: Mac,
+    pub ipv4: Ipv4Addr,
+    pub ipv6: Option<Ipv6Addr>,
+}
+
+/// Actual source-guard/native readback, not a lease or workload-Ready grant.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SourceBindingReceipt {
+    pub allocation: Allocation,
+    pub source: SourceScope,
+    pub revision: u64,
+    pub observed_at: chrono::DateTime<chrono::Utc>,
+}
+impl SourceBindingReceipt {
+    pub fn validate(&self) -> Result<(), ApiError> {
+        self.source.validate(&self.allocation)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Mac([u8; 6]);
 impl FromStr for Mac {

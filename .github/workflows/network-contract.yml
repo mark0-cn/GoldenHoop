@@ -90,6 +90,14 @@ jobs:
           docker build --label dev.goldenhoop.build=network-prototype -f images/agent/Dockerfile -t goldenhoop-agent:test .
           docker build --target host-egress -f images/agent/Dockerfile -t goldenhoop-egress:test .
           docker build -f tests/fixtures/network.Dockerfile -t goldenhoop-network-fixture:test .
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the production driver bootstrap and recovery contract
+        run: cargo build --locked -p goldenhoop-control --bin goldenhoopd --example network_allocation
+      - name: Verify guarded bootstrap, native source binding and owned worker collection
+        run: python3 -B tests/guarded_bootstrap_contract.py --runtime ${{ matrix.runtime }} --binary target/debug/examples/network_allocation --worker-binary target/debug/goldenhoopd --work-dir .test-work --output evidence/guarded-bootstrap-${{ matrix.runtime }}.json
+      - name: Verify collection after actual process exit before trusted-agent start
+        run: python3 -B tests/guarded_bootstrap_contract.py --runtime ${{ matrix.runtime }} --mode prepared-exit --binary target/debug/examples/network_allocation --worker-binary target/debug/goldenhoopd --work-dir .test-work --output evidence/guarded-prepared-exit-${{ matrix.runtime }}.json
       - name: Verify the IPv4 routed-filter mechanism and scoped collection
         run: python3 -B tests/network_contract.py --runtime ${{ matrix.runtime }} --receiver-publication routed --ci-host-diagnostics --output evidence/network-ipv4-${{ matrix.runtime }}.json
       - name: Verify workload DNS interception, grants, source expiry and controller loss
@@ -105,14 +113,6 @@ jobs:
         run: python3 -B tests/source_contract.py --runtime ${{ matrix.runtime }} --receiver-publication routed --ci-host-diagnostics --output evidence/source-${{ matrix.runtime }}.json
       - name: Verify protected destinations before and after translation and DNS grants
         run: python3 -B tests/destination_contract.py --runtime ${{ matrix.runtime }} --receiver-publication routed --ci-host-diagnostics --output evidence/destination-${{ matrix.runtime }}.json
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Build the production driver bootstrap and recovery contract
-        run: cargo build --locked -p goldenhoop-control --bin goldenhoopd --example network_allocation
-      - name: Verify actual guarded trusted-agent bootstrap and owned worker collection
-        run: python3 -B tests/guarded_bootstrap_contract.py --runtime ${{ matrix.runtime }} --binary target/debug/examples/network_allocation --worker-binary target/debug/goldenhoopd --work-dir .test-work --output evidence/guarded-bootstrap-${{ matrix.runtime }}.json
-      - name: Verify collection after actual process exit before trusted-agent start
-        run: python3 -B tests/guarded_bootstrap_contract.py --runtime ${{ matrix.runtime }} --mode prepared-exit --binary target/debug/examples/network_allocation --worker-binary target/debug/goldenhoopd --work-dir .test-work --output evidence/guarded-prepared-exit-${{ matrix.runtime }}.json
       - name: Verify owned containers and networks are absent
         if: always()
         shell: bash

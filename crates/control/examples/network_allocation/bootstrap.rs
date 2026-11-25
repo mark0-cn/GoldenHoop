@@ -94,9 +94,11 @@ pub(super) async fn run(
         require(driver.prepare_quarantined(&stored.sandbox,&stored.request,&network,session).await.is_err())?;
         let independent=driver.observe_quarantined_endpoint(&handle,&network).await?;
         require(serde_json::to_value(&endpoint).map_err(|_|invalid())?==serde_json::to_value(independent).map_err(|_|invalid())?)?;
+        let source=driver.bind_quarantined_source(&handle,&network,session).await?;
+        require(driver.bind_quarantined_source(&handle,&network,session).await.is_err() && !session.is_uncertain())?;
         let current=store.sandbox(id).await?;
         require(current.sandbox.state==SandboxState::Starting && !current.ever_running)?;
-        Ok::<Value,ApiError>(json!({"mode":"trusted_agent_quarantined","handle":handle,"network":network,"endpoint":endpoint,"missing_floor_refused_before_creation":true,"none_network_fallback_refused":true,"duplicate_start_refused":true,"nonempty_bootstrap_refused":true,"workload_ready":false,"user_execution_dispatched":false,"stored":current.sandbox,"ever_running":current.ever_running,"guard":controller_call(session,ControllerRequest::Inspect{}).await?,"profile":observed}))
+        Ok::<Value,ApiError>(json!({"mode":"trusted_agent_quarantined","handle":handle,"network":network,"endpoint":endpoint,"source_binding":source,"duplicate_source_binding_refused":true,"missing_floor_refused_before_creation":true,"none_network_fallback_refused":true,"duplicate_start_refused":true,"nonempty_bootstrap_refused":true,"workload_ready":false,"user_execution_dispatched":false,"stored":current.sandbox,"ever_running":current.ever_running,"guard":controller_call(session,ControllerRequest::Inspect{}).await?,"profile":observed}))
     }.await;
     if result.is_err() {
         driver.remove(&handle).await?;

@@ -5,12 +5,36 @@ import json
 import sqlite3
 import subprocess
 import time
+import uuid
 from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 
 from network_provider_contract import Contract as ProviderContract
 from worker_network_recovery_contract import Contract as RecoveryContract
+
+SOURCE_AUDIT = r'''
+import datetime,json,pathlib,re,subprocess,sys,uuid
+receipt=json.loads(sys.argv[1]);owner=sys.argv[2];allocation=receipt['allocation'];scope=receipt['source'];ep=scope['endpoint']
+assert re.fullmatch('goldenhoop:[0-9a-f]{64}',owner)
+assert re.fullmatch('ghn[0-9a-f]{12}',allocation['bridge']) and re.fullmatch('[a-z0-9_-]{2,15}',ep['port'])
+root=pathlib.Path('/sys/class/net');bridge=root/allocation['bridge'];port=root/ep['port']
+ports=list((bridge/'brif').iterdir());assert len(ports)==1 and ports[0].name==ep['port']
+assert ports[0].is_symlink() and ports[0].resolve()==(port/'brport').resolve()
+assert int((bridge/'ifindex').read_text())==allocation['ifindex'] and (bridge/'ifalias').read_text().strip()==owner
+assert int((port/'ifindex').read_text())==ep['ifindex'] and int((port/'master/ifindex').read_text())==allocation['ifindex']
+assert (bridge/'address').read_text().strip()==scope['gateway_mac']
+p=subprocess.run(['ip','--json','addr','show','dev',allocation['bridge']],capture_output=True,text=True,timeout=5);assert p.returncode==0,p.stderr
+addresses=[address['local'] for link in json.loads(p.stdout) for address in link.get('addr_info',[]) if address.get('family') in ('inet','inet6')]
+assert scope['gateway4'] in addresses and (scope['gateway6'] is None or scope['gateway6'] in addresses)
+table='gh_s_'+uuid.UUID(allocation['generation']).hex
+p=subprocess.run(['nft','--json','list','table','bridge',table],capture_output=True,text=True,timeout=5);assert p.returncode==0,p.stderr
+native=json.loads(p.stdout);tables=[row['table'] for row in native['nftables'] if 'table' in row]
+assert len(tables)==1 and tables[0]['family']=='bridge' and tables[0]['name']==table
+chains=[row['chain']['name'] for row in native['nftables'] if 'chain' in row]
+assert owner.replace(':','_') in chains and 'source_version_1' in chains
+print(json.dumps({'observed_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'bridge':allocation['bridge'],'bridge_ifindex':int((bridge/'ifindex').read_text()),'port':ep['port'],'port_ifindex':int((port/'ifindex').read_text()),'port_target':str(ports[0].resolve()),'gateway_addresses':addresses,'source_table':native}))
+'''
 
 
 class Contract(RecoveryContract):
@@ -54,6 +78,26 @@ class Contract(RecoveryContract):
         self.owned(actual)
         assert actual['Config']['Labels']['dev.goldenhoop.profile'] == self.plan['identity']['profile']
         return actual
+
+    def source_audit(self, receipt, owner):
+        name='goldenhoop-source-binding-audit-'+uuid.uuid4().hex[:12]
+        try:
+            result=self.docker('run','--rm','--name',name,'--label','dev.goldenhoop.installation='+self.installation,
+                '--label','dev.goldenhoop.role=network-provider-audit','--label','dev.goldenhoop.test=network-provider',
+                '--label','dev.goldenhoop.attempt='+self.attempt,'--runtime','runc','--network','host','--user','0:0',
+                '--cap-drop','ALL','--cap-add','NET_ADMIN','--security-opt','no-new-privileges:true','--read-only',
+                '--memory','128m','--memory-swap','128m','--cpus','0.25','--pids-limit','32','--entrypoint','python3',
+                self.report['fixture_image_id'],'-B','-c',SOURCE_AUDIT,json.dumps(receipt),owner)
+        except subprocess.TimeoutExpired:
+            self.creation_uncertain=True;self.settled=False
+            raise
+        observed=json.loads(result.stdout)
+        assert not self.docker('ps','-a','--filter','name=^/'+name+'$','--format','{{.ID}}').stdout.strip()
+        return observed
+
+    def runtime_events(self, since, until):
+        return [json.loads(line) for line in self.docker('events','--since',since,'--until',until,'--filter','type=container',
+                '--filter','label=dev.goldenhoop.sandbox='+self.sandbox,'--format','{{json .}}').stdout.splitlines()]
 
     def recover_with_worker(self):
         assert self.controller_image_id and self.plan and not self.creation_uncertain
@@ -148,6 +192,12 @@ class Contract(RecoveryContract):
                     assert link['IPAddress']==bootstrap['endpoint']['ipv4'] and link['GlobalIPv6Address']==bootstrap['endpoint']['ipv6']
                     assert not bootstrap['user_execution_dispatched'] and bootstrap['guard']['ethernet_guarded'] and not bootstrap['guard']['uncertain']
                     self.check('actual_supervisor_start_cross_checks_the_sole_endpoint_and_refuses_duplicate_or_none_network_startup')
+                    source=bootstrap['source_binding']
+                    assert source['allocation']==bootstrap['network']['native']['allocation'] and source['revision']==bootstrap['guard']['revision']
+                    assert source['source']['endpoint']['mac']==link['MacAddress'] and source['source']['endpoint']['ipv4']==link['IPAddress'] and source['source']['endpoint']['ipv6']==link['GlobalIPv6Address']
+                    assert bootstrap['duplicate_source_binding_refused'] and bootstrap['guard']['source_guarded']
+                    self.report['independent_native_source_binding']=self.source_audit(source,result['exchange']['native_alias']['alias'])
+                    self.check('the_provider_addresses_bind_to_the_unique_actual_host_port_and_an_independently_owned_source_table')
             before=self.records()
             assert before['sandbox']['state'] in ('pending','starting')
             assert not any(row['kind']=='create' and row['state']=='succeeded' for row in before['operations'])
@@ -155,19 +205,23 @@ class Contract(RecoveryContract):
                 assert connection.execute('SELECT COUNT(*) FROM executions WHERE sandbox_id=?',(self.sandbox,)).fetchone()[0]==0
             self.report['before_worker_recovery']={'records':before,'native':self.audit()}
             self.check('neither_runtime_state_nor_an_endpoint_publishes_Ready_or_a_successful_create_operation')
+            # Capture target startup before the worker's unrelated profile probes.
+            # Docker retains only the last 256 historical daemon events.
+            startup_until=datetime.now(timezone.utc).isoformat()
+            events=self.runtime_events(since,startup_until)
+            creates=[e for e in events if e['Action']=='create' and e['Actor']['Attributes'].get('dev.goldenhoop.role')=='sandbox']
+            starts=[e for e in events if e['Action']=='start' and e['Actor']['Attributes'].get('dev.goldenhoop.role')=='sandbox']
+            self.report['target_runtime_events']={'since':since,'until':startup_until,'events':events,'runtime_creates':len(creates),'runtime_starts':len(starts),'capture_phase':'before production worker probes'}
+            self.save()
+            assert len(creates)==(0 if self.args.mode=='unavailable' else 1)
+            assert len(starts)==(1 if self.args.mode=='full' else 0)
             current=self.recover_with_worker()
             assert current['sandbox']['state']=='terminated' and not any(row['kind']=='create' and row['state']=='succeeded' for row in current['operations'])
             assert current['profiles'] and all(not {'network_policy','secret_injection'}.intersection(p['capabilities']) for p in current['profiles'])
             final=self.audit();assert not final['bridge_exists'] and not final['owned_tables']
             self.report['independent_native_absence_after_worker_recovery']=final
             until=datetime.now(timezone.utc).isoformat()
-            events=[json.loads(line) for line in self.docker('events','--since',since,'--until',until,'--filter','type=container',
-                    '--filter','label=dev.goldenhoop.sandbox='+self.sandbox,'--format','{{json .}}').stdout.splitlines()]
-            creates=[e for e in events if e['Action']=='create' and e['Actor']['Attributes'].get('dev.goldenhoop.role')=='sandbox']
-            starts=[e for e in events if e['Action']=='start' and e['Actor']['Attributes'].get('dev.goldenhoop.role')=='sandbox']
-            assert len(creates)==(0 if self.args.mode=='unavailable' else 1)
-            assert len(starts)==(1 if self.args.mode=='full' else 0)
-            self.report['target_runtime_events']={'since':since,'until':until,'events':events}
+            self.report['target_recovery_events']={'since':startup_until,'until':until,'events':self.runtime_events(startup_until,until)}
             self.check('the_production_worker_collects_the_exact_bootstrap_runtime_controller_bridge_and_owned_rules')
             self.check('actual_Docker_events_match_the_single_runtime_creation_and_expected_start_count')
             self.report['result']='passed'

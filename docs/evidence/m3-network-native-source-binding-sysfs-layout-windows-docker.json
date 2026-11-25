@@ -1,0 +1,64 @@
+{
+  "timestamp": "2026-11-25T12:22:49.795614+00:00",
+  "command": [
+    "docker",
+    "run",
+    "--rm",
+    "--name",
+    "goldenhoop-source-sysfs-326565e41f56",
+    "--label",
+    "dev.goldenhoop.test=native-source-readback",
+    "--label",
+    "dev.goldenhoop.attempt=326565e41f564ffeb510452d6fbbed18",
+    "--runtime",
+    "runc",
+    "--network",
+    "host",
+    "--user",
+    "1000:1000",
+    "--cap-drop",
+    "ALL",
+    "--security-opt",
+    "no-new-privileges:true",
+    "--read-only",
+    "--memory",
+    "64m",
+    "--memory-swap",
+    "64m",
+    "--cpus",
+    "0.25",
+    "--pids-limit",
+    "32",
+    "--entrypoint",
+    "python3",
+    "goldenhoop-agent:test",
+    "-B",
+    "-c",
+    "import json,pathlib;root=pathlib.Path('/sys/class/net');out=[]\nfor bridge in root.iterdir():\n if (bridge/'brif').is_dir():\n  entries=list((bridge/'brif').iterdir())[:3];out.append({'bridge':bridge.name,'ports':[{'name':p.name,'link':str(p.readlink()) if p.is_symlink() else None,'canonical':str(p.resolve()),'entry_ifindex_exists':(p/'ifindex').exists(),'global_brport':str((root/p.name/'brport').resolve()),'global_master':str((root/p.name/'master').resolve())} for p in entries]})\nprint(json.dumps(out))"
+  ],
+  "exit_code": 0,
+  "stderr": "",
+  "scope": "Read-only host sysfs link layout; no packet changes or source binding acceptance",
+  "audit_container_absent": true,
+  "stdout_sha256": "2744632e70e792c7303efaf36a01a21ef034290d3075654dd24416208ab0d4b1",
+  "layout": [
+    {
+      "bridge": "bridge_1",
+      "ports": []
+    },
+    {
+      "bridge": "bridge_2",
+      "ports": [
+        {
+          "name": "port_1",
+          "link": "../../port_1/brport",
+          "canonical": "/sys/devices/virtual/net/port_1/brport",
+          "entry_ifindex_exists": false,
+          "global_brport": "/sys/devices/virtual/net/port_1/brport",
+          "global_master": "/sys/devices/virtual/net/bridge_2"
+        }
+      ]
+    }
+  ],
+  "redaction": "Unrelated bridge and interface identifiers replaced; link structure and raw-output SHA256 retained."
+}

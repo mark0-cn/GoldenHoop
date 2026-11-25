@@ -121,6 +121,36 @@ async fn provision(store: &Store, id: Uuid) -> NetworkAllocation {
         .unwrap()
 }
 
+/// Stage only the fixture clock after provisioning, rather than racing a
+/// one-second real setup deadline. Actual expiry has a separate backend gate.
+async fn expire_fixture_sandboxes(store: &Store, path: &std::path::Path, ids: &[Uuid]) {
+    let mut snapshots = Vec::new();
+    for id in ids {
+        let mut sandbox = store.sandbox(*id).await.unwrap().sandbox;
+        sandbox.created_at -= Duration::seconds(601);
+        sandbox.expires_at -= Duration::seconds(601);
+        snapshots.push((id.to_string(), serde_json::to_string(&sandbox).unwrap()));
+    }
+    let options = SqliteConnectOptions::new().filename(path);
+    let mut connection = SqliteConnection::connect_with(&options).await.unwrap();
+    let result = async {
+        for (id, payload) in snapshots {
+            let changed = sqlx::query("UPDATE sandboxes SET payload=? WHERE id=?")
+                .bind(payload)
+                .bind(id)
+                .execute(&mut connection)
+                .await?;
+            if changed.rows_affected() != 1 {
+                return Err(sqlx::Error::RowNotFound);
+            }
+        }
+        Ok::<_, sqlx::Error>(())
+    }
+    .await;
+    connection.close().await.unwrap();
+    result.unwrap();
+}
+
 #[tokio::test]
 async fn reservation_and_dispatch_survive_real_close_without_replaying_creation() {
     checked(|store, path| async move {
@@ -678,7 +708,7 @@ async fn native_checkpoint_refuses_foreign_scope_and_live_collisions_before_full
 
 #[tokio::test]
 async fn cancellation_expiry_and_collection_fence_new_native_and_complete_bindings() {
-    checked(|store, _| async move {
+    checked(|store, path| async move {
         let id = create(&store).await;
         let dispatch = provision(&store, id).await;
         let complete = binding(&dispatch, 100, 'a');
@@ -750,8 +780,7 @@ async fn cancellation_expiry_and_collection_fence_new_native_and_complete_bindin
             .await
             .unwrap();
         assert_eq!(done.native_binding().unwrap().allocation.ifindex, 200);
-        let mut spec = request();
-        spec.ttl_seconds = 1;
+        let spec = request();
         let created = store
             .create_sandbox(&profile(), &spec, "expiry-before-native")
             .await
@@ -772,7 +801,7 @@ async fn cancellation_expiry_and_collection_fence_new_native_and_complete_bindin
             )
             .await
             .unwrap();
-        tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+        expire_fixture_sandboxes(&store, &path, &[dispatch.sandbox_id, later.sandbox_id]).await;
         code(
             store
                 .bind_native_network(

@@ -1,4 +1,6 @@
-use goldenhoop_egress::{Allocation, Endpoint, Mac, SourcePlan, SourceScope};
+use goldenhoop_egress::{
+    Allocation, Endpoint, EndpointAddresses, Mac, SourceBindingReceipt, SourcePlan, SourceScope,
+};
 use goldenhoop_protocol::ErrorCode;
 use uuid::Uuid;
 
@@ -24,6 +26,35 @@ fn scope() -> SourceScope {
         gateway4: "192.0.2.1".parse().unwrap(),
         gateway6: Some("fd42::1".parse().unwrap()),
     }
+}
+#[test]
+fn runtime_source_wire_accepts_only_provider_addresses_and_receipts_validate_native_scope() {
+    let addresses = EndpointAddresses {
+        mac: scope().endpoint.mac,
+        ipv4: scope().endpoint.ipv4,
+        ipv6: scope().endpoint.ipv6,
+    };
+    let mut value = serde_json::to_value(&addresses).unwrap();
+    value["port"] = serde_json::json!("user-selected");
+    assert!(serde_json::from_value::<EndpointAddresses>(value).is_err());
+    let receipt = SourceBindingReceipt {
+        allocation: allocation(),
+        source: scope(),
+        revision: 2,
+        observed_at: chrono::Utc::now(),
+    };
+    receipt.validate().unwrap();
+    let wire = serde_json::to_value(&receipt).unwrap();
+    serde_json::from_value::<SourceBindingReceipt>(wire)
+        .unwrap()
+        .validate()
+        .unwrap();
+    let mut wrong = receipt.clone();
+    wrong.source.endpoint.ifindex = wrong.allocation.ifindex;
+    assert!(wrong.validate().is_err());
+    let mut wrong = receipt;
+    wrong.source.endpoint.ipv6 = None;
+    assert!(wrong.validate().is_err());
 }
 #[test]
 fn canonical_mac_and_link_local_binding_have_independent_byte_vectors() {

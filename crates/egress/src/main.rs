@@ -16,6 +16,7 @@ mod server {
         Listening(Listening),
         Native(goldenhoop_egress::native::NativeBridgeObservation),
         Collected(goldenhoop_egress::CollectionReceipt),
+        BoundSource(goldenhoop_egress::SourceBindingReceipt),
     }
 
     async fn execute(
@@ -76,6 +77,15 @@ mod server {
                 expected_revision,
                 endpoint,
             } => manager.bind_source(expected_revision, endpoint).await,
+            Request::BindRuntimeSource {
+                expected_revision,
+                addresses,
+            } => {
+                return manager
+                    .bind_runtime_source(expected_revision, addresses)
+                    .await
+                    .map(Reply::BoundSource);
+            }
             Request::EnableEthernet { expected_revision } => {
                 manager.enable_ethernet(expected_revision).await
             }

@@ -8,6 +8,7 @@ use goldenhoop_egress::{
 };
 use serde::{Deserialize, Serialize};
 use std::net::{Ipv4Addr, Ipv6Addr};
+mod source;
 #[cfg(test)]
 mod tests;
 

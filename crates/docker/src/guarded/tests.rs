@@ -2,7 +2,7 @@
 use super::*;
 use serde_json::{Value, json};
 
-fn model() -> (WorkloadNetworkPlan, Value, Value, NetworkObservation) {
+pub(super) fn model() -> (WorkloadNetworkPlan, Value, Value, NetworkObservation) {
     let historical: Value =
         serde_json::from_str(include_str!("../../tests/fixtures/owned-controller.json")).unwrap();
     let native: NativeBridgePlan =

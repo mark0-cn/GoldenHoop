@@ -1,11 +1,67 @@
 use super::*;
 use crate::{Endpoint, SourcePlan, SourceScope};
+mod port;
 
 pub(super) struct SourceObservation {
     pub scope: SourceScope,
     pub healthy: bool,
 }
 impl Manager {
+    /// Bind provider addresses to the sole actual host bridge port under deny.
+    /// No workload-selected port or index is accepted by this entry point.
+    pub async fn bind_runtime_source(
+        &mut self,
+        expected: u64,
+        addresses: crate::EndpointAddresses,
+    ) -> Result<crate::SourceBindingReceipt, ApiError> {
+        self.check_bridge()?;
+        let endpoint = port::observe(Path::new("/sys/class/net"), &self.allocation, &addresses)?;
+        let observed = self.bind_source(expected, endpoint.clone()).await?;
+        let receipt = async {
+            self.check_bridge()?;
+            if port::observe(Path::new("/sys/class/net"), &self.allocation, &addresses)? != endpoint
+            {
+                return Err(error(
+                    ErrorCode::Conflict,
+                    "native source port changed during binding",
+                ));
+            }
+            let guard = self.source_guard().await?.ok_or_else(|| {
+                error(
+                    ErrorCode::BackendUnavailable,
+                    "source guard readback is missing",
+                )
+            })?;
+            self.check_source_scope(&guard.scope)?;
+            if !guard.healthy
+                || !self.source_matches(Some(&guard))
+                || !observed.source_guarded
+                || observed.uncertain
+                || observed.revision != Some(expected)
+                || observed.source_binding_sha256.as_deref() != Some(guard.scope.digest().as_str())
+            {
+                return Err(error(
+                    ErrorCode::BackendUnavailable,
+                    "native source binding is unconfirmed",
+                ));
+            }
+            let receipt = crate::SourceBindingReceipt {
+                allocation: self.allocation.clone(),
+                source: guard.scope,
+                revision: expected,
+                observed_at: chrono::Utc::now(),
+            };
+            receipt.validate()?;
+            Ok(receipt)
+        }
+        .await;
+        if receipt.is_err() {
+            self.uncertain = true;
+            self.can_renew = false;
+            self.lease_until = None;
+        }
+        receipt
+    }
     pub(super) async fn source_guard(&self) -> Result<Option<SourceObservation>, ApiError> {
         let table = self.allocation.source_table();
         let inventory: Value = serde_json::from_slice(

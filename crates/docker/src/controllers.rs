@@ -370,6 +370,11 @@ pub struct ControllerSession {
     client: Option<Channel>,
 }
 impl ControllerSession {
+    /// Stop further dispatch after an untrusted/inconsistent mutation result.
+    /// EOF does not attest process exit or native collection.
+    pub(crate) fn fence(&mut self) {
+        drop(self.client.take());
+    }
     pub(crate) fn plan(&self) -> &ControllerPlan {
         &self.plan
     }
