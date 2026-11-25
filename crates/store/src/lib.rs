@@ -4,7 +4,9 @@ mod contexts;
 mod executions;
 mod isolated;
 mod lifecycle;
+mod networks;
 mod sessions;
+pub use networks::{NetworkAbsence, NetworkAllocation, NetworkBinding, NetworkPhase};
 
 use std::{path::Path, time::Duration};
 
@@ -246,7 +248,7 @@ impl Store {
                 .fetch_one(&mut *tx)
                 .await
                 .map_err(db)?;
-        if !matches!(version.as_str(), "1" | "2" | "3" | "4" | "5") {
+        if !matches!(version.as_str(), "1" | "2" | "3" | "4" | "5" | "6") {
             return Err(ApiError::new(
                 ErrorCode::UnsupportedCapability,
                 "database schema version is unsupported",
@@ -270,8 +272,14 @@ impl Store {
                 .await
                 .map_err(db)?;
         }
-        if version != "5" {
+        if matches!(version.as_str(), "1" | "2" | "3" | "4") {
             sqlx::raw_sql(include_str!("schema-v5.sql"))
+                .execute(&mut *tx)
+                .await
+                .map_err(db)?;
+        }
+        if version != "6" {
+            sqlx::raw_sql(include_str!("schema-v6.sql"))
                 .execute(&mut *tx)
                 .await
                 .map_err(db)?;

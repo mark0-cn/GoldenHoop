@@ -201,6 +201,7 @@ impl Store {
             ));
         }
         if stored.sandbox.cleanup == CleanupState::Complete {
+            super::networks::require_collected(&mut tx, stored.sandbox.id).await?;
             super::isolated::confirm_children_absent(&mut tx, stored.sandbox.id).await?;
         }
         // The worker only supplies observations; request identity and absolute TTL
