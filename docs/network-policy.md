@@ -6,14 +6,15 @@ retain none-network isolation and do not advertise `NetworkPolicy`. New public
 creation, environment-probe and five-level runtime gates require their own
 supported-host acceptance; private staged contracts do not establish them.
 
-At 70a2ad2, both actual public policy gates pass sixteen groups. Both automatic
-creation gates still fail child readiness before any private command or public
-creation group is accepted. Earlier renewal did not remove that failure. The
-[immutable network archive](evidence/m3-network-probe-completion-ci-45709448654-archive.json)
-preserves twenty-three records with Complete cleanup, including an independent
-native DNS-listener binding failure whose original cause remains unconfirmed.
-The root repeatedly changes between Running and Unknown while its policy stays
-Active, and the child pauses with desired Running. Active metadata is not Ready.
+At f79409c, all ten host records and both sixteen-group public policy gates pass.
+Both automatic creation gates still fail child readiness before any private
+command or public creation group is accepted. The new static reason identifies
+published private readiness expiry in both runtimes. The
+[immutable network archive](evidence/m3-lifecycle-termination-intent-ci-45714471223-archive.json)
+preserves twenty-four records with Complete cleanup. The root repeatedly changes
+between Running and Unknown while its policy stays Active, and the child pauses
+with desired Running. Active metadata is not Ready. Exchange timing still needs
+measurement before attributing the expiry to a specific cause.
 
 The current [diagnosis](evidence/m3-network-probe-completion-diagnosis.json)
 separates these failures from a definite, previously unreached completion bug:
@@ -26,11 +27,11 @@ and are retained in the sandbox observation. No check, lease lifetime,
 publication margin, timeout or execution assertion is relaxed.
 
 The independent readback fixture now proves its private IPv6 address can bind
-TCP and UDP before testing the production manager. Its seven local groups pass;
-this does not identify the original hosted binding failure or establish public
-protected creation. Positive supported-host creation/hierarchy retesting remains
-required. Startup metadata and failure journals provide no live authority or
-native absence proof.
+TCP and UDP before testing the production manager. Its seven local and f79409c
+hosted groups pass. This does not identify the original hosted binding failure's
+cause or establish public protected creation. Positive supported-host
+creation/hierarchy retesting remains required. Startup metadata and failure
+journals provide no live authority or native absence proof.
 
 ## Deployment
 

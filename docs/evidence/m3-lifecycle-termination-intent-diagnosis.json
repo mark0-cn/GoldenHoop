@@ -1,0 +1,75 @@
+{
+  "timestamp": "2026-11-25T22:40:46.323678+00:00",
+  "base": "f79409cbcc87cc05a838e87104e1424df3eab50c",
+  "original_failure": {
+    "commit": "70a2ad2ebeac94ec28d131fa90d27a23c228b5ed",
+    "run": 45709448657,
+    "job": 139539774791,
+    "raw": "docs/evidence/ci-45709448657/agent-runc/api-runc.json",
+    "sha256": "412df28d8478799ac33eb4407680d608667b1640cfaa4d8c855f99dc47723d7f",
+    "accepted_groups_before_failure": 26,
+    "result": "failed",
+    "cleanup": "complete",
+    "error": "{'id': '2a4b06e7-de63-4eab-81dd-c1263e2140a5', 'profile': 'local-runc-dev', 'image': 'goldenhoop-languages-fixture:test', 'state': 'terminated', 'desired_state': 'paused', 'cleanup': 'complete', 'created_at': '2026-11-25T22:25:27.510227734Z', 'expires_at': '2026-11-25T22:25:42.510227734Z', 'observed_at': '2026-11-25T22:25:42.608658445Z', 'resources': {'cpu_millis': 1000, 'memory_bytes': 268435456, 'pids': 128}, 'metadata': {}, 'reason': 'sandbox deadline or termination requested'}",
+    "changed_control_path_identical_at_parent": true
+  },
+  "source_files_sha256": {
+    "crates/control/src/worker/lifecycle.rs": "4453c04df0c9aa59d67364a1f478cc1e1e5d4a0fdcff0af6ced71c8591e73096",
+    "crates/store/src/lifecycle.rs": "1cb54fbb5f076e2212465bbebe6895e650c54cff093724d2a0c2cf2db1a47192",
+    "crates/store/src/isolated.rs": "926eb29a7fac76c092064f2c2182b2b48125ad8d4537f0764fdf74bbb74892d9",
+    "tests/api_isolated_contract.py": "098d00459c8773cb412dde81ceb436f85a390d18a70af895ccf26ed166a0c433",
+    "tests/api_contract.py": "7b36845c29057c99a892bb153a858e06b69d52c84f02cbe7308cddfb28d395b8"
+  },
+  "unchanged_acceptance_inputs": {
+    "tests/api_isolated_contract.py": "098d00459c8773cb412dde81ceb436f85a390d18a70af895ccf26ed166a0c433",
+    "tests/api_contract.py": "7b36845c29057c99a892bb153a858e06b69d52c84f02cbe7308cddfb28d395b8"
+  },
+  "source_observations": [
+    "The first effective termination check persists tree-close intent before runtime recovery/inspection.",
+    "The later effective termination check can directly enter stop without that write; its unique reason matches the actual failed record.",
+    "Store.observe deliberately retains the latest durable desired state, and completed nodes without pending work can leave Store.work.",
+    "The current stop entry rechecks effective termination and commits the existing idempotent tree-close intent before controller/runtime/resource collection. Reloading preserves current desired metadata."
+  ],
+  "causal_limit": "The missing durable-intent path is confirmed by the immutable source and matching actual terminal record. Deadline crossing during the preceding asynchronous runtime inspection is the source-supported timing explanation; its exact latency was not instrumented. A successful local run does not by itself prove absence of all timing failures or accept the entire current supported-host suite.",
+  "scope": "No expiry time, runtime fallback, resource limit, native absence rule or existing API assertion changes. Current local and exact-source hosted retests are recorded separately.",
+  "prior_network_observation": {
+    "commit": "f79409cbcc87cc05a838e87104e1424df3eab50c",
+    "run": 45714471223,
+    "archive": "docs/evidence/m3-lifecycle-termination-intent-ci-45714471223-archive.json",
+    "archive_sha256": "8e872243dc77fcece22a421c6074fca2d58c010453f5a99136ecfcbbe3c0f0e0",
+    "raw_records": 24,
+    "unique_verified_sources": 226,
+    "host_records_passed": 10,
+    "native_policy_readback_groups": 7,
+    "public_policy_groups_per_runtime": 16,
+    "runtimes": [
+      {
+        "runtime": "runc",
+        "raw": "docs/evidence/ci-45714471223/network-ipv4-runc/public-network-create-runc.json",
+        "raw_sha256": "9fb23cb4a5b408ff623bfcfe37a4fcf624f99ad151ea0078af5b1aac7f1a5b4b",
+        "sample_count": 79,
+        "reason_counts": {
+          "waiting for fresh protected policy lease: protected dispatch is unavailable: published private readiness expired": 32,
+          "sandbox termination requested": 6
+        },
+        "public_groups_accepted": 0,
+        "private_commands_accepted": 0,
+        "cleanup": "complete"
+      },
+      {
+        "runtime": "runsc",
+        "raw": "docs/evidence/ci-45714471223/network-ipv4-runsc/public-network-create-runsc.json",
+        "raw_sha256": "7289aef21ec6253af8f7f6d34d2e017bbc2c074c1d91fec027364ce66e2f59e2",
+        "sample_count": 75,
+        "reason_counts": {
+          "waiting for fresh protected policy lease: protected dispatch is unavailable: published private readiness expired": 30,
+          "sandbox termination requested": 6
+        },
+        "public_groups_accepted": 0,
+        "private_commands_accepted": 0,
+        "cleanup": "complete"
+      }
+    ],
+    "causal_limit": "Both runtime startup samples now identify the exact refusal as published private readiness expired. Exchange duration and remaining-window timing were not instrumented. This proves the refusal predicate, not a confirmed performance cause or a successful public capability. The lifecycle-intent fix does not change the renewal exchange, native lifetime, publication margin or readiness predicates."
+  }
+}

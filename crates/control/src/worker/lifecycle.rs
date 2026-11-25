@@ -292,6 +292,17 @@ impl Worker {
         execution_state: ExecutionState,
     ) -> Result<(), ApiError> {
         let id = stored.sandbox.id;
+        // Expiry or ancestor closure can become effective after reconcile's
+        // first intent check. Persist it before collection: observations retain
+        // desired state, and a completely collected node can leave the work scan.
+        if stored.sandbox.desired_state != DesiredState::Terminated
+            && self.store.effective_desired(id).await? == DesiredState::Terminated
+        {
+            self.store
+                .set_desired(id, DesiredState::Terminated, &format!("tree-close-{id}"))
+                .await?;
+            stored = self.store.sandbox(id).await?;
+        }
         let expired = expired(&stored.sandbox, Utc::now());
         let failed = stored.sandbox.state == SandboxState::Failed
             || execution_state == ExecutionState::Failed;
