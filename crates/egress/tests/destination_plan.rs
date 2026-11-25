@@ -183,3 +183,72 @@ fn original_dns_and_neighbor_exemptions_cannot_be_widened_or_moved_after_transla
     original["chain"] = json!("forward");
     assert!(plan.verify(&a, &moved).is_err());
 }
+
+#[test]
+fn local_route_guard_cannot_limit_to_ingress_or_yield_to_private_exceptions() {
+    let (a, definition, value) = capture();
+    let plan = DestinationPlan::new(&a, &definition).unwrap();
+    let index = value["nftables"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .position(|e| {
+            e["rule"]["expr"].as_array().is_some_and(|parts| {
+                parts
+                    .iter()
+                    .any(|p| p["match"]["left"].get("fib").is_some())
+            })
+        })
+        .unwrap();
+    let mut absent = value.clone();
+    absent["nftables"].as_array_mut().unwrap().remove(index);
+    assert!(plan.verify(&a, &absent).is_err());
+    for flags in [json!(["daddr", "iif"]), json!(["saddr"]), json!([])] {
+        let mut changed = value.clone();
+        changed["nftables"][index]["rule"]["expr"][0]["match"]["left"]["fib"]["flags"] = flags;
+        assert!(plan.verify(&a, &changed).is_err());
+    }
+    let mut reordered = value.clone();
+    let exception = reordered["nftables"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .position(|e| e["rule"]["expr"][0]["match"]["right"]["prefix"]["addr"] == "10.20.0.0")
+        .unwrap();
+    reordered["nftables"]
+        .as_array_mut()
+        .unwrap()
+        .swap(index, exception);
+    assert!(plan.verify(&a, &reordered).is_err());
+}
+
+#[test]
+fn historical_v1_descriptor_is_recognized_for_collection_but_never_a_current_guard() {
+    let legacy: Value =
+        serde_json::from_str(include_str!("fixtures/destination-kernel-v1-table.json")).unwrap();
+    let a: Allocation = serde_json::from_value(legacy["input"]["allocation"].clone()).unwrap();
+    let definition: DestinationDefinition =
+        serde_json::from_value(legacy["input"]["definition"].clone()).unwrap();
+    assert_eq!(
+        DestinationPlan::descriptor(&a, &legacy["observation"]).unwrap(),
+        definition
+    );
+    assert!(
+        DestinationPlan::new(&a, &definition)
+            .unwrap()
+            .verify(&a, &legacy["observation"])
+            .is_err()
+    );
+    for version in ["destination_version_3", "destination_version_0"] {
+        let mut changed = legacy["observation"].clone();
+        let chain = changed["nftables"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .filter_map(|e| e.get_mut("chain"))
+            .find(|c| c["name"] == "destination_version_1")
+            .unwrap();
+        chain["name"] = json!(version);
+        assert!(DestinationPlan::descriptor(&a, &changed).is_err());
+    }
+}

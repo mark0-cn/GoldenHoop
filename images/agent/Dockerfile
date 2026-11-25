@@ -9,7 +9,10 @@ COPY crates ./crates
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,id=goldenhoop-rust-target,target=/src/target \
-    cargo fmt --all --check \
+    # Source contexts can restore mtimes older than shared target artifacts.
+    # Refresh all workspace inputs before Cargo decides what can be reused.
+    find crates -type f -exec touch {} + \
+    && cargo fmt --all --check \
     && cargo clippy --locked --workspace --all-targets -- -D warnings \
     && cargo test --locked --workspace \
     && cargo build --locked --release --target x86_64-unknown-linux-musl -p goldenhoop-agent \

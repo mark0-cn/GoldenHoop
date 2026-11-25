@@ -292,6 +292,7 @@ impl GrantInstaller for Manager {
                 ));
             }
         };
+        self.check_live_destination_addresses(request.addresses())?;
         let (config, old) = {
             let protected = self
                 .destinations
@@ -388,6 +389,7 @@ impl GrantInstaller for Manager {
         let marker = dns_marker(&value)?
             .ok_or_else(|| error(ErrorCode::Conflict, "DNS activation marker disappeared"))?;
         self.expected(revision).await?;
+        self.check_live_destination_addresses(request.addresses())?;
         let state = self.dns.as_mut().expect("configured DNS state");
         let mut receipt = state.book.as_mut().expect("configured DNS book").commit(
             transaction,

@@ -60,12 +60,6 @@ impl Manager {
         &self,
         definition: &DestinationDefinition,
     ) -> Result<(), ApiError> {
-        if crate::frontend::host_addresses()? != definition.scope.host_addresses {
-            return Err(error(
-                ErrorCode::Conflict,
-                "protected host address inventory changed",
-            ));
-        }
         if let Some(bindings) = self.dns.as_ref().and_then(|d| d.binding.as_ref()) {
             let actual = bindings
                 .iter()
@@ -80,6 +74,24 @@ impl Manager {
                     "protected DNS infrastructure changed",
                 ));
             }
+        }
+        Ok(())
+    }
+    /// The packet floor uses the current kernel local-route set. Recheck native
+    /// host addresses for each DNS candidate without changing immutable pins.
+    pub(super) fn check_live_destination_addresses(
+        &self,
+        addresses: &[IpAddr],
+    ) -> Result<(), ApiError> {
+        if self.destinations.is_none() || addresses.is_empty() {
+            return Ok(());
+        }
+        let current = crate::frontend::host_addresses()?;
+        if addresses.iter().any(|address| current.contains(address)) {
+            return Err(error(
+                ErrorCode::Forbidden,
+                "resolved DNS address is a current host destination",
+            ));
         }
         Ok(())
     }

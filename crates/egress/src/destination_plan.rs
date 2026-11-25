@@ -8,7 +8,8 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, net::IpAddr};
 
-const VERSION: &str = "destination_version_1";
+const VERSION: &str = "destination_version_2";
+const LEGACY_VERSION: &str = "destination_version_1";
 const MAX_DESCRIPTOR: usize = 16384;
 const CHUNK: usize = 64;
 
@@ -159,6 +160,10 @@ impl DestinationPlan {
                 p.rule(allocation, "decision", conditions, "return");
             }
         }
+        // Unrelated bridge/address allocation must not invalidate this floor.
+        // Kernel local-route classification protects newly assigned host IPs
+        // before administrator private exceptions and user/operator allows.
+        p.rule(allocation,"decision",vec![("fib daddr type local".into(),json!({"match":{"op":"==","left":{"fib":{"result":"type","flags":["daddr"]}},"right":"local"}}))],"drop");
         for net in floor.hard_networks() {
             p.rule(allocation, "decision", vec![network(net)], "drop");
         }
@@ -238,7 +243,10 @@ impl DestinationPlan {
                 if name.starts_with("goldenhoop_") {
                     owners.push(name);
                 }
-                if name == VERSION {
+                if name.starts_with("destination_version_") {
+                    if !matches!(name, VERSION | LEGACY_VERSION) {
+                        return Err(bad());
+                    }
                     versions += 1;
                 }
                 if let Some(d) = name.strip_prefix("binding_") {

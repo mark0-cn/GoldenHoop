@@ -18,13 +18,13 @@ jobs:
           docker build --target host-egress -f images/agent/Dockerfile -t goldenhoop-egress:test .
           docker build -f tests/fixtures/network.Dockerfile -t goldenhoop-network-fixture:test .
       - name: Check host packet-filter primitives without publishing a policy
-        run: python3 -B tests/network_capabilities.py --output evidence/network-prerequisites.json --remove-image
+        run: python3 -B tests/network_capabilities.py --output evidence/network-prerequisites.json
       - name: Verify actual Rust unreferenced DNS set expiry and collection
         run: python3 -B tests/dns_set_probe.py --rust --output evidence/dns-set-staging.json
       - name: Build the private allocation-only Rust contract
         run: cargo build --locked -p goldenhoop-control --example network_allocation
       - name: Verify owned bridge creation, lost consumer response, recovery and native collection
-        run: python3 -B tests/network_provider_contract.py --binary target/debug/examples/network_allocation --work-dir .test-work --output evidence/network-provider.json
+        run: python3 -B tests/network_provider_contract.py --binary target/debug/examples/network_allocation --work-dir .test-work --output evidence/network-provider.json --remove-image
       - name: Verify all owned prerequisite resources are absent
         if: always()
         shell: bash
