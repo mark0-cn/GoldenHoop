@@ -6,6 +6,14 @@ retain none-network isolation and do not advertise `NetworkPolicy`. New public
 creation, environment-probe and five-level runtime gates require their own
 supported-host acceptance; private staged contracts do not establish them.
 
+At 41ab2d0, both actual public policy gates pass sixteen groups, including paused
+intent and fresh resume acknowledgements. Both new automatic creation gates
+observe a failed deployment probe and correctly leave the profile Unavailable;
+no public creation or hierarchy group is accepted. The [immutable failed-run
+archive](evidence/m3-network-public-bootstrap-ci-45699039165-archive.json)
+preserves these distinctions. Follow-up diagnostics retain probe-stage errors
+and control-state observations before collection; they grant no live authority.
+
 ## Deployment
 
 Pass `--network-config FILE` and `--egress-controller-image sha256:<digest>` to

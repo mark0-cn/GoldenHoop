@@ -95,7 +95,8 @@ class Contract(ApiContract):
         raise RuntimeError('protected worker startup observation timed out')
 
     def rows(self, table):
-        assert table in ('sandboxes', 'network_allocations', 'network_controllers', 'network_policies', 'network_create_dispatches')
+        assert table in ('sandboxes', 'network_allocations', 'network_controllers', 'network_policies',
+            'network_create_dispatches', 'network_policy_events', 'executions', 'events', 'operations')
         with closing(sqlite3.connect(self.database.as_uri() + '?mode=ro', uri=True, timeout=2)) as connection:
             return [json.loads(row[0]) for row in connection.execute('SELECT payload FROM ' + table)]
 
@@ -419,6 +420,20 @@ class Contract(ApiContract):
             failure = error
             self.report['error'] = repr(error)
         finally:
+            # Preserve actual private probe history before collection/removing
+            # the test database. Separate read-only snapshots are diagnostics;
+            # they do not grant a live lease or attest native absence.
+            if self.database.exists():
+                try:
+                    self.report['pre_cleanup_journal'] = {
+                        'captured_at': datetime.now(timezone.utc).isoformat(),
+                        'separate_read_only_snapshots': True,
+                        'tables': {table: self.rows(table) for table in (
+                            'sandboxes', 'network_allocations', 'network_controllers', 'network_policies',
+                            'network_create_dispatches', 'network_policy_events', 'executions', 'events', 'operations')}}
+                    self.save()
+                except BaseException as error:
+                    self.report['journal_observation_error'] = repr(error)
             try:
                 self.cleanup()
                 self.report['cleanup'] = 'complete'

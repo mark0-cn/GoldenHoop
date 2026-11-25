@@ -9,6 +9,14 @@ fn unknown() -> ApiError {
     )
 }
 
+fn context(stage: &str, mut error: ApiError) -> ApiError {
+    error.message = format!(
+        "protected network deployment probe {stage}: {}",
+        error.message
+    );
+    error
+}
+
 pub(super) async fn pending_heartbeat(
     store: Store,
     mut registration: WorkerRegistration,
@@ -81,6 +89,11 @@ impl Worker {
                 .finish_operations(root, "network_profile_probe", OperationState::Running, None)
                 .await?;
             let result = Box::pin(self.probe_network_tree(profile, root, &limits)).await;
+            if result.is_err()
+                && let Err(error) = self.observe_probe_failure(root).await
+            {
+                report("network_profile_probe_observation_failed", &error);
+            }
             // A failed feature check is an unavailable profile. Unconfirmed
             // collection is a failed startup, never a successful probe.
             self.collect_probe_root(root).await?;
@@ -111,6 +124,39 @@ impl Worker {
         Ok(profiles)
     }
 
+    // Report only control identities and state. Never include the private worker
+    // bearer, agent handle, command input, output or controller ownership token.
+    // These are diagnostic observations, not a readiness or cleanup receipt.
+    async fn observe_probe_failure(&self, root: Uuid) -> Result<(), ApiError> {
+        for stored in self.store.work().await? {
+            let id = stored.sandbox.id;
+            if self.store.sandbox_scope(id).await?.root_id != root {
+                continue;
+            }
+            let policy = match self.store.network_policy(id).await {
+                Ok(policy) => Some(serde_json::json!({
+                    "phase":policy.phase,"desired_revision":policy.desired_revision,
+                    "public_inputs":policy.public_inputs,
+                    "worker_id":policy.owner.as_ref().map(|owner|owner.worker_id),
+                    "controller_generation":policy.owner.as_ref().map(|owner|owner.controller_generation)
+                })),
+                Err(error) if error.code == ErrorCode::NotFound => None,
+                Err(error) => return Err(error),
+            };
+            let work = self.store.execution_work(id).await?;
+            println!(
+                "{}",
+                serde_json::json!({
+                    "event":"network_profile_probe_failure_observation", "root_id":root,
+                    "sandbox_id":id,"state":stored.sandbox.state,"cleanup":stored.sandbox.cleanup,
+                    "desired_state":stored.sandbox.desired_state,"reason":stored.sandbox.reason,
+                    "policy":policy,"pending_executions":work.iter().map(|row|&row.execution).collect::<Vec<_>>()
+                })
+            );
+        }
+        Ok(())
+    }
+
     async fn wait_probe_ready(&self, ids: &[Uuid]) -> Result<(), ApiError> {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(90);
         loop {
@@ -131,7 +177,10 @@ impl Worker {
                 return Ok(());
             }
             if tokio::time::Instant::now() >= deadline {
-                return Err(unknown());
+                return Err(ApiError::new(
+                    ErrorCode::BackendUnavailable,
+                    "readiness deadline exceeded",
+                ));
             }
             tokio::time::sleep(Duration::from_millis(200)).await;
         }
@@ -186,7 +235,9 @@ impl Worker {
         root: Uuid,
         limits: &ResourceLimits,
     ) -> Result<(), ApiError> {
-        self.wait_probe_ready(&[root]).await?;
+        self.wait_probe_ready(&[root])
+            .await
+            .map_err(|error| context("root readiness", error))?;
         let mut ids = vec![root];
         if profile.capabilities.contains(&Capability::IsolatedSessions) {
             let child = self
@@ -208,9 +259,12 @@ impl Worker {
                     },
                     &Uuid::new_v4().to_string(),
                 )
-                .await?;
+                .await
+                .map_err(|error| context("child admission", error))?;
             ids.push(child.sandbox.id);
-            self.wait_probe_ready(&ids).await?;
+            self.wait_probe_ready(&ids)
+                .await
+                .map_err(|error| context("child readiness", error))?;
         }
         let mut original = Vec::new();
         for id in &ids {
@@ -222,7 +276,9 @@ impl Worker {
                     .ok_or_else(unknown)?
                     .backend_ref,
             );
-            self.probe_command(*id).await?;
+            self.probe_command(*id)
+                .await
+                .map_err(|error| context("initial command", error))?;
         }
         for (expected, action) in [(0, NetworkAction::Allow), (1, NetworkAction::Deny)] {
             let changed = self
@@ -238,12 +294,15 @@ impl Worker {
                     },
                     &Uuid::new_v4().to_string(),
                 )
-                .await?;
-            self.wait_probe_ready(&ids).await?;
+                .await
+                .map_err(|error| context("ancestor policy intent", error))?;
+            self.wait_probe_ready(&ids)
+                .await
+                .map_err(|error| context("ancestor policy readiness", error))?;
             self.store.settle_network_policy_changes().await?;
             if self.store.operation(changed.operation.id).await?.state != OperationState::Succeeded
             {
-                return Err(unknown());
+                return Err(context("ancestor source acknowledgements", unknown()));
             }
             for (id, physical) in ids.iter().zip(&original) {
                 let policy = self.store.network_policy(*id).await?;
@@ -262,9 +321,11 @@ impl Worker {
                         .map(|h| &h.backend_ref)
                         != Some(physical)
                 {
-                    return Err(unknown());
+                    return Err(context("ancestor lineage or runtime identity", unknown()));
                 }
-                self.probe_command(*id).await?;
+                self.probe_command(*id)
+                    .await
+                    .map_err(|error| context("updated policy command", error))?;
             }
         }
         Ok(())

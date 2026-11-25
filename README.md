@@ -4,7 +4,7 @@ A Rust agent sandbox platform with explicit runtime capabilities, independent AP
 
 ## Project status
 
-**M0-M2 have accepted runc/gVisor and S3-compatible baselines; M3 is in progress. Commands, files, diagnostics, retained artifacts, shells, PTYs, six-language code contexts and isolated child sandboxes have actual API/SDK/CLI acceptance. Protected staged orchestration passes its runtime contracts. Optional public protected creation and hierarchy are implemented with separate supported-host acceptance pending; credentials and audit remain required.**
+**M0-M2 have accepted runc/gVisor and S3-compatible baselines; M3 is in progress. Commands, files, diagnostics, retained artifacts, shells, PTYs, six-language code contexts and isolated child sandboxes have actual API/SDK/CLI acceptance. Protected staged orchestration and public policy updates pass their runtime contracts. Both new public protected creation gates currently fail their deployment probe; automatic creation and hierarchy remain unaccepted. Credentials and audit remain required.**
 
 Code contexts have durable public APIs and Rust/Python/CLI bindings. Python's existing runc/gVisor and S3-compatible loops pass, including restart recovery and cleanup. New Python, Java, Go, TypeScript, Bash and JavaScript adapters use [explicitly probed language support](docs/code-languages.md) from a cached kernel image; support is disabled by default. [Isolated child sandboxes](docs/isolated-sessions.md) add reserved resources, inherited lifecycle and immutable feature ceilings, behind a separate actual runtime probe. See [current verification](docs/progress.md).
 

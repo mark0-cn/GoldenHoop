@@ -408,9 +408,18 @@ impl Worker {
                         .drivers
                         .get(&stored.sandbox.profile)
                         .ok_or_else(|| error.clone())?;
-                    return self
-                        .stop(stored, driver, &error.message, ExecutionState::Failed)
-                        .await;
+                    // An interrupted create is already being collected when
+                    // termination is effective. A temporary absence-check
+                    // failure must not turn that cancellation into a failed
+                    // creation. stop() retains any previously observed Failed
+                    // state and still requires actual resource collection.
+                    let outcome =
+                        if self.store.effective_desired(id).await? == DesiredState::Terminated {
+                            ExecutionState::Cancelled
+                        } else {
+                            ExecutionState::Failed
+                        };
+                    return self.stop(stored, driver, &error.message, outcome).await;
                 }
                 Err(error) if error.code == ErrorCode::NotFound => {}
                 Err(error) => return Err(error),
