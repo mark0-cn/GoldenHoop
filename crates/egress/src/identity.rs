@@ -44,10 +44,17 @@ impl NetworkIdentity {
     }
     pub fn ipv6_subnet(&self) -> String {
         let hash = Sha256::digest(self.bytes());
-        format!(
-            "fd{:02x}:{:02x}{:02x}:{:02x}{:02x}:1::/64",
-            hash[0], hash[1], hash[2], hash[3], hash[4]
-        )
+        let network = std::net::Ipv6Addr::new(
+            0xfd00 | u16::from(hash[0]),
+            u16::from_be_bytes([hash[1], hash[2]]),
+            u16::from_be_bytes([hash[3], hash[4]]),
+            1,
+            0,
+            0,
+            0,
+            0,
+        );
+        format!("{network}/64")
     }
     fn bytes(&self) -> Vec<u8> {
         serde_json::to_vec(&(1_u8, self)).expect("network identity")

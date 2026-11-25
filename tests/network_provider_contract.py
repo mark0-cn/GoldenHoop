@@ -8,6 +8,7 @@ import sqlite3
 import subprocess
 import tempfile
 import uuid
+from contextlib import closing
 from datetime import datetime,timezone
 from pathlib import Path
 
@@ -43,7 +44,7 @@ class Contract:
         self.database=self.state/'control.db';self.installation=None;self.sandbox=None;self.plan=None;self.settled=False;self.creation_uncertain=False
         self.attempt=uuid.uuid4().hex
         (self.state/'.goldenhoop-owner').write_text(self.attempt,encoding='ascii')
-        self.report={'suite':'rust-owned-bridge-provider','scope':'actual empty Docker bridge and private journal recovery/collection; no workload publication or network-policy capability','timestamp':datetime.now(timezone.utc).isoformat(),'attempt':self.attempt,'result':'failed','cleanup':'unknown','cases':[],'invocations':[],'kernel_observations':[]}
+        self.report={'suite':'rust-owned-bridge-provider','scope':'actual empty Docker bridge and private journal recovery/collection; no workload publication or network-policy capability','timestamp':datetime.now(timezone.utc).isoformat(),'attempt':self.attempt,'temporary_directory':str(self.state),'result':'failed','cleanup':'unknown','cases':[],'invocations':[],'kernel_observations':[]}
         sources=[Path(__file__).resolve(),self.root/'Cargo.toml',self.root/'Cargo.lock',self.root/'images/agent/Dockerfile',self.root/'tests/fixtures/network.Dockerfile']
         for crate in ('control','core','protocol','runtime','docker','store','egress','policy'):
             sources.extend((self.root/'crates'/crate).rglob('*.rs'));sources.extend((self.root/'crates'/crate).rglob('*.sql'));sources.append(self.root/'crates'/crate/'Cargo.toml')
@@ -57,7 +58,7 @@ class Contract:
 
     def recover_metadata(self):
         if not self.database.is_file():return
-        with sqlite3.connect(self.database.as_uri()+'?mode=ro',uri=True,timeout=2) as connection:
+        with closing(sqlite3.connect(self.database.as_uri()+'?mode=ro',uri=True,timeout=2)) as connection:
             row=connection.execute("SELECT value FROM meta WHERE key='installation_id'").fetchone()
             if row:
                 installation=str(uuid.UUID(row[0]));assert not self.installation or self.installation==installation;self.installation=installation;self.report['installation_id']=installation
@@ -96,6 +97,24 @@ class Contract:
         return rows[-1].get('result')
 
     def check(self,name):self.report['cases'].append(name);self.save();print('passed:',name,flush=True)
+
+    def failure_observation(self):
+        if not self.installation:return
+        observation={'network_inspections':[]}
+        try:
+            identities=self.docker('network','ls','--filter','label=dev.goldenhoop.installation='+self.installation,'--format','{{.ID}}').stdout.split();assert len(identities)<=8
+            for identity in identities:
+                native=json.loads(self.docker('network','inspect',identity).stdout)[0];labels=self.owned(native)
+                assert labels['dev.goldenhoop.role']=='egress-network' and self.plan and labels['dev.goldenhoop.network-generation']==self.plan['identity']['generation']
+                observation['network_inspections'].append(native)
+            observation['docker_server']=json.loads(self.docker('version','--format','{{json .Server}}').stdout)
+            if self.plan:observation['native_before_cleanup']=self.audit()
+            if self.database.exists():
+                with closing(sqlite3.connect(self.database.as_uri()+'?mode=ro',uri=True,timeout=2)) as connection:
+                    observation['journal_rows']=[json.loads(row[0]) for row in connection.execute('SELECT payload FROM network_allocations LIMIT 8')]
+                    observation['journal_history']=[json.loads(row[0]) for row in connection.execute('SELECT payload FROM network_allocation_events ORDER BY revision LIMIT 128')]
+        except BaseException as error:observation['diagnostic_error']=repr(error)
+        self.report['failure_observation']=observation;self.save()
 
     def audit(self):
         assert self.plan and self.installation
@@ -140,8 +159,14 @@ class Contract:
         failure=None
         try:
             image=json.loads(self.docker('image','inspect',self.args.image).stdout)[0];assert image['Config']['Labels'].get('dev.goldenhoop.fixture')=='network-interop';self.report['fixture_image_id']=image['Id']
-            self.invoke('init','--fault-after-create',expected=75);self.settled=True
+            self.invoke('init','--fault-after-create','--leading-zero-subnet',expected=75);self.settled=True
             assert self.sandbox and self.plan
+            identity={key:self.plan['identity'][key] for key in ('installation_id','sandbox_id','generation','profile')}
+            digest=hashlib.sha256(json.dumps([1,identity],separators=(',',':')).encode('utf-8')).hexdigest()
+            padded='fd'+digest[:2]+':'+digest[2:6]+':'+digest[6:10]+':1::/64';canonical=str(ipaddress.ip_network(padded))
+            assert padded!=canonical
+            self.report['derived_ipv6_subnet']={'padded_digest_spelling':padded,'canonical_subnet':canonical,'same_numeric_prefix':True};self.save()
+            if self.args.fail_after_create:raise RuntimeError('controlled harness failure after settled creation before recovery')
             expected_plan=self.plan;self.installation=None;self.sandbox=None;self.plan=None
             self.recover_metadata();assert self.plan==expected_plan
             self.report['creator_output_discarded_and_recovered_from_file_database']=True;self.save()
@@ -151,6 +176,7 @@ class Contract:
             assert labels['dev.goldenhoop.network-provisioning']==self.plan['provisioning_token'] and labels['dev.goldenhoop.network-generation']==self.plan['identity']['generation']
             self.report['created_network_before_recovery']=created;before_recovery=self.audit();self.save()
             recovered=self.invoke('recover');provider=recovered['provider'];assert recovered['creation_replayed'] is False and recovered['journal']['phase']=='provisioning' and recovered['journal']['binding'] is None
+            assert provider['ipv6_subnet']==canonical
             assert provider['network_id']==created['Id']
             self.report['recovered_provider']=provider
             self.report['owned_network_inspection']=json.loads(self.docker('network','inspect',provider['network_id']).stdout)[0]
@@ -160,6 +186,15 @@ class Contract:
             assert native['ifindex']==before_recovery['ifindex']
             assert {str(ipaddress.ip_address(provider['ipv4_gateway'])),str(ipaddress.ip_address(provider['ipv6_gateway']))}.issubset(native['addresses']),native
             self.check('actual_native_bridge_index_and_gateway_addresses_match_the_owned_provider')
+            self.invoke('native','--native-ifindex',str(native['ifindex']),'--fault-after-native',expected=76)
+            with closing(sqlite3.connect(self.database.as_uri()+'?mode=ro',uri=True,timeout=2)) as connection:
+                checkpoint=json.loads(connection.execute('SELECT payload FROM network_allocations WHERE sandbox_id=?',(self.sandbox,)).fetchone()[0])
+            assert checkpoint['phase']=='provisioning' and checkpoint['binding'] is None and checkpoint['native']['network_id']==provider['network_id']
+            assert checkpoint['native']['allocation']['ifindex']==native['ifindex'] and checkpoint['revision']==2
+            recovered=self.invoke('recover');assert recovered['journal']==checkpoint and recovered['provider']['network_id']==provider['network_id'] and not recovered['creation_replayed']
+            same=self.invoke('native','--native-ifindex',str(native['ifindex']));assert same['journal']['revision']==2 and not same['packet_installation_performed']
+            self.report['native_checkpoint_recovered_from_file_database']=checkpoint;self.save()
+            self.check('actual_exit_after_native_checkpoint_keeps_the_original_provider_and_index_without_source_or_packet_confirmation')
             negative=self.invoke('negative');assert len(negative['checks'])==7 and negative['provider']['network_id']==provider['network_id'];self.check('foreign_owner_token_profile_deadline_ids_duplicate_and_expired_creation_refuse_without_mutation')
             peer_name='goldenhoop-provider-peer-'+self.attempt
             peer=self.docker('run','--detach','--name',peer_name,'--label','dev.goldenhoop.installation='+self.installation,'--label','dev.goldenhoop.role=network-provider-peer','--label','dev.goldenhoop.test=network-provider','--label','dev.goldenhoop.attempt='+self.attempt,'--runtime','runc','--network',provider['network_id'],'--user','1000:1000','--cap-drop','ALL','--security-opt','no-new-privileges:true','--read-only','--no-healthcheck','--memory','64m','--memory-swap','64m','--cpus','0.25','--pids-limit','32','--entrypoint','python3',self.args.image,'-B','-c','import time;time.sleep(600)').stdout.strip()
@@ -174,10 +209,12 @@ class Contract:
             native=self.audit();assert not native['bridge_exists'] and not native['owned_tables']
             absence={'provisioning_settled':True,'endpoints_absent':True,'network_absent':True,'bridge_absent':True,'owned_tables_absent':True,'observed_at':native['collector_window_start']}
             confirmed=self.invoke('confirm','--absence-json',json.dumps(absence));assert confirmed['journal']['phase']=='collected' and confirmed['sandbox']['cleanup']=='complete'
-            assert [row['phase'] for row in confirmed['history']]==['reserved','provisioning','collecting','collected']
+            assert [row['phase'] for row in confirmed['history']]==['reserved','provisioning','provisioning','collecting','collected']
+            assert confirmed['journal']['native']['allocation']['ifindex']==checkpoint['native']['allocation']['ifindex']
             self.check('only_fresh_actual_native_absence_and_settled_creation_complete_the_durable_journal')
             self.report['result']='passed'
-        except BaseException as error:failure=error;self.report['error']=repr(error)
+        except BaseException as error:
+            failure=error;self.report['error']=repr(error);self.failure_observation()
         finally:
             try:self.cleanup();self.report['cleanup']='complete'
             except BaseException as error:failure=failure or error;self.report['cleanup']='unknown';self.report['cleanup_error']=repr(error);self.report['result']='failed'
@@ -186,4 +223,4 @@ class Contract:
 
 
 if __name__=='__main__':
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('--binary',required=True);p.add_argument('--image',default='goldenhoop-network-fixture:test');p.add_argument('--agent-image',default='goldenhoop-agent:test');p.add_argument('--work-dir',required=True);p.add_argument('--output',required=True);p.add_argument('--remove-image',action='store_true');Contract(p.parse_args()).run()
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('--binary',required=True);p.add_argument('--image',default='goldenhoop-network-fixture:test');p.add_argument('--agent-image',default='goldenhoop-agent:test');p.add_argument('--work-dir',required=True);p.add_argument('--output',required=True);p.add_argument('--remove-image',action='store_true');p.add_argument('--fail-after-create',action='store_true');Contract(p.parse_args()).run()

@@ -5,7 +5,9 @@ use goldenhoop_egress::{
     Allocation, DestinationDefinition, DestinationScope, Endpoint, SourceScope,
 };
 use goldenhoop_protocol::*;
-use goldenhoop_store::{NetworkAbsence, NetworkAllocation, NetworkBinding, NetworkPhase, Store};
+use goldenhoop_store::{
+    NetworkAbsence, NetworkAllocation, NetworkBinding, NetworkNativeBinding, NetworkPhase, Store,
+};
 use sqlx::{Connection, SqliteConnection, sqlite::SqliteConnectOptions};
 use std::{collections::BTreeSet, future::Future, panic::AssertUnwindSafe, path::PathBuf};
 use uuid::Uuid;
@@ -153,8 +155,13 @@ async fn reservation_and_dispatch_survive_real_close_without_replaying_creation(
                     .await,
                 ErrorCode::Conflict,
             );
+            let complete = binding(&recovered, 100, 'a');
+            reopened
+                .bind_native_network(id, generation, token, NetworkNativeBinding::from(&complete))
+                .await
+                .unwrap();
             let bound = reopened
-                .bind_network(id, generation, token, binding(&recovered, 100, 'a'))
+                .bind_network(id, generation, token, complete)
                 .await
                 .unwrap();
             assert_eq!(bound.phase, NetworkPhase::Bound);
@@ -167,6 +174,7 @@ async fn reservation_and_dispatch_survive_real_close_without_replaying_creation(
                 history.iter().map(|r| r.phase).collect::<Vec<_>>(),
                 vec![
                     NetworkPhase::Reserved,
+                    NetworkPhase::Provisioning,
                     NetworkPhase::Provisioning,
                     NetworkPhase::Bound
                 ]
@@ -189,6 +197,15 @@ async fn immutable_binding_rejects_foreign_identity_scope_and_live_resource_coll
         let intent = provision(&store, id).await;
         let token = intent.token.unwrap();
         let good = binding(&intent, 100, 'a');
+        store
+            .bind_native_network(
+                id,
+                intent.generation,
+                token,
+                NetworkNativeBinding::from(&good),
+            )
+            .await
+            .unwrap();
         for field in 0..5 {
             let mut bad = good.clone();
             match field {
@@ -232,22 +249,22 @@ async fn immutable_binding_rejects_foreign_identity_scope_and_live_resource_coll
         let foreign = provision(&store, other).await;
         code(
             store
-                .bind_network(
+                .bind_native_network(
                     other,
                     foreign.generation,
                     foreign.token.unwrap(),
-                    binding(&foreign, 200, 'a'),
+                    NetworkNativeBinding::from(&binding(&foreign, 200, 'a')),
                 )
                 .await,
             ErrorCode::Conflict,
         );
         code(
             store
-                .bind_network(
+                .bind_native_network(
                     other,
                     foreign.generation,
                     foreign.token.unwrap(),
-                    binding(&foreign, 100, 'b'),
+                    NetworkNativeBinding::from(&binding(&foreign, 100, 'b')),
                 )
                 .await,
             ErrorCode::Conflict,
@@ -509,4 +526,342 @@ async fn live_runtime_and_isolated_children_cannot_silently_acquire_the_initial_
         code(store.network_allocation(child).await, ErrorCode::NotFound);
     })
     .await;
+}
+
+#[tokio::test]
+async fn native_checkpoint_survives_close_without_fabricating_source_or_packet_confirmation() {
+    checked(|store, path| async move {
+        let id = create(&store).await;
+        let dispatch = provision(&store, id).await;
+        let token = dispatch.token.unwrap();
+        let complete = binding(&dispatch, 100, 'a');
+        code(
+            store
+                .bind_network(id, dispatch.generation, token, complete.clone())
+                .await,
+            ErrorCode::InvalidState,
+        );
+        let native = NetworkNativeBinding::from(&complete);
+        let recorded = store
+            .bind_native_network(id, dispatch.generation, token, native.clone())
+            .await
+            .unwrap();
+        assert_eq!(recorded.phase, NetworkPhase::Provisioning);
+        assert_eq!(recorded.revision, 2);
+        assert!(recorded.binding.is_none() && recorded.binding_fingerprint().unwrap().is_none());
+        store.close().await;
+        let reopened = Store::open(&path).await.unwrap();
+        let result = AssertUnwindSafe(async {
+            let restored = reopened.network_allocation(id).await.unwrap();
+            assert_eq!(restored.native_binding().unwrap().allocation.ifindex, 100);
+            assert_eq!(
+                restored.network_id.as_deref(),
+                Some(complete.network_id.as_str())
+            );
+            let same = reopened
+                .bind_native_network(id, dispatch.generation, token, native.clone())
+                .await
+                .unwrap();
+            assert_eq!(same.revision, restored.revision);
+            let mut wrong = native.clone();
+            wrong.allocation.ifindex = 200;
+            code(
+                reopened
+                    .bind_native_network(id, dispatch.generation, token, wrong)
+                    .await,
+                ErrorCode::Conflict,
+            );
+            let mut wrong = complete.clone();
+            wrong.allocation.ifindex = 200;
+            code(
+                reopened
+                    .bind_network(id, dispatch.generation, token, wrong)
+                    .await,
+                ErrorCode::Conflict,
+            );
+            let bound = reopened
+                .bind_network(id, dispatch.generation, token, complete)
+                .await
+                .unwrap();
+            assert_eq!(bound.revision, 3);
+            assert_eq!(bound.native_binding().unwrap().allocation.ifindex, 100);
+            assert_eq!(
+                reopened
+                    .network_allocation_history(id, None, 128)
+                    .await
+                    .unwrap()
+                    .len(),
+                4
+            );
+        })
+        .catch_unwind()
+        .await;
+        reopened.close().await;
+        if let Err(error) = result {
+            std::panic::resume_unwind(error);
+        }
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn native_checkpoint_refuses_foreign_scope_and_live_collisions_before_full_binding() {
+    checked(|store, _| async move {
+        let id = create(&store).await;
+        let dispatch = provision(&store, id).await;
+        let native = NetworkNativeBinding::from(&binding(&dispatch, 100, 'a'));
+        for field in 0..7 {
+            let mut wrong = native.clone();
+            match field {
+                0 => wrong.allocation.installation_id = Uuid::new_v4(),
+                1 => wrong.allocation.sandbox_id = Uuid::new_v4(),
+                2 => wrong.allocation.generation = Uuid::new_v4(),
+                3 => wrong.allocation.bridge = "ghforeign".into(),
+                4 => wrong.allocation.ifindex = 0,
+                5 => wrong.network_id = "A".repeat(64),
+                _ => wrong.network_id = "a".repeat(63),
+            }
+            assert!(
+                store
+                    .bind_native_network(id, dispatch.generation, dispatch.token.unwrap(), wrong)
+                    .await
+                    .is_err()
+            );
+        }
+        code(
+            store
+                .bind_native_network(id, dispatch.generation, Uuid::new_v4(), native.clone())
+                .await,
+            ErrorCode::Conflict,
+        );
+        store
+            .bind_native_network(id, dispatch.generation, dispatch.token.unwrap(), native)
+            .await
+            .unwrap();
+        let other = create(&store).await;
+        let other = provision(&store, other).await;
+        for native in [
+            NetworkNativeBinding::from(&binding(&other, 200, 'a')),
+            NetworkNativeBinding::from(&binding(&other, 100, 'b')),
+        ] {
+            code(
+                store
+                    .bind_native_network(
+                        other.sandbox_id,
+                        other.generation,
+                        other.token.unwrap(),
+                        native,
+                    )
+                    .await,
+                ErrorCode::Conflict,
+            );
+        }
+        assert_eq!(
+            store
+                .network_allocation_history(other.sandbox_id, None, 128)
+                .await
+                .unwrap()
+                .len(),
+            2
+        );
+        assert!(
+            store
+                .network_allocation(other.sandbox_id)
+                .await
+                .unwrap()
+                .native
+                .is_none()
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn cancellation_expiry_and_collection_fence_new_native_and_complete_bindings() {
+    checked(|store, _| async move {
+        let id = create(&store).await;
+        let dispatch = provision(&store, id).await;
+        let complete = binding(&dispatch, 100, 'a');
+        store
+            .set_desired(id, DesiredState::Terminated, "cancel-before-native")
+            .await
+            .unwrap();
+        code(
+            store
+                .bind_native_network(
+                    id,
+                    dispatch.generation,
+                    dispatch.token.unwrap(),
+                    NetworkNativeBinding::from(&complete),
+                )
+                .await,
+            ErrorCode::Conflict,
+        );
+        let id = create(&store).await;
+        let dispatch = provision(&store, id).await;
+        let complete = binding(&dispatch, 200, 'b');
+        let recorded = store
+            .bind_native_network(
+                id,
+                dispatch.generation,
+                dispatch.token.unwrap(),
+                NetworkNativeBinding::from(&complete),
+            )
+            .await
+            .unwrap();
+        store
+            .set_desired(id, DesiredState::Terminated, "cancel-after-native")
+            .await
+            .unwrap();
+        code(
+            store
+                .bind_network(
+                    id,
+                    dispatch.generation,
+                    dispatch.token.unwrap(),
+                    complete.clone(),
+                )
+                .await,
+            ErrorCode::Conflict,
+        );
+        let collecting = store
+            .begin_network_collection(id, dispatch.generation, recorded.revision)
+            .await
+            .unwrap();
+        code(
+            store
+                .bind_native_network(
+                    id,
+                    dispatch.generation,
+                    dispatch.token.unwrap(),
+                    NetworkNativeBinding::from(&complete),
+                )
+                .await,
+            ErrorCode::Conflict,
+        );
+        assert_eq!(collecting.native_binding().unwrap().allocation.ifindex, 200);
+        let done = store
+            .confirm_network_absence(
+                id,
+                dispatch.generation,
+                collecting.token.unwrap(),
+                absence(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(done.native_binding().unwrap().allocation.ifindex, 200);
+        let mut spec = request();
+        spec.ttl_seconds = 1;
+        let created = store
+            .create_sandbox(&profile(), &spec, "expiry-before-native")
+            .await
+            .unwrap();
+        let dispatch = provision(&store, created.sandbox.id).await;
+        let created = store
+            .create_sandbox(&profile(), &spec, "expiry-before-complete")
+            .await
+            .unwrap();
+        let later = provision(&store, created.sandbox.id).await;
+        let complete = binding(&later, 400, 'd');
+        store
+            .bind_native_network(
+                later.sandbox_id,
+                later.generation,
+                later.token.unwrap(),
+                NetworkNativeBinding::from(&complete),
+            )
+            .await
+            .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+        code(
+            store
+                .bind_native_network(
+                    dispatch.sandbox_id,
+                    dispatch.generation,
+                    dispatch.token.unwrap(),
+                    NetworkNativeBinding::from(&binding(&dispatch, 300, 'c')),
+                )
+                .await,
+            ErrorCode::Conflict,
+        );
+        assert_eq!(
+            store
+                .network_allocation_history(dispatch.sandbox_id, None, 128)
+                .await
+                .unwrap()
+                .len(),
+            2
+        );
+        code(
+            store
+                .bind_network(
+                    later.sandbox_id,
+                    later.generation,
+                    later.token.unwrap(),
+                    complete,
+                )
+                .await,
+            ErrorCode::Conflict,
+        );
+        assert!(
+            store
+                .network_allocation(later.sandbox_id)
+                .await
+                .unwrap()
+                .binding
+                .is_none()
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn schema_six_complete_binding_keeps_original_payload_and_history_bytes() {
+    checked(|store, path| async move {
+        let id = create(&store).await;
+        let dispatch = provision(&store, id).await;
+        let complete = binding(&dispatch, 100, 'a');
+        let legacy = NetworkAllocation {
+            phase: NetworkPhase::Bound,
+            revision: 2,
+            network_id: Some(complete.network_id.clone()),
+            binding: Some(complete.clone()),
+            ..dispatch.clone()
+        };
+        let payload = serde_json::to_string(&legacy).unwrap();
+        assert!(serde_json::from_str::<serde_json::Value>(&payload).unwrap().get("native").is_none());
+        store.close().await;
+        let options = SqliteConnectOptions::new().filename(&path);
+        let mut connection = SqliteConnection::connect_with(&options).await.unwrap();
+        // Build the complete-binding row that the actual v6 writer emitted.
+        // These kernel/provider identities are deliberately synthetic.
+        sqlx::query("UPDATE network_allocations SET phase='bound',revision=2,network_id=?,ifindex=100,payload=? WHERE sandbox_id=?")
+            .bind(&complete.network_id).bind(&payload).bind(id.to_string()).execute(&mut connection).await.unwrap();
+        sqlx::query("INSERT INTO network_allocation_events(sandbox_id,revision,payload) VALUES(?,2,?)")
+            .bind(id.to_string()).bind(&payload).execute(&mut connection).await.unwrap();
+        sqlx::query("UPDATE meta SET value='6' WHERE key='schema_version'").execute(&mut connection).await.unwrap();
+        let before: Vec<String> = sqlx::query_scalar("SELECT payload FROM network_allocation_events ORDER BY revision").fetch_all(&mut connection).await.unwrap();
+        connection.close().await.unwrap();
+        let reopened = Store::open(&path).await.unwrap();
+        let result = AssertUnwindSafe(async {
+            let actual = reopened.network_allocation(id).await.unwrap();
+            assert!(actual.native.is_none());
+            assert_eq!(actual.native_binding().unwrap().allocation.ifindex, 100);
+            assert_eq!(actual.revision, 2);
+            let same = reopened.bind_native_network(id, dispatch.generation, dispatch.token.unwrap(), NetworkNativeBinding::from(&complete)).await.unwrap();
+            assert_eq!(same.revision, 2);
+            let same = reopened.bind_network(id, dispatch.generation, dispatch.token.unwrap(), complete).await.unwrap();
+            assert_eq!(same.revision, 2);
+            let mut connection = SqliteConnection::connect_with(&options).await.unwrap();
+            let version: String = sqlx::query_scalar("SELECT value FROM meta WHERE key='schema_version'").fetch_one(&mut connection).await.unwrap();
+            let after: Vec<String> = sqlx::query_scalar("SELECT payload FROM network_allocation_events ORDER BY revision").fetch_all(&mut connection).await.unwrap();
+            let current: String = sqlx::query_scalar("SELECT payload FROM network_allocations WHERE sandbox_id=?").bind(id.to_string()).fetch_one(&mut connection).await.unwrap();
+            connection.close().await.unwrap();
+            assert_eq!(version, "7");
+            assert_eq!(before, after);
+            assert_eq!(current, payload);
+        }).catch_unwind().await;
+        reopened.close().await;
+        if let Err(error) = result { std::panic::resume_unwind(error); }
+    }).await;
 }

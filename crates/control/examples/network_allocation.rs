@@ -4,9 +4,12 @@ use clap::{Parser, ValueEnum};
 use goldenhoop_docker::{
     DockerConfig, DockerDriver, DockerNetworkProvider, DockerProfile, NetworkPlan,
 };
+use goldenhoop_egress::{Allocation, NetworkIdentity};
 use goldenhoop_protocol::*;
 use goldenhoop_runtime::RuntimeDriver;
-use goldenhoop_store::{NetworkAbsence, NetworkAllocation, NetworkPhase, Store};
+use goldenhoop_store::{
+    NetworkAbsence, NetworkAllocation, NetworkNativeBinding, NetworkPhase, Store,
+};
 use serde_json::{Value, json};
 use std::{collections::BTreeSet, io::Write, path::PathBuf};
 use uuid::Uuid;
@@ -15,6 +18,7 @@ use uuid::Uuid;
 enum Action {
     Init,
     Recover,
+    Native,
     Negative,
     RejectNonempty,
     Collect,
@@ -32,6 +36,12 @@ struct Args {
     agent_image: String,
     #[arg(long)]
     fault_after_create: bool,
+    #[arg(long)]
+    native_ifindex: Option<u32>,
+    #[arg(long, conflicts_with = "fault_after_create")]
+    fault_after_native: bool,
+    #[arg(long)]
+    leading_zero_subnet: bool,
     #[arg(long)]
     absence_json: Option<String>,
 }
@@ -72,6 +82,11 @@ async fn plan(store: &Store, record: &NetworkAllocation) -> Result<NetworkPlan, 
     })
 }
 async fn exercise(args: &Args, store: &Store) -> Result<Value, ApiError> {
+    require(!args.leading_zero_subnet || matches!(args.action, Action::Init))?;
+    require(
+        matches!(args.action, Action::Native)
+            || (args.native_ifindex.is_none() && !args.fault_after_native),
+    )?;
     let provider = DockerNetworkProvider::connect().await?;
     if matches!(args.action, Action::Init) {
         require(args.sandbox.is_none() && store.work().await?.is_empty())?;
@@ -97,8 +112,27 @@ async fn exercise(args: &Args, store: &Store) -> Result<Value, ApiError> {
         let created = store
             .create_sandbox(&profile, &request, "allocation-contract")
             .await?;
+        let mut identity = NetworkIdentity {
+            installation_id: store.installation_id(),
+            sandbox_id: created.sandbox.id,
+            generation: Uuid::new_v4(),
+            profile: profile.id.clone(),
+        };
+        if args.leading_zero_subnet {
+            // Select a test vector before any network reservation or provider
+            // write. This never retries an attempted external creation.
+            let selected = (0..1024)
+                .find_map(|_| {
+                    identity.generation = Uuid::new_v4();
+                    let hash = identity.digest();
+                    (hash.as_bytes()[2] == b'0' || hash.as_bytes()[6] == b'0')
+                        .then_some(identity.generation)
+                })
+                .ok_or_else(invalid)?;
+            identity.generation = selected;
+        }
         let reserved = store
-            .reserve_network(created.sandbox.id, Uuid::new_v4())
+            .reserve_network(created.sandbox.id, identity.generation)
             .await?;
         let dispatch = store
             .begin_network_provisioning(reserved.sandbox_id, reserved.generation, reserved.revision)
@@ -125,6 +159,42 @@ async fn exercise(args: &Args, store: &Store) -> Result<Value, ApiError> {
         Action::Recover => {
             let observed = provider.lookup(&plan).await?.ok_or_else(invalid)?;
             Ok(json!({"provider":observed,"journal":record,"creation_replayed":false}))
+        }
+        Action::Native => {
+            // The trusted outer contract independently observes the actual host
+            // bridge index. This input/record alone does not attest a lookup.
+            let observed = provider.lookup(&plan).await?.ok_or_else(invalid)?;
+            require(observed.attached_endpoints == 0)?;
+            let native = NetworkNativeBinding {
+                network_id: observed.network_id.clone(),
+                allocation: Allocation {
+                    installation_id: record.installation_id,
+                    sandbox_id: record.sandbox_id,
+                    generation: record.generation,
+                    bridge: record.bridge.clone(),
+                    ifindex: args.native_ifindex.ok_or_else(invalid)?,
+                },
+            };
+            let checkpoint = store
+                .bind_native_network(
+                    id,
+                    record.generation,
+                    record.token.ok_or_else(invalid)?,
+                    native,
+                )
+                .await?;
+            require(
+                checkpoint.phase == NetworkPhase::Provisioning && checkpoint.binding.is_none(),
+            )?;
+            if args.fault_after_native {
+                eprintln!(
+                    "controlled exit after native journal checkpoint before consumer acknowledgement"
+                );
+                std::process::exit(76);
+            }
+            Ok(
+                json!({"provider":observed,"journal":checkpoint,"packet_installation_performed":false}),
+            )
         }
         Action::Negative => {
             let original = provider.lookup(&plan).await?.ok_or_else(invalid)?;

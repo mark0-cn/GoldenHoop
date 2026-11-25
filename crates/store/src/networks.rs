@@ -22,12 +22,30 @@ pub struct NetworkBinding {
     pub destinations: DestinationDefinition,
 }
 
+/// Persist the observed physical identity before any alias or packet write.
+/// Trusted observations are inputs; this record does not attest enforcement.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NetworkNativeBinding {
+    pub network_id: String,
+    pub allocation: Allocation,
+}
+impl From<&NetworkBinding> for NetworkNativeBinding {
+    fn from(binding: &NetworkBinding) -> Self {
+        Self {
+            network_id: binding.network_id.clone(),
+            allocation: binding.allocation.clone(),
+        }
+    }
+}
+
 /// Supplied only by the trusted collector after fresh provider/kernel lookups.
 /// This structure does not perform or attest those lookups by itself.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NetworkAbsence {
-    /// No outstanding provider create can still materialize this generation.
+    /// All provisioning writes have settled or been fenced, including provider
+    /// creation and any privileged controller/alias/packet installation.
     pub provisioning_settled: bool,
     pub endpoints_absent: bool,
     pub network_absent: bool,
@@ -48,6 +66,8 @@ pub struct NetworkAllocation {
     pub revision: u64,
     pub phase: NetworkPhase,
     pub network_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native: Option<NetworkNativeBinding>,
     pub binding: Option<NetworkBinding>,
     pub token: Option<Uuid>,
     pub absence: Option<NetworkAbsence>,
@@ -75,6 +95,13 @@ impl NetworkAllocation {
     }
     pub fn binding_fingerprint(&self) -> Result<Option<String>, ApiError> {
         self.binding.as_ref().map(fingerprint).transpose()
+    }
+    /// Schema-6 complete bindings already carry the physical identity. Preserve
+    /// their original history bytes instead of backfilling old snapshots.
+    pub fn native_binding(&self) -> Option<NetworkNativeBinding> {
+        self.native
+            .clone()
+            .or_else(|| self.binding.as_ref().map(NetworkNativeBinding::from))
     }
     fn validate(&self, installation: Uuid) -> Result<(), ApiError> {
         let identity = self.identity();
@@ -104,6 +131,12 @@ impl NetworkAllocation {
         {
             return Err(internal());
         }
+        if let Some(native) = &self.native {
+            if self.network_id.as_ref() != Some(&native.network_id) {
+                return Err(internal());
+            }
+            self.validate_native(native).map_err(|_| internal())?;
+        }
         if let Some(binding) = &self.binding {
             if self.network_id.as_ref() != Some(&binding.network_id) {
                 return Err(internal());
@@ -111,9 +144,12 @@ impl NetworkAllocation {
             self.validate_binding(binding).map_err(|_| internal())?;
         }
         if (self.phase == NetworkPhase::Reserved
-            && (self.token.is_some() || self.network_id.is_some() || self.binding.is_some()))
+            && (self.token.is_some()
+                || self.network_id.is_some()
+                || self.native.is_some()
+                || self.binding.is_some()))
             || (self.phase == NetworkPhase::Provisioning
-                && (self.network_id.is_some() || self.binding.is_some()))
+                && (self.binding.is_some() || self.network_id.is_some() != self.native.is_some()))
             || self.absence.as_ref().is_some_and(|a| {
                 !a.provisioning_settled
                     || !a.endpoints_absent
@@ -126,9 +162,31 @@ impl NetworkAllocation {
         }
         Ok(())
     }
-    fn validate_binding(&self, binding: &NetworkBinding) -> Result<(), ApiError> {
+    fn validate_native(&self, binding: &NetworkNativeBinding) -> Result<(), ApiError> {
         let allocation = &binding.allocation;
         allocation.validate()?;
+        if let Some(old) = &self.native
+            && fingerprint(old)? != fingerprint(binding)?
+        {
+            return Err(conflict());
+        }
+        if !network_id_valid(&binding.network_id)
+            || allocation.installation_id != self.installation_id
+            || allocation.sandbox_id != self.sandbox_id
+            || allocation.generation != self.generation
+            || allocation.bridge != self.bridge
+            || self
+                .network_id
+                .as_ref()
+                .is_some_and(|id| *id != binding.network_id)
+        {
+            return Err(conflict());
+        }
+        Ok(())
+    }
+    fn validate_binding(&self, binding: &NetworkBinding) -> Result<(), ApiError> {
+        let allocation = &binding.allocation;
+        self.validate_native(&NetworkNativeBinding::from(binding))?;
         binding.source.validate(allocation)?;
         if !network_id_valid(&binding.network_id)
             || allocation.installation_id != self.installation_id
@@ -176,8 +234,7 @@ fn network_row(
         || row.try_get::<&str, _>("bridge").map_err(db)? != value.bridge
         || row.try_get::<Option<i64>, _>("ifindex").map_err(db)?
             != value
-                .binding
-                .as_ref()
+                .native_binding()
                 .map(|b| i64::from(b.allocation.ifindex))
     {
         return Err(internal());
@@ -208,7 +265,7 @@ async fn save(
         .ok_or_else(conflict)?;
     let changed=sqlx::query("UPDATE network_allocations SET phase=?,revision=?,network_id=?,ifindex=?,payload=? WHERE sandbox_id=? AND revision=?")
         .bind(tag(&value.phase)?).bind(value.revision as i64).bind(&value.network_id)
-        .bind(value.binding.as_ref().map(|b|i64::from(b.allocation.ifindex))).bind(encode(value)?)
+        .bind(value.native_binding().map(|b|i64::from(b.allocation.ifindex))).bind(encode(value)?)
         .bind(value.sandbox_id.to_string()).bind(previous as i64).execute(&mut **tx).await.map_err(db)?;
     if changed.rows_affected() != 1 {
         return Err(conflict());
@@ -220,6 +277,41 @@ async fn save(
         .execute(&mut **tx)
         .await
         .map_err(db)?;
+    Ok(())
+}
+async fn provisionable(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    id: Uuid,
+    before_runtime: bool,
+) -> Result<(), ApiError> {
+    let row = sqlx::query("SELECT * FROM sandboxes WHERE id=?")
+        .bind(id.to_string())
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(db)?;
+    let sandbox = sandbox_row(&row)?;
+    if sandbox.sandbox.desired_state != DesiredState::Running
+        || !matches!(
+            sandbox.sandbox.state,
+            SandboxState::Pending | SandboxState::Starting
+        )
+        || sandbox.ever_running
+        || (before_runtime && sandbox.handle.is_some())
+        || goldenhoop_core::expired(&sandbox.sandbox, Utc::now())
+    {
+        return Err(conflict());
+    }
+    Ok(())
+}
+async fn native_available(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    value: &NetworkAllocation,
+    binding: &NetworkNativeBinding,
+) -> Result<(), ApiError> {
+    let foreign:i64=sqlx::query_scalar("SELECT COUNT(*) FROM network_allocations WHERE sandbox_id<>? AND (network_id=? OR (phase<>'collected' AND (bridge=? OR ifindex=?)))").bind(value.sandbox_id.to_string()).bind(&binding.network_id).bind(&value.bridge).bind(i64::from(binding.allocation.ifindex)).fetch_one(&mut **tx).await.map_err(db)?;
+    if foreign != 0 {
+        return Err(conflict());
+    }
     Ok(())
 }
 pub(super) async fn require_collected(
@@ -344,6 +436,7 @@ impl Store {
             revision: 0,
             phase: NetworkPhase::Reserved,
             network_id: None,
+            native: None,
             binding: None,
             token: None,
             absence: None,
@@ -393,7 +486,43 @@ impl Store {
         tx.commit().await.map_err(db)?;
         Ok(value)
     }
-    /// The trusted provider must inspect ownership and kernel identities first.
+    /// Commit this observed identity before installing an alias or any packet
+    /// table. Replays only return the same identity and never grant a lease.
+    pub async fn bind_native_network(
+        &self,
+        id: Uuid,
+        generation: Uuid,
+        token: Uuid,
+        binding: NetworkNativeBinding,
+    ) -> Result<NetworkAllocation, ApiError> {
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+        let mut value = source(&mut tx, id, self.installation_id).await?;
+        if value.generation != generation
+            || value.token != Some(token)
+            || !matches!(
+                value.phase,
+                NetworkPhase::Provisioning | NetworkPhase::Bound
+            )
+        {
+            return Err(conflict());
+        }
+        value.validate_native(&binding)?;
+        if let Some(old) = value.native_binding() {
+            if fingerprint(&old)? != fingerprint(&binding)? {
+                return Err(conflict());
+            }
+            tx.commit().await.map_err(db)?;
+            return Ok(value);
+        }
+        provisionable(&mut tx, id, true).await?;
+        native_available(&mut tx, &value, &binding).await?;
+        value.network_id = Some(binding.network_id.clone());
+        value.native = Some(binding);
+        save(&mut tx, &mut value).await?;
+        tx.commit().await.map_err(db)?;
+        Ok(value)
+    }
+    /// Complete source/DNS identity after the immutable native checkpoint.
     pub async fn bind_network(
         &self,
         id: Uuid,
@@ -420,10 +549,14 @@ impl Store {
             tx.commit().await.map_err(db)?;
             return Ok(value);
         }
-        let foreign:i64=sqlx::query_scalar("SELECT COUNT(*) FROM network_allocations WHERE sandbox_id<>? AND (network_id=? OR (phase<>'collected' AND (bridge=? OR ifindex=?)))").bind(id.to_string()).bind(&binding.network_id).bind(&value.bridge).bind(i64::from(binding.allocation.ifindex)).fetch_one(&mut *tx).await.map_err(db)?;
-        if foreign != 0 {
-            return Err(conflict());
+        if value.native.is_none() {
+            return Err(ApiError::new(
+                ErrorCode::InvalidState,
+                "persist native network identity before complete binding",
+            ));
         }
+        provisionable(&mut tx, id, false).await?;
+        native_available(&mut tx, &value, &NetworkNativeBinding::from(&binding)).await?;
         value.network_id = Some(binding.network_id.clone());
         value.binding = Some(binding);
         value.phase = NetworkPhase::Bound;
