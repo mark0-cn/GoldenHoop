@@ -47,6 +47,12 @@ impl Manager {
         &mut self,
         expected: u64,
     ) -> Result<(Listening, crate::frontend::BoundListeners), ApiError> {
+        if self.destinations.is_some() {
+            return Err(error(
+                ErrorCode::InvalidState,
+                "bind DNS before the immutable destination floor",
+            ));
+        }
         self.check_lifetime()?;
         if self.uncertain || self.can_renew || self.revision != Some(expected) {
             return Err(error(
@@ -132,6 +138,12 @@ impl Manager {
         upstream: IpEndpoint,
         remaining_seconds: u16,
     ) -> Result<Observation, ApiError> {
+        if self.destinations.is_some() {
+            return Err(error(
+                ErrorCode::InvalidState,
+                "configure DNS before the immutable destination floor",
+            ));
+        }
         if self.uncertain || self.can_renew || self.revision != Some(expected) || self.dns.is_some()
         {
             return Err(error(
@@ -281,6 +293,11 @@ impl GrantInstaller for Manager {
             }
         };
         let (config, old) = {
+            let protected = self
+                .destinations
+                .as_ref()
+                .map(|d| crate::ProtectedDestinations::new(d.scope.clone()))
+                .transpose()?;
             let state = self
                 .dns
                 .as_ref()
@@ -297,6 +314,15 @@ impl GrantInstaller for Manager {
                 ));
             }
             for address in request.addresses() {
+                if protected
+                    .as_ref()
+                    .is_some_and(|p| p.classify(*address).blocked())
+                {
+                    return Err(error(
+                        ErrorCode::Forbidden,
+                        "resolved DNS address is protected by destination floor",
+                    ));
+                }
                 let packet = Packet::new(*address, Transport::Other, None)?;
                 if model
                     .leased_address_candidate(&packet, request.origin())?
@@ -361,6 +387,7 @@ impl GrantInstaller for Manager {
             .ok_or_else(|| error(ErrorCode::Conflict, "activated DNS table disappeared"))?;
         let marker = dns_marker(&value)?
             .ok_or_else(|| error(ErrorCode::Conflict, "DNS activation marker disappeared"))?;
+        self.expected(revision).await?;
         let state = self.dns.as_mut().expect("configured DNS state");
         let mut receipt = state.book.as_mut().expect("configured DNS book").commit(
             transaction,

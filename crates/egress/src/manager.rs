@@ -22,6 +22,7 @@ use tokio::{
 
 const NFT: &str = "/usr/sbin/nft";
 const MAX_OUTPUT: u64 = 4 * 1024 * 1024;
+mod destinations;
 mod resolver;
 mod source;
 pub use resolver::{Listening, Resolution};
@@ -37,6 +38,8 @@ pub struct Observation {
     pub ethernet_sha256: Option<String>,
     pub source_guarded: bool,
     pub source_binding_sha256: Option<String>,
+    pub destinations_guarded: bool,
+    pub destination_binding_sha256: Option<String>,
 }
 
 pub struct Manager {
@@ -48,6 +51,7 @@ pub struct Manager {
     dns: Option<resolver::DnsState>,
     ethernet_required: bool,
     source_scope: Option<crate::SourceScope>,
+    destinations: Option<crate::DestinationDefinition>,
     // Abstract Unix names share the host network namespace, including across
     // containers with distinct /run mounts. Dropping the process releases it.
     _lock: UnixDatagram,
@@ -106,6 +110,7 @@ impl Manager {
             dns: None,
             ethernet_required: false,
             source_scope: None,
+            destinations: None,
             _lock: lock,
         };
         // Reconcile the immutable floor on attachment. A restart cannot forget
@@ -115,6 +120,10 @@ impl Manager {
             manager.uncertain = !observed.healthy || !manager.ethernet_required;
             manager.ethernet_required = true;
             manager.source_scope = Some(observed.scope);
+        }
+        if let Some(observed) = manager.destination_guard().await? {
+            manager.uncertain |= !observed.healthy;
+            manager.destinations = Some(observed.definition);
         }
         Ok(manager)
     }
@@ -149,6 +158,9 @@ impl Manager {
         }
         if let Some(scope) = &self.source_scope {
             self.check_source_scope(scope)?;
+        }
+        if let Some(definition) = &self.destinations {
+            self.check_destination_scope(definition)?;
         }
         Ok(())
     }
@@ -228,12 +240,14 @@ impl Manager {
         let table = self.table().await?;
         let ethernet = self.ethernet().await?;
         let source = self.source_guard().await?;
+        let destinations = self.destination_guard().await?;
         Ok(Observation {
             installed: table.is_some(),
             revision: table.as_ref().map(|(r, _)| *r),
             uncertain: self.uncertain
                 || (self.ethernet_required && ethernet.is_none())
-                || !self.source_matches(source.as_ref()),
+                || !self.source_matches(source.as_ref())
+                || !self.destinations_match(destinations.as_ref()),
             table_sha256: table.map(|(_, v)| {
                 format!(
                     "{:x}",
@@ -251,6 +265,9 @@ impl Manager {
             source_guarded: source.as_ref().is_some_and(|s| s.healthy)
                 && self.source_matches(source.as_ref()),
             source_binding_sha256: source.map(|s| s.scope.digest()),
+            destinations_guarded: destinations.as_ref().is_some_and(|d| d.healthy)
+                && self.destinations_match(destinations.as_ref()),
+            destination_binding_sha256: destinations.map(|d| d.definition.digest()),
         })
     }
 
@@ -344,6 +361,12 @@ impl Manager {
                 "required source guard is unavailable or changed",
             ));
         }
+        if !self.destinations_match(self.destination_guard().await?.as_ref()) {
+            return Err(error(
+                ErrorCode::Conflict,
+                "required destination guard is unavailable or changed",
+            ));
+        }
         Ok(())
     }
 
@@ -424,6 +447,7 @@ impl Manager {
         if observed.revision != Some(plan.revision)
             || (self.ethernet_required && !observed.ethernet_guarded)
             || (self.source_scope.is_some() && !observed.source_guarded)
+            || (self.destinations.is_some() && !observed.destinations_guarded)
         {
             return Err(error(
                 ErrorCode::BackendUnavailable,
@@ -465,6 +489,7 @@ impl Manager {
         if observed.revision != Some(expected)
             || (self.ethernet_required && !observed.ethernet_guarded)
             || (self.source_scope.is_some() && !observed.source_guarded)
+            || (self.destinations.is_some() && !observed.destinations_guarded)
         {
             return Err(error(
                 ErrorCode::BackendUnavailable,
@@ -528,6 +553,22 @@ impl Manager {
                 self.allocation.source_table()
             ));
         }
+        if let Some(destination) = self.destination_guard().await? {
+            if self
+                .destinations
+                .as_ref()
+                .is_some_and(|expected| *expected != destination.definition)
+            {
+                return Err(error(
+                    ErrorCode::Conflict,
+                    "destination collection identity differs",
+                ));
+            }
+            batch.push_str(&format!(
+                "delete table inet {}\n",
+                self.allocation.destination_table()
+            ));
+        }
         if !batch.is_empty() {
             self.uncertain = true;
             self.can_renew = false;
@@ -537,11 +578,14 @@ impl Manager {
         // Absence is expected only after the actual collection transaction.
         self.ethernet_required = false;
         self.source_scope = None;
+        self.destinations = None;
         let observed = self.inspect().await?;
         if observed.installed
             || observed.ethernet_guarded
             || observed.source_guarded
             || observed.source_binding_sha256.is_some()
+            || observed.destinations_guarded
+            || observed.destination_binding_sha256.is_some()
         {
             return Err(error(
                 ErrorCode::BackendUnavailable,

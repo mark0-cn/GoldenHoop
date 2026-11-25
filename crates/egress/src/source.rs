@@ -784,11 +784,12 @@ fn normalize(v: &mut Value) {
 #[cfg(test)]
 mod kernel_readback_tests {
     use super::*;
-    use uuid::Uuid;
 
-    type Rules = Vec<(String, Vec<Value>)>;
-    type Capture = (SourcePlan, Rules, bool);
-
+    struct Capture {
+        allocation: Allocation,
+        plan: SourcePlan,
+        observation: Value,
+    }
     fn captures() -> Vec<Capture> {
         let fixture: Value =
             serde_json::from_str(include_str!("../tests/fixtures/source-kernel-rules.json"))
@@ -798,95 +799,144 @@ mod kernel_readback_tests {
             .unwrap()
             .iter()
             .map(|v| {
-                let a = Allocation {
-                    installation_id: Uuid::new_v4(),
-                    sandbox_id: Uuid::new_v4(),
-                    generation: Uuid::new_v4(),
-                    bridge: v["bridge"].as_str().unwrap().into(),
-                    ifindex: 1,
-                };
+                let allocation = serde_json::from_value(v["allocation"].clone()).unwrap();
                 let scope = serde_json::from_value(v["scope"].clone()).unwrap();
-                let plan = SourcePlan::new(&a, &scope).unwrap();
-                let rules = v["rules"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .map(|r| {
-                        let mut expr = r["expr"].as_array().unwrap().clone();
-                        let index = expr.len() - 2;
-                        assert!(expr[index]["counter"]["packets"].is_u64());
-                        expr.remove(index);
-                        (r["chain"].as_str().unwrap().into(), expr)
-                    })
-                    .collect();
-                (plan, rules, v["obsolete_early_ct"].as_bool().unwrap())
+                let plan = SourcePlan::new(&allocation, &scope).unwrap();
+                Capture {
+                    allocation,
+                    plan,
+                    observation: v["observation"].clone(),
+                }
             })
             .collect()
     }
 
-    fn canonical(rules: &Rules) -> Result<Rules, ApiError> {
-        let mut copy = rules.clone();
-        for (chain, expr) in &mut copy {
-            canonical_rule(chain, expr)?;
-        }
-        Ok(copy)
-    }
-
-    fn historical_jump_plan(plan: &SourcePlan) -> Rules {
-        // Compare the historical captures' representation against their old
-        // declared dispatch graph. That graph is now known to deny valid
-        // returns and must never confirm the current production plan.
-        let mut rules = plan.rules.clone();
-        for (_, expr) in &mut rules {
-            let last = expr.last_mut().unwrap();
-            if let Some(target) = last.get("goto").cloned() {
-                *last = json!({"jump":target});
+    #[test]
+    fn accepted_native_source_tables_match_full_ownership_scope_and_rule_semantics() {
+        let captures = captures();
+        assert_eq!(captures.len(), 2);
+        for Capture {
+            allocation,
+            plan,
+            mut observation,
+        } in captures
+        {
+            plan.verify(&allocation, &observation).unwrap();
+            assert_eq!(
+                SourcePlan::descriptor(&allocation, &observation).unwrap(),
+                *plan.scope()
+            );
+            for entry in observation["nftables"].as_array_mut().unwrap() {
+                if let Some(rule) = entry.get_mut("rule") {
+                    rule["handle"] = json!(9999);
+                    for part in rule["expr"].as_array_mut().unwrap() {
+                        if let Some(counter) = part.get_mut("counter") {
+                            counter["packets"] = json!(1234);
+                            counter["bytes"] = json!(987654);
+                        }
+                    }
+                }
             }
+            plan.verify(&allocation, &observation).unwrap();
         }
-        rules
     }
 
     #[test]
-    fn actual_runc_and_gvisor_decompilations_preserve_conjunctive_semantics() {
-        let mut accepted = 0;
-        for (plan, rules, obsolete) in captures() {
-            // All captured jump/return graphs must refuse current admission.
-            assert_ne!(canonical(&rules).unwrap(), canonical(&plan.rules).unwrap());
-            let expected = canonical(&historical_jump_plan(&plan)).unwrap();
-            // This tests representation only, not historical packet success.
-            if obsolete {
-                assert_ne!(canonical(&rules).unwrap(), expected);
-            } else {
-                assert_eq!(canonical(&rules).unwrap(), expected);
-                accepted += 1;
-            }
-        }
-        assert_eq!(accepted, 2);
-    }
-
-    #[test]
-    fn captured_readback_corrections_do_not_hide_missing_or_widened_predicates() {
-        for (plan, rules, obsolete) in captures() {
-            if obsolete {
-                continue;
-            }
-            let expected = canonical(&historical_jump_plan(&plan)).unwrap();
+    fn native_source_table_mutations_refuse_widening_or_unknown_observations() {
+        for Capture {
+            allocation,
+            plan,
+            observation,
+        } in captures()
+        {
+            let entries = observation["nftables"].as_array().unwrap();
+            let rule_indices = entries
+                .iter()
+                .enumerate()
+                .filter_map(|(i, v)| v.get("rule").map(|_| i))
+                .collect::<Vec<_>>();
             let mut candidates = Vec::new();
-            let mut missing = rules.clone();
-            missing.remove(0);
+            let mut missing = observation.clone();
+            missing["nftables"]
+                .as_array_mut()
+                .unwrap()
+                .remove(rule_indices[0]);
             candidates.push(missing);
-            let mut reordered = rules.clone();
-            reordered.swap(0, 1);
-            candidates.push(reordered);
-            let mut verdict = rules.clone();
-            *verdict[1].1.last_mut().unwrap() = json!({"accept":null});
-            candidates.push(verdict);
-            for kind in 0..4 {
-                let mut changed = rules.clone();
+            let mut order = observation.clone();
+            order["nftables"]
+                .as_array_mut()
+                .unwrap()
+                .swap(rule_indices[0], rule_indices[1]);
+            candidates.push(order);
+            let mut side_effect = observation.clone();
+            side_effect["nftables"][rule_indices[0]]["rule"]["expr"]
+                .as_array_mut()
+                .unwrap()
+                .insert(0, json!({"notrack":null}));
+            candidates.push(side_effect);
+            let mut bad_counter = observation.clone();
+            let expr = bad_counter["nftables"][rule_indices[0]]["rule"]["expr"]
+                .as_array_mut()
+                .unwrap();
+            expr.remove(expr.len() - 2);
+            candidates.push(bad_counter);
+            let mut extra = observation.clone();
+            extra["nftables"].as_array_mut().unwrap().push(json!({"chain":{"family":"bridge","table":allocation.source_table(),"name":"extra"}}));
+            candidates.push(extra);
+            let mut dormant = observation.clone();
+            dormant["nftables"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .find_map(|v| v.get_mut("table"))
+                .unwrap()["flags"] = json!(["dormant"]);
+            candidates.push(dormant);
+            let mut wrong_owner = observation.clone();
+            wrong_owner["nftables"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .filter_map(|v| v.get_mut("chain"))
+                .find(|c| {
+                    c["name"]
+                        .as_str()
+                        .is_some_and(|n| n.starts_with("goldenhoop_"))
+                })
+                .unwrap()["name"] = json!("goldenhoop_foreign");
+            candidates.push(wrong_owner);
+            let mut missing_descriptor = observation.clone();
+            let rows = missing_descriptor["nftables"].as_array_mut().unwrap();
+            let index = rows
+                .iter()
+                .position(|v| {
+                    v["chain"]["name"]
+                        .as_str()
+                        .is_some_and(|n| n.starts_with("cfg_"))
+                })
+                .unwrap();
+            rows.remove(index);
+            candidates.push(missing_descriptor);
+            for kind in 0..6 {
+                let mut changed = observation.clone();
                 let mut found = false;
-                'rules: for (_, expr) in &mut changed {
-                    for v in expr {
-                        let Some(m) = v.get_mut("match") else {
+                'rules: for entry in changed["nftables"].as_array_mut().unwrap() {
+                    let Some(rule) = entry.get_mut("rule") else {
+                        continue;
+                    };
+                    for part in rule["expr"].as_array_mut().unwrap() {
+                        if kind == 4
+                            && let Some(target) = part.get("goto").cloned()
+                        {
+                            *part = json!({"jump":target});
+                            found = true;
+                            break 'rules;
+                        }
+                        if kind == 5 && part.get("drop").is_some() {
+                            *part = json!({"accept":null});
+                            found = true;
+                            break 'rules;
+                        }
+                        let Some(m) = part.get_mut("match") else {
                             continue;
                         };
                         let left = &m["left"];
@@ -918,11 +968,8 @@ mod kernel_readback_tests {
                 candidates.push(changed);
             }
             for candidate in candidates {
-                assert_ne!(canonical(&candidate).unwrap(), expected);
+                assert!(plan.verify(&allocation, &candidate).is_err());
             }
-            let mut side_effect = rules;
-            side_effect[0].1.insert(0, json!({"notrack":null}));
-            assert!(canonical(&side_effect).is_err());
         }
     }
 }

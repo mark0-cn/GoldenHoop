@@ -40,6 +40,11 @@ mod server {
             expected_revision: u64,
             endpoint: goldenhoop_egress::Endpoint,
         },
+        ProtectDestinations {
+            expected_revision: u64,
+            private_exceptions: Vec<String>,
+            control_addresses: Vec<std::net::IpAddr>,
+        },
         ListenDns {
             expected_revision: u64,
         },
@@ -94,6 +99,15 @@ mod server {
             ApiError::new(ErrorCode::InvalidState, "open a trusted allocation first")
         })?;
         match request {
+            Request::ProtectDestinations {
+                expected_revision,
+                private_exceptions,
+                control_addresses,
+            } => {
+                manager
+                    .protect_destinations(expected_revision, private_exceptions, control_addresses)
+                    .await
+            }
             Request::BindSource {
                 expected_revision,
                 endpoint,

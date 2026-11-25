@@ -59,7 +59,7 @@ class IPv6Cases:
         return identity
 
     def rpc(self,operation,error=False,**fields):
-        if operation=='enable_dns' and not error:fields['remaining_seconds']=300
+        if operation=='enable_dns' and not error:fields['remaining_seconds']=getattr(self.args,'dns_lifetime',300)
         reply=super().rpc(operation,error=error,**fields)
         if operation=='enable_dns' and not error:
             self.binding6=self.evidence['owned_dns_listener']['ipv6_binding']

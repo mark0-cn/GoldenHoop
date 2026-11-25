@@ -7,6 +7,8 @@ mod source;
 pub use source::{Endpoint, Mac, SourcePlan, SourceScope};
 mod destinations;
 pub use destinations::{DestinationClass, DestinationScope, ProtectedDestinations};
+mod destination_plan;
+pub use destination_plan::{DestinationDefinition, DestinationListener, DestinationPlan};
 mod plan;
 pub use plan::{Allocation, Config, DnsBinding, DnsBindings, LEASE_SECONDS, Plan};
 #[cfg(target_os = "linux")]

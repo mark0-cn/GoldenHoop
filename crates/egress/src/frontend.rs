@@ -249,10 +249,87 @@ async fn connection(mut stream: TcpStream, queries: mpsc::Sender<QueryRequest>) 
     }
 }
 
+/// Enumerate kernel-owned native interface addresses without retaining libc
+/// pointers. The visitor runs before the successful allocation is released.
+fn visit_addresses(mut visitor: impl FnMut(&[u8], IpAddr)) -> Result<(), ApiError> {
+    use std::ffi::CStr;
+    struct Addresses(*mut libc::ifaddrs);
+    impl Drop for Addresses {
+        fn drop(&mut self) {
+            // SAFETY: this exclusively owned successful getifaddrs allocation
+            // remains live until every callback and linked-list read ends.
+            unsafe { libc::freeifaddrs(self.0) };
+        }
+    }
+    let mut pointer = std::ptr::null_mut();
+    // SAFETY: libc initializes the output and owns its complete linked list.
+    if unsafe { libc::getifaddrs(&mut pointer) } != 0 {
+        return Err(error(
+            ErrorCode::BackendUnavailable,
+            "cannot read host interface addresses",
+        ));
+    }
+    let _allocation = Addresses(pointer);
+    let mut count = 0;
+    while !pointer.is_null() {
+        count += 1;
+        if count > 16384 {
+            return Err(error(
+                ErrorCode::QuotaExceeded,
+                "interface address inventory exceeds limit",
+            ));
+        }
+        // SAFETY: the pointer is a live node in the libc-owned list.
+        let node = unsafe { &*pointer };
+        if !node.ifa_name.is_null() && !node.ifa_addr.is_null() {
+            // SAFETY: libc supplies a terminated name and a readable family.
+            let name = unsafe { CStr::from_ptr(node.ifa_name) }.to_bytes();
+            // SAFETY: a nonnull getifaddrs sockaddr has a readable family.
+            let family = i32::from(unsafe { (*node.ifa_addr).sa_family });
+            let address = match family {
+                libc::AF_INET => {
+                    // SAFETY: matching AF_INET guarantees a sockaddr_in.
+                    let a = unsafe {
+                        std::ptr::read_unaligned(node.ifa_addr.cast::<libc::sockaddr_in>())
+                    };
+                    Some(IpAddr::V4(Ipv4Addr::from(a.sin_addr.s_addr.to_ne_bytes())))
+                }
+                libc::AF_INET6 => {
+                    // SAFETY: matching AF_INET6 guarantees a sockaddr_in6.
+                    let a = unsafe {
+                        std::ptr::read_unaligned(node.ifa_addr.cast::<libc::sockaddr_in6>())
+                    };
+                    Some(IpAddr::V6(Ipv6Addr::from(a.sin6_addr.s6_addr)))
+                }
+                _ => None,
+            };
+            if let Some(address) = address {
+                visitor(name, address);
+            }
+        }
+        pointer = node.ifa_next;
+    }
+    Ok(())
+}
+
+pub(crate) fn host_addresses() -> Result<Vec<IpAddr>, ApiError> {
+    let mut addresses = std::collections::BTreeSet::new();
+    visit_addresses(|_, address| {
+        addresses.insert(address);
+    })?;
+    if addresses.is_empty() || addresses.len() > 128 {
+        return Err(error(
+            ErrorCode::QuotaExceeded,
+            "host address scope is empty or exceeds limit",
+        ));
+    }
+    Ok(addresses.into_iter().collect())
+}
+
 /// Read only the already-verified bridge. Multiple application addresses in
 /// either family refuse rather than choosing an ambiguous policy endpoint.
 pub(crate) fn bridge_addresses(bridge: &str) -> Result<BridgeAddresses, ApiError> {
-    use std::{collections::BTreeSet, ffi::CStr};
+    use std::collections::BTreeSet;
     if bridge.is_empty()
         || bridge.len() >= libc::IFNAMSIZ
         || !bridge
@@ -264,71 +341,28 @@ pub(crate) fn bridge_addresses(bridge: &str) -> Result<BridgeAddresses, ApiError
             "invalid bridge address query",
         ));
     }
-    struct Addresses(*mut libc::ifaddrs);
-    impl Drop for Addresses {
-        fn drop(&mut self) {
-            // SAFETY: this pointer is the successful getifaddrs allocation,
-            // exclusively owned here and released once after all reads end.
-            unsafe { libc::freeifaddrs(self.0) };
-        }
-    }
-    let mut pointer = std::ptr::null_mut();
-    // SAFETY: getifaddrs initializes this output pointer; on success the libc
-    // owns every linked node, name and family-specific sockaddr until freed.
-    if unsafe { libc::getifaddrs(&mut pointer) } != 0 {
-        return Err(error(
-            ErrorCode::BackendUnavailable,
-            "cannot read owned bridge addresses",
-        ));
-    }
-    let _allocation = Addresses(pointer);
     let mut v4 = BTreeSet::new();
     let mut v6 = BTreeSet::new();
-    let mut count = 0;
-    while !pointer.is_null() {
-        count += 1;
-        if count > 16384 {
-            return Err(error(
-                ErrorCode::QuotaExceeded,
-                "interface address inventory exceeds limit",
-            ));
+    visit_addresses(|name, address| {
+        if name != bridge.as_bytes() {
+            return;
         }
-        // SAFETY: pointer is a live node in the libc-owned linked list.
-        let node = unsafe { &*pointer };
-        if !node.ifa_name.is_null() && !node.ifa_addr.is_null()
-            // SAFETY: libc provides a terminated live interface name.
-            && unsafe { CStr::from_ptr(node.ifa_name) }.to_bytes() == bridge.as_bytes()
-        {
-            // SAFETY: a nonnull address has a readable family. The matching
-            // family guarantees a complete sockaddr_in/sockaddr_in6 buffer.
-            match i32::from(unsafe { (*node.ifa_addr).sa_family }) {
-                libc::AF_INET => {
-                    // SAFETY: the family is AF_INET; copy before list release.
-                    let address = unsafe {
-                        std::ptr::read_unaligned(node.ifa_addr.cast::<libc::sockaddr_in>())
-                    };
-                    v4.insert(Ipv4Addr::from(address.sin_addr.s_addr.to_ne_bytes()));
+        match address {
+            IpAddr::V4(ip) => {
+                v4.insert(ip);
+            }
+            IpAddr::V6(ip) => {
+                if !ip.is_unicast_link_local()
+                    && !ip.is_unspecified()
+                    && !ip.is_loopback()
+                    && !ip.is_multicast()
+                    && ip.to_ipv4_mapped().is_none()
+                {
+                    v6.insert(ip);
                 }
-                libc::AF_INET6 => {
-                    // SAFETY: the family is AF_INET6; copy before list release.
-                    let address = unsafe {
-                        std::ptr::read_unaligned(node.ifa_addr.cast::<libc::sockaddr_in6>())
-                    };
-                    let ip = Ipv6Addr::from(address.sin6_addr.s6_addr);
-                    if !ip.is_unicast_link_local()
-                        && !ip.is_unspecified()
-                        && !ip.is_loopback()
-                        && !ip.is_multicast()
-                        && ip.to_ipv4_mapped().is_none()
-                    {
-                        v6.insert(ip);
-                    }
-                }
-                _ => {}
             }
         }
-        pointer = node.ifa_next;
-    }
+    })?;
     if v4.len() != 1 || v6.len() > 1 {
         return Err(error(
             ErrorCode::Conflict,
