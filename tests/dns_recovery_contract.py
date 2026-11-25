@@ -14,6 +14,13 @@ from guarded_bootstrap_contract import Contract as GuardedContract
 from dns_recovery_samples import PIN_SOCKET
 
 
+def binding_conflict(frames):
+    error=next(frame['error'] for frame in frames if 'error' in frame)
+    assert error['code']=='conflict' and error['message']=='allocation contract observation differs',error
+    assert not any('controller_intent' in frame for frame in frames),frames
+    return error
+
+
 class Contract(GuardedContract):
     def __init__(self,args):
         super().__init__(args)
@@ -69,10 +76,11 @@ class Contract(GuardedContract):
         wrong=copy.deepcopy(frozen);port=wrong['destinations']['dns'][0]['port'];wrong['destinations']['dns'][0]['port']=port+1 if port<65535 else 1024
         self.controller_generation=str(uuid.uuid4())
         self.invoke('controller-create','--controller-resume-binding-json',json.dumps(wrong),expected=1)
-        rejected=self.report['invocations'][-1]['frames'];assert next(frame['error'] for frame in rejected if 'error' in frame)['code']=='invalid_request'
+        rejected=self.report['invocations'][-1]['frames']
+        self.report['changed_original_DNS_port_refused_before_dispatch']={'frames':rejected,'expected_error':'conflict'};self.save()
+        binding_conflict(rejected)
         assert all(row['controller_generation']!=self.controller_generation for row in self.records()['controllers'])
         assert not self.docker('ps','-a','--filter','label=dev.goldenhoop.installation='+self.installation,'--filter','label=dev.goldenhoop.role=egress-controller','--format','{{.ID}}').stdout.strip()
-        self.report['changed_original_DNS_port_refused_before_dispatch']=rejected
         self.check('the_old_actual_controller_is_positively_collected_while_the_owned_binding_and_deny_rules_remain')
         self.report['initial_owned_dns_spy']=copy.deepcopy(self.report['owned_dns_spy'])
         self.start_upstream();self.new_epoch(frozen)
