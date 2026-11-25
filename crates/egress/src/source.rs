@@ -439,21 +439,13 @@ impl SourcePlan {
             "return",
         );
         let mut ns = nd(135, 32, own.clone(), gateways);
-        ns.extend([
-            raw(192, 8, None, 1),
-            raw(200, 8, None, 1),
-            raw(208, 48, None, ep.mac.number()),
-        ]);
+        ns.push(raw(192, 64, None, (0x0101_u64 << 48) | ep.mac.number()));
         p.rule(allocation, "neighbor_source", ns, "return");
         for length in [24, 32] {
             let mut na = nd(136, length, own.clone(), own.clone());
             na.push(raw(32, 32, Some(0x9fff_ffff), 0));
             if length == 32 {
-                na.extend([
-                    raw(192, 8, None, 2),
-                    raw(200, 8, None, 1),
-                    raw(208, 48, None, ep.mac.number()),
-                ]);
+                na.push(raw(192, 64, None, (0x0201_u64 << 48) | ep.mac.number()));
             }
             p.rule(allocation, "neighbor_source", na, "return");
         }
@@ -620,19 +612,15 @@ impl SourcePlan {
                     return Err(bad());
                 }
                 expr.remove(n - 2);
-                for part in &mut expr {
-                    normalize(part);
-                }
+                canonical_rule(&chain, &mut expr)?;
                 actual.push((chain, expr));
             } else if e.get("table").is_none() && e.get("metainfo").is_none() {
                 return Err(bad());
             }
         }
         let mut expected = self.rules.clone();
-        for (_, expr) in &mut expected {
-            for part in expr {
-                normalize(part);
-            }
+        for (chain, expr) in &mut expected {
+            canonical_rule(chain, expr)?;
         }
         if actual != expected {
             return Err(bad());
@@ -653,6 +641,54 @@ impl SourcePlan {
         }
         Ok(())
     }
+}
+
+/// NFT omits protocol dependencies in its decompilation and may reorder pure
+/// predicates while merging adjacent payload loads. Subchain protocol context
+/// is established by the fully verified prerouting/ND dispatch rules. Only
+/// exact redundant dependencies are removed; rule order and verdicts remain.
+fn canonical_rule(chain: &str, expr: &mut Vec<Value>) -> Result<(), ApiError> {
+    let bad = || {
+        error(
+            ErrorCode::Conflict,
+            "source guard predicate observation differs",
+        )
+    };
+    let Some(verdict) = expr.pop() else {
+        return Err(bad());
+    };
+    if expr.iter().any(|v| {
+        v.as_object()
+            .is_none_or(|o| o.len() != 1 || !o.contains_key("match"))
+    }) {
+        return Err(bad());
+    }
+    for part in expr.iter_mut() {
+        normalize(part);
+    }
+    let has_payload = |protocol| {
+        expr.iter()
+            .any(|v| v["match"]["left"]["payload"]["protocol"] == protocol)
+    };
+    let ip4 = chain == "prerouting" && has_payload("ip");
+    let icmp6 = chain == "ipv6_source" && has_payload("icmpv6");
+    expr.retain(|v| {
+        let m = &v["match"];
+        if m["op"] != "==" {
+            return true;
+        }
+        if m["left"] == json!({"payload":{"protocol":"ether","field":"type"}}) {
+            return !((ip4 && m["right"] == 2048)
+                || (chain == "arp_source" && m["right"] == 2054)
+                || (matches!(chain, "ipv6_source" | "neighbor_source") && m["right"] == 34525));
+        }
+        !(m["left"] == json!({"meta":{"key":"l4proto"}})
+            && m["right"] == 58
+            && (chain == "neighbor_source" || icmp6))
+    });
+    expr.sort_by_key(Value::to_string);
+    expr.push(verdict);
+    Ok(())
 }
 
 fn normalize(v: &mut Value) {
@@ -683,10 +719,12 @@ fn normalize(v: &mut Value) {
                         ("ether", "type", _, Some("ip")) => Some(2048),
                         ("ether", "type", _, Some("arp")) => Some(2054),
                         ("ether", "type", _, Some("ip6")) => Some(34525),
+                        ("arp", "ptype", _, Some("ip")) => Some(2048),
                         ("arp", "operation", _, Some("request")) => Some(1),
                         ("arp", "operation", _, Some("reply")) => Some(2),
                         ("icmpv6", "type", _, Some("nd-neighbor-solicit")) => Some(135),
                         ("icmpv6", "type", _, Some("nd-neighbor-advert")) => Some(136),
+                        ("icmpv6", "code", _, Some("no-route")) => Some(0),
                         ("ip6", "nexthdr", _, Some("ipv6-icmp"))
                         | (_, _, "l4proto", Some("ipv6-icmp")) => Some(58),
                         _ => v
@@ -738,5 +776,137 @@ fn normalize(v: &mut Value) {
             }
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod kernel_readback_tests {
+    use super::*;
+    use uuid::Uuid;
+
+    type Rules = Vec<(String, Vec<Value>)>;
+    type Capture = (SourcePlan, Rules, bool);
+
+    fn captures() -> Vec<Capture> {
+        let fixture: Value =
+            serde_json::from_str(include_str!("../tests/fixtures/source-kernel-rules.json"))
+                .unwrap();
+        fixture["captures"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| {
+                let a = Allocation {
+                    installation_id: Uuid::new_v4(),
+                    sandbox_id: Uuid::new_v4(),
+                    generation: Uuid::new_v4(),
+                    bridge: v["bridge"].as_str().unwrap().into(),
+                    ifindex: 1,
+                };
+                let scope = serde_json::from_value(v["scope"].clone()).unwrap();
+                let plan = SourcePlan::new(&a, &scope).unwrap();
+                let rules = v["rules"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|r| {
+                        let mut expr = r["expr"].as_array().unwrap().clone();
+                        let index = expr.len() - 2;
+                        assert!(expr[index]["counter"]["packets"].is_u64());
+                        expr.remove(index);
+                        (r["chain"].as_str().unwrap().into(), expr)
+                    })
+                    .collect();
+                (plan, rules, v["obsolete_early_ct"].as_bool().unwrap())
+            })
+            .collect()
+    }
+
+    fn canonical(rules: &Rules) -> Result<Rules, ApiError> {
+        let mut copy = rules.clone();
+        for (chain, expr) in &mut copy {
+            canonical_rule(chain, expr)?;
+        }
+        Ok(copy)
+    }
+
+    #[test]
+    fn actual_runc_and_gvisor_decompilations_preserve_conjunctive_semantics() {
+        let mut accepted = 0;
+        for (plan, rules, obsolete) in captures() {
+            let expected = canonical(&plan.rules).unwrap();
+            // Native captures are unchanged. The initial variant's early CT
+            // rule must be rejected; the corrected variant matches directly.
+            // Neither decompilation proves successful packet admission.
+            if obsolete {
+                assert_ne!(canonical(&rules).unwrap(), expected);
+            } else {
+                assert_eq!(canonical(&rules).unwrap(), expected);
+                accepted += 1;
+            }
+        }
+        assert_eq!(accepted, 2);
+    }
+
+    #[test]
+    fn captured_readback_corrections_do_not_hide_missing_or_widened_predicates() {
+        for (plan, rules, obsolete) in captures() {
+            if obsolete {
+                continue;
+            }
+            let expected = canonical(&plan.rules).unwrap();
+            let mut candidates = Vec::new();
+            let mut missing = rules.clone();
+            missing.remove(0);
+            candidates.push(missing);
+            let mut reordered = rules.clone();
+            reordered.swap(0, 1);
+            candidates.push(reordered);
+            let mut verdict = rules.clone();
+            *verdict[1].1.last_mut().unwrap() = json!({"accept":null});
+            candidates.push(verdict);
+            for kind in 0..4 {
+                let mut changed = rules.clone();
+                let mut found = false;
+                'rules: for (_, expr) in &mut changed {
+                    for v in expr {
+                        let Some(m) = v.get_mut("match") else {
+                            continue;
+                        };
+                        let left = &m["left"];
+                        if kind == 0
+                            && left["payload"]["protocol"] == "ether"
+                            && left["payload"]["field"] == "saddr"
+                        {
+                            m["right"] = json!("02:00:00:00:00:02");
+                        } else if kind == 1
+                            && left["payload"]["offset"] == 192
+                            && left["payload"]["len"] == 64
+                        {
+                            m["right"] = json!(m["right"].as_u64().unwrap() ^ 1);
+                        } else if kind == 2 && left.get("&").is_some() {
+                            m["left"]["&"][1] = json!(0x1fff_ffff_u64);
+                        } else if kind == 3
+                            && left["payload"]["protocol"] == "icmpv6"
+                            && left["payload"]["field"] == "code"
+                        {
+                            m["right"] = json!(1);
+                        } else {
+                            continue;
+                        }
+                        found = true;
+                        break 'rules;
+                    }
+                }
+                assert!(found);
+                candidates.push(changed);
+            }
+            for candidate in candidates {
+                assert_ne!(canonical(&candidate).unwrap(), expected);
+            }
+            let mut side_effect = rules;
+            side_effect[0].1.insert(0, json!({"notrack":null}));
+            assert!(canonical(&side_effect).is_err());
+        }
     }
 }

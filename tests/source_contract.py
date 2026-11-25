@@ -102,6 +102,8 @@ class SourceCases:
         return super().open()
 
     def kernel_policy_cases(self):
+        self.evidence['trusted_allocation']=dict(self.allocation)
+        self.save()
         super().kernel_policy_cases()
         observed=json.loads(docker('inspect',self.guest).stdout)[0]
         endpoint=next(iter(observed['NetworkSettings']['Networks'].values()))
@@ -156,6 +158,11 @@ class SourceCases:
         self.source_bound=True;self.source_digest=reply['source_binding_sha256']
         self.evidence['confirmed_source_observation']=reply;self.save()
         self.apply_config({'policies':[{'default_action':'allow','rules':[]}]})
+        for address in (self.target_ip,self.target6):
+            for transport,port in (('tcp',19001),('udp',19002)):
+                assert self.probe(self.guest,transport,address,port),(transport,address)
+            self.rpc('renew',expected_revision=self.revision)
+        self.check('unprivileged_runtime_keeps_real_ipv4_ipv6_tcp_udp_under_source_admission')
         for mode in ('normal4','normal6'):
             assert self.packet('after',mode,True)['reply']
             self.rpc('renew',expected_revision=self.revision)
