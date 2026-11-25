@@ -108,6 +108,8 @@ enum SandboxCommand {
         #[command(flatten)]
         scope: ScopeArgs,
         #[arg(long)]
+        network_policy: Option<PathBuf>,
+        #[arg(long)]
         idempotency_key: Option<String>,
     },
     List {
@@ -136,6 +138,8 @@ enum SandboxCommand {
         pids: u32,
         #[command(flatten)]
         scope: ScopeArgs,
+        #[arg(long)]
+        network_policy: Option<PathBuf>,
         #[arg(long)]
         idempotency_key: Option<String>,
         #[arg(long)]
@@ -400,6 +404,17 @@ fn key(key: Option<String>) -> String {
     key.unwrap_or_else(|| Uuid::new_v4().to_string())
 }
 
+fn read_network_policy(path: PathBuf) -> CliResult<NetworkPolicy> {
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)?
+        .take(64 * 1024 + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > 64 * 1024 {
+        return Err("network policy file exceeds 64 KiB".into());
+    }
+    Ok(serde_json::from_slice(&bytes)?)
+}
+
 async fn submit_control(client: &Client, id: Uuid, control: SessionControl) -> CliResult<u8> {
     eprintln!("session_id={id} control_sequence={}", control.sequence);
     client.session_control(id, &control).await?;
@@ -463,6 +478,7 @@ async fn run(args: Args) -> CliResult<u8> {
             cpu_millis,
             pids,
             scope,
+            network_policy,
             idempotency_key,
         }) => {
             let mut request = CreateSandbox::new(profile, image);
@@ -475,6 +491,12 @@ async fn run(args: Args) -> CliResult<u8> {
             request.child_budget = scope.budget();
             request.feature_limit = scope.features();
             request.required_capabilities = scope.required_capabilities.into_iter().collect();
+            if let Some(path) = network_policy {
+                request.network = read_network_policy(path)?;
+                request
+                    .required_capabilities
+                    .insert(Capability::NetworkPolicy);
+            }
             let key = key(idempotency_key);
             eprintln!("idempotency_key={key}");
             let mut created = client.create(&request, &key).await?;
@@ -506,10 +528,11 @@ async fn run(args: Args) -> CliResult<u8> {
             memory_bytes,
             pids,
             scope,
+            network_policy,
             idempotency_key,
             no_wait,
         }) => {
-            let request = CreateIsolatedSession {
+            let mut request = CreateIsolatedSession {
                 image,
                 ttl_seconds: ttl,
                 resources: ResourceLimits {
@@ -522,6 +545,12 @@ async fn run(args: Args) -> CliResult<u8> {
                 required_capabilities: scope.required_capabilities.into_iter().collect(),
                 ..Default::default()
             };
+            if let Some(path) = network_policy {
+                request.network = Some(read_network_policy(path)?);
+                request
+                    .required_capabilities
+                    .insert(Capability::NetworkPolicy);
+            }
             let key = key(idempotency_key);
             eprintln!("idempotency_key={key}");
             let mut created = client
@@ -553,16 +582,9 @@ async fn run(args: Args) -> CliResult<u8> {
             idempotency_key,
             no_wait,
         }) => {
-            let mut bytes = Vec::new();
-            std::fs::File::open(policy)?
-                .take(64 * 1024 + 1)
-                .read_to_end(&mut bytes)?;
-            if bytes.len() > 64 * 1024 {
-                return Err("network policy file exceeds 64 KiB".into());
-            }
             let request = SetNetworkPolicy {
                 expected_revision,
-                policy: serde_json::from_slice(&bytes)?,
+                policy: read_network_policy(policy)?,
             };
             let key = key(idempotency_key);
             eprintln!("idempotency_key={key}");

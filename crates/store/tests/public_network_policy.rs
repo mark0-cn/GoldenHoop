@@ -301,6 +301,422 @@ async fn ready_root(store: &Store, worker: &WorkerRegistration) -> Uuid {
 }
 
 #[tokio::test]
+async fn creation_dispatches_refuse_replay_and_empty_absence_until_settlement_survives_reopen() {
+    checked(|fixture| async move {
+        let store = fixture.open().await;
+        setup(&store).await;
+        let id = root(&store, NetworkPolicy::default()).await;
+        let reserved = store.reserve_network(id, Uuid::new_v4()).await.unwrap();
+        let network = store
+            .begin_network_provisioning(id, reserved.generation, reserved.revision)
+            .await
+            .unwrap();
+        assert!(
+            store
+                .begin_network_create(
+                    id,
+                    network.generation,
+                    NetworkCreateKind::Workload,
+                    &"a".repeat(64)
+                )
+                .await
+                .is_err()
+        );
+        let bridge = store
+            .begin_network_create(
+                id,
+                network.generation,
+                NetworkCreateKind::Bridge,
+                &"a".repeat(64),
+            )
+            .await
+            .unwrap();
+        assert!(bridge.settled_at.is_none());
+        assert_eq!(
+            store
+                .require_network_creates_settled(id)
+                .await
+                .unwrap_err()
+                .code,
+            ErrorCode::BackendUnavailable
+        );
+        assert_eq!(
+            store
+                .begin_network_create(
+                    id,
+                    network.generation,
+                    NetworkCreateKind::Bridge,
+                    &"a".repeat(64)
+                )
+                .await
+                .unwrap_err()
+                .code,
+            ErrorCode::Conflict
+        );
+        assert!(
+            store
+                .settle_network_create(id, NetworkCreateKind::Workload, bridge.attempt, None)
+                .await
+                .is_err()
+        );
+        assert!(
+            store
+                .settle_network_create(id, NetworkCreateKind::Bridge, Uuid::new_v4(), None)
+                .await
+                .is_err()
+        );
+        let native = NetworkNativeBinding {
+            network_id: "b".repeat(64),
+            allocation: Allocation {
+                installation_id: store.installation_id(),
+                sandbox_id: id,
+                generation: network.generation,
+                bridge: network.bridge.clone(),
+                ifindex: 92,
+            },
+        };
+        store
+            .bind_native_network(id, network.generation, network.token.unwrap(), native)
+            .await
+            .unwrap();
+        let mut sandbox = store.sandbox(id).await.unwrap();
+        sandbox.sandbox.state = SandboxState::Starting;
+        store.observe(sandbox).await.unwrap();
+        assert!(
+            store
+                .begin_network_create(
+                    id,
+                    network.generation,
+                    NetworkCreateKind::Workload,
+                    &"c".repeat(64)
+                )
+                .await
+                .is_err()
+        );
+        store
+            .settle_network_create(
+                id,
+                NetworkCreateKind::Bridge,
+                bridge.attempt,
+                Some(&"b".repeat(64)),
+            )
+            .await
+            .unwrap();
+        store.require_network_creates_settled(id).await.unwrap();
+        let workload = store
+            .begin_network_create(
+                id,
+                network.generation,
+                NetworkCreateKind::Workload,
+                &"c".repeat(64),
+            )
+            .await
+            .unwrap();
+        assert!(
+            store
+                .begin_network_create(
+                    id,
+                    network.generation,
+                    NetworkCreateKind::Workload,
+                    &"c".repeat(64)
+                )
+                .await
+                .is_err()
+        );
+        store.close().await;
+        let reopened = fixture.open().await;
+        let restored = reopened
+            .network_create_dispatch(id, NetworkCreateKind::Workload)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(restored.attempt, workload.attempt);
+        assert!(restored.settled_at.is_none() && restored.physical_id.is_none());
+        reopened
+            .set_desired(id, DesiredState::Terminated, "close-uncertain-create")
+            .await
+            .unwrap();
+        let current = reopened.network_allocation(id).await.unwrap();
+        let collecting = reopened
+            .begin_network_collection(id, current.generation, current.revision)
+            .await
+            .unwrap();
+        let absence = || NetworkAbsence {
+            provisioning_settled: true,
+            endpoints_absent: true,
+            network_absent: true,
+            bridge_absent: true,
+            owned_tables_absent: true,
+            observed_at: Utc::now(),
+        };
+        // Even every caller-supplied absence bit cannot settle a pending write.
+        assert_eq!(
+            reopened
+                .confirm_network_absence(
+                    id,
+                    current.generation,
+                    collecting.token.unwrap(),
+                    absence()
+                )
+                .await
+                .unwrap_err()
+                .code,
+            ErrorCode::BackendUnavailable
+        );
+        assert!(
+            reopened
+                .settle_network_create(
+                    id,
+                    NetworkCreateKind::Workload,
+                    workload.attempt,
+                    Some("container-name")
+                )
+                .await
+                .is_err()
+        );
+        let settled = reopened
+            .settle_network_create(
+                id,
+                NetworkCreateKind::Workload,
+                workload.attempt,
+                Some(&"d".repeat(64)),
+            )
+            .await
+            .unwrap();
+        let replay = reopened
+            .settle_network_create(
+                id,
+                NetworkCreateKind::Workload,
+                workload.attempt,
+                Some(&"d".repeat(64)),
+            )
+            .await
+            .unwrap();
+        assert_eq!(settled.settled_at, replay.settled_at);
+        assert!(
+            reopened
+                .settle_network_create(
+                    id,
+                    NetworkCreateKind::Workload,
+                    workload.attempt,
+                    Some(&"e".repeat(64))
+                )
+                .await
+                .is_err()
+        );
+        reopened.require_network_creates_settled(id).await.unwrap();
+        assert_eq!(
+            reopened
+                .confirm_network_absence(
+                    id,
+                    current.generation,
+                    collecting.token.unwrap(),
+                    absence()
+                )
+                .await
+                .unwrap()
+                .phase,
+            NetworkPhase::Collected
+        );
+        assert!(
+            reopened
+                .begin_network_create(
+                    id,
+                    current.generation,
+                    NetworkCreateKind::Workload,
+                    &"c".repeat(64)
+                )
+                .await
+                .is_err()
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn schema_twelve_upgrade_preserves_public_intent_and_acknowledgement_bytes_without_inventing_dispatches()
+ {
+    checked(|fixture| async move {
+        let store=fixture.open().await;
+        let worker=setup(&store).await;
+        let id=ready_root(&store,&worker).await;
+        let changed=store.set_public_network_policy(id,&SetNetworkPolicy { expected_revision:0,policy:policy(&[]) },"before-v13").await.unwrap();
+        ack(&store,id).await;
+        assert_eq!(store.operation(changed.operation.id).await.unwrap().state,OperationState::Succeeded);
+        store.close().await;
+        let options=SqliteConnectOptions::new().filename(&fixture.path);
+        let mut connection=SqliteConnection::connect_with(&options).await.unwrap();
+        sqlx::raw_sql("DROP TABLE network_create_dispatches;UPDATE meta SET value='12' WHERE key='schema_version'").execute(&mut connection).await.unwrap();
+        async fn snapshot(connection:&mut SqliteConnection)->Vec<String> {
+            let mut values=Vec::new();
+            for query in [
+                "SELECT payload FROM sandboxes ORDER BY id",
+                "SELECT payload FROM operations ORDER BY id",
+                "SELECT payload FROM network_policies ORDER BY sandbox_id",
+                "SELECT payload FROM network_policy_events ORDER BY sandbox_id,revision",
+                "SELECT payload FROM network_policy_changes ORDER BY operation_id",
+                "SELECT sandbox_id||'|'||revision||'|'||policy FROM network_policy_users ORDER BY sandbox_id",
+                "SELECT sandbox_id||'|'||source_id||'|'||source_revision||'|'||source_sha256||'|'||control_revision FROM network_policy_applied_sources ORDER BY sandbox_id,source_id,source_revision",
+                "SELECT payload FROM network_controllers ORDER BY controller_generation",
+                "SELECT payload FROM network_controller_events ORDER BY controller_generation,revision",
+            ] {
+                values.extend(sqlx::query_scalar::<_,String>(query).fetch_all(&mut *connection).await.unwrap());
+            }
+            values
+        }
+        let before=snapshot(&mut connection).await;
+        connection.close().await.unwrap();
+        let upgraded=fixture.open().await;
+        assert_eq!(upgraded.public_network_policy(id).await.unwrap().revision,1);
+        for kind in [NetworkCreateKind::Bridge,NetworkCreateKind::Workload] {
+            assert!(upgraded.network_create_dispatch(id,kind).await.unwrap().is_none());
+        }
+        let mut connection=SqliteConnection::connect_with(&options).await.unwrap();
+        let version:String=sqlx::query_scalar("SELECT value FROM meta WHERE key='schema_version'").fetch_one(&mut connection).await.unwrap();
+        assert_eq!(version,"13");
+        assert_eq!(snapshot(&mut connection).await,before);
+        connection.close().await.unwrap();
+    }).await;
+}
+
+#[tokio::test]
+async fn internal_profile_probe_marker_is_atomic_hidden_and_retained_for_recovery() {
+    checked(|fixture| async move {
+        let store = fixture.open().await;
+        let worker = setup(&store).await;
+        let public = root(&store, NetworkPolicy::default()).await;
+        let mut request = CreateSandbox::new("policy-tree-test", "fixture");
+        request.ttl_seconds = 600;
+        request.child_budget = Some(budget(3));
+        let probe = store
+            .create_network_profile_probe(&profile(), &request, "private-probe")
+            .await
+            .unwrap();
+        assert_eq!(
+            store
+                .create_network_profile_probe(&profile(), &request, "private-probe")
+                .await
+                .unwrap()
+                .sandbox
+                .id,
+            probe.sandbox.id
+        );
+        assert_eq!(
+            store.network_profile_probes().await.unwrap()[0].sandbox.id,
+            probe.sandbox.id
+        );
+        assert_eq!(
+            store
+                .list_sandboxes(None, 100)
+                .await
+                .unwrap()
+                .items
+                .iter()
+                .map(|s| s.id)
+                .collect::<Vec<_>>(),
+            vec![public]
+        );
+        stage(&store, probe.sandbox.id, 88).await;
+        claim(&store, probe.sandbox.id, &worker).await;
+        ack(&store, probe.sandbox.id).await;
+        running(&store, probe.sandbox.id).await;
+        let child = child(&store, probe.sandbox.id, NetworkPolicy::default()).await;
+        assert!(
+            store
+                .list_sandboxes(None, 100)
+                .await
+                .unwrap()
+                .items
+                .iter()
+                .all(|s| s.id != child && s.id != probe.sandbox.id)
+        );
+        store
+            .set_desired(
+                probe.sandbox.id,
+                DesiredState::Terminated,
+                "probe-interrupted",
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            store.operation(probe.operation.id).await.unwrap().state,
+            OperationState::Pending
+        );
+        store.close().await;
+        let reopened = fixture.open().await;
+        let pending = reopened.network_profile_probes().await.unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].sandbox.id, probe.sandbox.id);
+        assert_eq!(pending[0].sandbox.desired_state, DesiredState::Terminated);
+        assert_eq!(
+            reopened.effective_desired(child).await.unwrap(),
+            DesiredState::Terminated
+        );
+        // No runtime absence is inferred from this metadata-only recovery list.
+        assert_ne!(pending[0].sandbox.cleanup, CleanupState::Complete);
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn pause_resume_does_not_supersede_independent_pending_policy_intent() {
+    checked(|fixture| async move {
+        let store = fixture.open().await;
+        let worker = setup(&store).await;
+        let id = ready_root(&store, &worker).await;
+        store
+            .set_desired(id, DesiredState::Paused, "pause-intent")
+            .await
+            .unwrap();
+        for state in [SandboxState::Pausing, SandboxState::Paused] {
+            let mut stored = store.sandbox(id).await.unwrap();
+            stored.sandbox.state = state;
+            store.observe(stored).await.unwrap();
+        }
+        store
+            .finish_operations(id, "pause", OperationState::Succeeded, None)
+            .await
+            .unwrap();
+        let request = SetNetworkPolicy {
+            expected_revision: 0,
+            policy: policy(&[]),
+        };
+        let changed = store
+            .set_public_network_policy(id, &request, "paused-policy")
+            .await
+            .unwrap();
+        store.settle_network_policy_changes().await.unwrap();
+        assert_eq!(
+            store.operation(changed.operation.id).await.unwrap().state,
+            OperationState::Pending
+        );
+        store
+            .set_desired(id, DesiredState::Running, "resume-intent")
+            .await
+            .unwrap();
+        let replay = store
+            .set_public_network_policy(id, &request, "paused-policy")
+            .await
+            .unwrap();
+        assert_eq!(replay.operation.id, changed.operation.id);
+        assert_eq!(replay.operation.state, OperationState::Pending);
+        store.settle_network_policy_changes().await.unwrap();
+        assert_eq!(
+            store.operation(changed.operation.id).await.unwrap().state,
+            OperationState::Pending
+        );
+        // Synthetic acknowledgement only; the real supported-host test must
+        // still establish the fresh physical epoch and worker-held lease.
+        ack(&store, id).await;
+        assert_eq!(
+            store.operation(changed.operation.id).await.unwrap().state,
+            OperationState::Succeeded
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn schema_eleven_upgrade_preserves_private_history_without_promoting_it_to_public_intent() {
     checked(|fixture| async move {
         let store = fixture.open().await;
@@ -314,7 +730,7 @@ async fn schema_eleven_upgrade_preserves_private_history_without_promoting_it_to
         store.close().await;
         let options = SqliteConnectOptions::new().filename(&fixture.path);
         let mut connection = SqliteConnection::connect_with(&options).await.unwrap();
-        sqlx::raw_sql("DROP TABLE network_policy_applied_sources;DROP TABLE network_policy_changes;DROP TABLE network_policy_users;DELETE FROM meta WHERE key='network_operator_policy';UPDATE meta SET value='11' WHERE key='schema_version'")
+        sqlx::raw_sql("DROP TABLE network_create_dispatches;DROP TABLE network_policy_applied_sources;DROP TABLE network_policy_changes;DROP TABLE network_policy_users;DELETE FROM meta WHERE key='network_operator_policy';UPDATE meta SET value='11' WHERE key='schema_version'")
             .execute(&mut connection).await.unwrap();
         async fn snapshot(connection: &mut SqliteConnection) -> Vec<String> {
             let mut values = Vec::new();
@@ -348,7 +764,7 @@ async fn schema_eleven_upgrade_preserves_private_history_without_promoting_it_to
         let mut connection = SqliteConnection::connect_with(&options).await.unwrap();
         let version: String = sqlx::query_scalar("SELECT value FROM meta WHERE key='schema_version'")
             .fetch_one(&mut connection).await.unwrap();
-        assert_eq!(version, "12");
+        assert_eq!(version, "13");
         assert_eq!(snapshot(&mut connection).await, before);
         let overrides: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM network_policy_users")
             .fetch_one(&mut connection).await.unwrap();

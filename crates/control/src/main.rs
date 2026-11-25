@@ -2,8 +2,13 @@ use std::{net::SocketAddr, path::PathBuf};
 
 use clap::{Parser, Subcommand};
 use goldenhoop_artifacts::{BlobStore, S3Config};
-use goldenhoop_control::{api, http::BearerAuth, worker::Worker};
+use goldenhoop_control::{
+    api,
+    http::BearerAuth,
+    worker::{NetworkOptions, NetworkSetup, Worker},
+};
 use goldenhoop_store::Store;
+use std::io::Read;
 
 #[derive(Clone, clap::ValueEnum)]
 enum ArtifactBackend {
@@ -109,6 +114,8 @@ enum Role {
         kernel_probe_image: Option<String>,
         #[arg(long, env = "GOLDENHOOP_EGRESS_CONTROLLER_IMAGE")]
         egress_controller_image: Option<String>,
+        #[arg(long, requires = "egress_controller_image")]
+        network_config: Option<PathBuf>,
         #[arg(long)]
         allow_runc_development: bool,
         #[command(flatten)]
@@ -147,6 +154,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             agent_image,
             kernel_probe_image,
             egress_controller_image,
+            network_config,
             allow_runc_development,
             artifacts,
         } => {
@@ -163,6 +171,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             fs2::FileExt::try_lock_exclusive(&lock)
                 .map_err(|_| "another worker already owns this local database")?;
             let artifacts = artifacts.connect(&args.database, store.installation_id())?;
+            let network_options = network_config
+                .map(
+                    |path| -> Result<NetworkOptions, Box<dyn std::error::Error>> {
+                        let mut bytes = Vec::new();
+                        std::fs::File::open(path)?
+                            .take(64 * 1024 + 1)
+                            .read_to_end(&mut bytes)?;
+                        if bytes.len() > 64 * 1024 {
+                            return Err("network config exceeds 64 KiB".into());
+                        }
+                        Ok(serde_json::from_slice(&bytes)?)
+                    },
+                )
+                .transpose()?;
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
             let worker = Worker::new(
                 store.clone(),
@@ -171,7 +193,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 allow_runc_development,
                 format!("http://{}", listener.local_addr()?),
                 artifacts,
-                egress_controller_image,
+                NetworkSetup {
+                    controller_image: egress_controller_image,
+                    options: network_options,
+                },
             )
             .await?;
             let router = worker.router()?;

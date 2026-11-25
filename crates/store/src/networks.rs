@@ -650,6 +650,7 @@ impl Store {
         absence: NetworkAbsence,
     ) -> Result<NetworkAllocation, ApiError> {
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+        super::network_dispatch::require_settled(&mut tx, id).await?;
         let mut value = source(&mut tx, id, self.installation_id).await?;
         if value.generation != generation || value.token != Some(token) {
             return Err(conflict());

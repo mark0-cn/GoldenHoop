@@ -2,6 +2,9 @@ mod artifacts;
 mod contexts;
 mod executions;
 mod lifecycle;
+mod network_bootstrap;
+mod network_probe;
+pub use network_bootstrap::{NetworkOptions, NetworkSetup};
 mod network_policy;
 mod networks;
 mod sessions;
@@ -44,6 +47,7 @@ pub struct Worker {
     artifacts: goldenhoop_artifacts::BlobStore,
     artifact_concurrency: Arc<Semaphore>,
     network_controller_image: Option<String>,
+    network_options: Option<NetworkOptions>,
     network_tasks: Mutex<HashMap<Uuid, network_policy::NetworkTask>>,
 }
 
@@ -55,8 +59,12 @@ impl Worker {
         allow_runc_development: bool,
         endpoint: String,
         artifacts: goldenhoop_artifacts::BlobStore,
-        network_controller_image: Option<String>,
+        network: NetworkSetup,
     ) -> Result<Arc<Self>, ApiError> {
+        let NetworkSetup {
+            controller_image: network_controller_image,
+            options: network_options,
+        } = network;
         if artifacts.installation_id() != store.installation_id() {
             return Err(ApiError::new(
                 ErrorCode::InvalidRequest,
@@ -66,6 +74,16 @@ impl Worker {
         store.bind_artifact_backend(artifacts.binding()).await?;
         if let Some(image) = &network_controller_image {
             goldenhoop_docker::DockerControllerProvider::connect(image).await?;
+        }
+        if let Some(options) = &network_options {
+            if network_controller_image.is_none() {
+                return Err(ApiError::new(
+                    ErrorCode::InvalidRequest,
+                    "protected networking requires a pinned controller image",
+                ));
+            }
+            options.validate()?;
+            store.bind_network_operator(&options.operator).await?;
         }
         let mut drivers = HashMap::new();
         let mut profiles = Vec::new();
@@ -118,6 +136,15 @@ impl Worker {
                 }
             }
         }
+        if network_options.is_some() {
+            for profile in &mut profiles {
+                if profile.availability == Availability::Available {
+                    // Internal candidate only. The public registration remains
+                    // unavailable until real application and cleanup succeed.
+                    profile.capabilities.insert(Capability::NetworkPolicy);
+                }
+            }
+        }
         let registration = WorkerRegistration {
             id: Uuid::new_v4(),
             endpoint,
@@ -125,8 +152,16 @@ impl Worker {
             heartbeat: Utc::now(),
             profiles,
         };
-        store.register_worker(&registration).await?;
-        Ok(Arc::new(Self {
+        let mut pending = registration.clone();
+        if network_options.is_some() {
+            for profile in &mut pending.profiles {
+                profile.availability = Availability::Unavailable;
+                profile.capabilities.remove(&Capability::NetworkPolicy);
+                profile.reason = Some("protected network availability probe is in progress".into());
+            }
+        }
+        store.register_worker(&pending).await?;
+        let mut worker = Arc::new(Self {
             store,
             drivers,
             registration,
@@ -137,8 +172,42 @@ impl Worker {
             artifacts,
             artifact_concurrency: Arc::new(Semaphore::new(2)),
             network_controller_image,
+            network_options,
             network_tasks: Mutex::new(HashMap::new()),
-        }))
+        });
+        if worker.network_options.is_some() {
+            let (stop, receive) = watch::channel(false);
+            let store = worker.store.clone();
+            let heartbeat = tokio::spawn(network_probe::pending_heartbeat(store, pending, receive));
+            let probing = worker.clone();
+            let probe = tokio::spawn(async move {
+                Box::pin(probing.probe_network_profiles(&agent_image)).await
+            });
+            let result = probe.await.map_err(|_| {
+                ApiError::new(
+                    ErrorCode::BackendUnavailable,
+                    "network probe task did not settle",
+                )
+            })?;
+            let _ = stop.send(true);
+            heartbeat.await.map_err(|_| {
+                ApiError::new(
+                    ErrorCode::BackendUnavailable,
+                    "network probe heartbeat did not settle",
+                )
+            })??;
+            let profiles = result?;
+            let owned = Arc::get_mut(&mut worker).ok_or_else(|| {
+                ApiError::new(
+                    ErrorCode::Internal,
+                    "network probe retained worker ownership",
+                )
+            })?;
+            owned.registration.profiles = profiles;
+            owned.registration.heartbeat = Utc::now();
+            owned.store.register_worker(&owned.registration).await?;
+        }
+        Ok(worker)
     }
 
     pub fn router(self: &Arc<Self>) -> Result<Router, ApiError> {

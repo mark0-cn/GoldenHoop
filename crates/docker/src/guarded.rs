@@ -176,6 +176,30 @@ impl DockerDriver {
         network: &WorkloadNetworkPlan,
         session: &mut ControllerSession,
     ) -> Result<RuntimeHandle, ApiError> {
+        self.prepare_quarantined_inner(sandbox, request, network, session, None)
+            .await
+    }
+
+    pub async fn prepare_quarantined_observed(
+        &self,
+        sandbox: &Sandbox,
+        request: &CreateSandbox,
+        network: &WorkloadNetworkPlan,
+        session: &mut ControllerSession,
+        observer: &dyn ResourceCreateObserver,
+    ) -> Result<RuntimeHandle, ApiError> {
+        self.prepare_quarantined_inner(sandbox, request, network, session, Some(observer))
+            .await
+    }
+
+    async fn prepare_quarantined_inner(
+        &self,
+        sandbox: &Sandbox,
+        request: &CreateSandbox,
+        network: &WorkloadNetworkPlan,
+        session: &mut ControllerSession,
+        observer: Option<&dyn ResourceCreateObserver>,
+    ) -> Result<RuntimeHandle, ApiError> {
         validate_create(&*self.profile.read().await, request)?;
         if sandbox.profile != request.profile
             || sandbox.image != request.image
@@ -188,7 +212,44 @@ impl DockerDriver {
             return Err(conflict());
         }
         self.quarantine_for_bootstrap(network, session).await?;
-        self.prepare_runtime(sandbox, request, Some(network)).await
+        self.prepare_runtime_observed(sandbox, request, Some(network), observer)
+            .await
+    }
+
+    /// A fresh owned materialized ID can settle a lost create reply. An empty
+    /// discovery result, a name, or a persisted handle alone cannot do so.
+    pub async fn validate_recovered_network_create(
+        &self,
+        handle: &RuntimeHandle,
+        network: &WorkloadNetworkPlan,
+        request_sha256: &str,
+    ) -> Result<(), ApiError> {
+        network.validate()?;
+        let actual = self.owned(handle).await?.ok_or_else(conflict)?;
+        match_requested_plan(&actual, Some(network))?;
+        admit_placement(&actual, network, self.config.profile.runtime())?;
+        if actual.id.as_deref() != Some(handle.backend_ref.as_str())
+            || actual
+                .config
+                .as_ref()
+                .and_then(|c| c.labels.as_ref())
+                .and_then(|l| l.get(REQUEST_LABEL))
+                .map(String::as_str)
+                != Some(request_sha256)
+            || !matches!(
+                actual.state.as_ref().and_then(|s| s.status),
+                Some(
+                    ContainerStateStatusEnum::CREATED
+                        | ContainerStateStatusEnum::RUNNING
+                        | ContainerStateStatusEnum::PAUSED
+                        | ContainerStateStatusEnum::EXITED
+                        | ContainerStateStatusEnum::DEAD
+                )
+            )
+        {
+            return Err(conflict());
+        }
+        Ok(())
     }
 
     /// Start only the fixed trusted supervisor under a freshly confirmed deny floor.

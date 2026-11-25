@@ -1106,7 +1106,7 @@ async fn schema_four_migration_and_reopen_preserve_prior_intent_and_request_keys
                 .await
                 .unwrap();
         let result = sqlx::raw_sql(
-            "DROP TABLE network_policy_applied_sources;DROP TABLE network_policy_changes;DROP TABLE network_policy_users;DROP TABLE network_policy_events;DROP TABLE network_policies;DROP TABLE network_controller_events;DROP TABLE network_controllers;DROP TABLE network_allocation_events;DROP TABLE network_allocations;DROP TABLE sandbox_scopes;UPDATE meta SET value='4' WHERE key='schema_version'",
+            "DROP TABLE network_create_dispatches;DROP TABLE network_policy_applied_sources;DROP TABLE network_policy_changes;DROP TABLE network_policy_users;DROP TABLE network_policy_events;DROP TABLE network_policies;DROP TABLE network_controller_events;DROP TABLE network_controllers;DROP TABLE network_allocation_events;DROP TABLE network_allocations;DROP TABLE sandbox_scopes;UPDATE meta SET value='4' WHERE key='schema_version'",
         )
         .execute(&mut connection)
         .await;

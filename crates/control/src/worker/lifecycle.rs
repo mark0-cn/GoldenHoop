@@ -1,7 +1,10 @@
 use super::*;
 
 impl Worker {
-    fn runtime_request(&self, stored: &StoredSandbox) -> Result<CreateSandbox, ApiError> {
+    pub(super) fn runtime_request(
+        &self,
+        stored: &StoredSandbox,
+    ) -> Result<CreateSandbox, ApiError> {
         let profile = self
             .registration
             .profiles
@@ -44,6 +47,16 @@ impl Worker {
 
     pub(super) async fn reconcile(&self, id: Uuid) -> Result<(), ApiError> {
         let mut stored = self.store.sandbox(id).await?;
+        let driver = self
+            .drivers
+            .get(&stored.sandbox.profile)
+            .cloned()
+            .ok_or_else(|| {
+                ApiError::new(
+                    ErrorCode::UnsupportedCapability,
+                    "worker has no matching runtime driver",
+                )
+            })?;
         // Only explicitly staged complete allocations enter live control.
         // Partial/legacy journals cannot fall through to none-network creation.
         match self.store.network_allocation(id).await {
@@ -75,7 +88,36 @@ impl Worker {
                 stored = self.store.sandbox(id).await?;
             }
             Ok(_) => {}
-            Err(error) if error.code == ErrorCode::NotFound => {}
+            Err(error) if error.code == ErrorCode::NotFound => {
+                if self.network_options.is_some()
+                    && !stored.ever_running
+                    && stored.sandbox.desired_state == DesiredState::Running
+                    && !matches!(
+                        stored.sandbox.state,
+                        SandboxState::Failed | SandboxState::Terminated
+                    )
+                {
+                    if stored.sandbox.state != SandboxState::Pending {
+                        return self.stop(stored, &driver, "uncertain protected bootstrap has no allocation; refusing none-network creation", ExecutionState::Failed).await;
+                    }
+                    let profile = self
+                        .registration
+                        .profiles
+                        .iter()
+                        .find(|p| p.id == stored.sandbox.profile)
+                        .ok_or_else(|| {
+                            ApiError::new(
+                                ErrorCode::UnsupportedCapability,
+                                "protected runtime profile is absent",
+                            )
+                        })?;
+                    require_capability(profile, Capability::NetworkPolicy)?;
+                    Box::pin(self.bootstrap_network(stored, &driver)).await?;
+                    return self
+                        .reconcile_network(self.store.sandbox(id).await?, driver)
+                        .await;
+                }
+            }
             Err(error) => return Err(error),
         }
         let driver = self.drivers.get(&stored.sandbox.profile).ok_or_else(|| {
@@ -255,6 +297,8 @@ impl Worker {
             || execution_state == ExecutionState::Failed;
         self.stop_network_task(id).await?;
         stored.handle = self.recovered_handle(&stored, driver).await?;
+        self.settle_create_dispatches(&stored, driver).await?;
+        self.store.require_network_creates_settled(id).await?;
         if !matches!(
             stored.sandbox.state,
             SandboxState::Failed | SandboxState::Terminated
@@ -356,6 +400,21 @@ impl Worker {
         let mut stored = self.store.sandbox(id).await?;
         if stored.sandbox.cleanup == CleanupState::Complete {
             return Ok(());
+        }
+        if !stored.ever_running {
+            match self.store.network_allocation(id).await {
+                Ok(_) => {
+                    let driver = self
+                        .drivers
+                        .get(&stored.sandbox.profile)
+                        .ok_or_else(|| error.clone())?;
+                    return self
+                        .stop(stored, driver, &error.message, ExecutionState::Failed)
+                        .await;
+                }
+                Err(error) if error.code == ErrorCode::NotFound => {}
+                Err(error) => return Err(error),
+            }
         }
         if !stored.ever_running
             && matches!(

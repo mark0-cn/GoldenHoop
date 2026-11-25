@@ -15,6 +15,14 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
 
+/// Private host persistence hook for protected bridge and workload create writes.
+/// Missing transport acknowledgement must not be interpreted as settlement.
+#[async_trait]
+pub trait ResourceCreateObserver: Send + Sync {
+    async fn dispatched(&self, request_sha256: &str) -> Result<(), ApiError>;
+    async fn settled(&self) -> Result<(), ApiError>;
+}
+
 mod contexts;
 mod controllers;
 mod guarded;
@@ -378,6 +386,17 @@ impl DockerDriver {
         request: &CreateSandbox,
         network: Option<&WorkloadNetworkPlan>,
     ) -> Result<RuntimeHandle, ApiError> {
+        self.prepare_runtime_observed(sandbox, request, network, None)
+            .await
+    }
+
+    async fn prepare_runtime_observed(
+        &self,
+        sandbox: &Sandbox,
+        request: &CreateSandbox,
+        network: Option<&WorkloadNetworkPlan>,
+        observer: Option<&dyn ResourceCreateObserver>,
+    ) -> Result<RuntimeHandle, ApiError> {
         if request.resources.memory_bytes < 64 * 1024 * 1024 || request.resources.pids < 16 {
             return Err(ApiError::new(
                 ErrorCode::InvalidRequest,
@@ -526,14 +545,24 @@ impl DockerDriver {
                     .map_err(|_| unavailable("invalid owned workload network plan"))?,
             );
         }
-        match self
+        if let Some(observer) = observer {
+            observer.dispatched(&request_fingerprint(request)?).await?;
+        }
+        let created = self
             .docker
             .create_container(
                 Some(CreateContainerOptionsBuilder::default().name(&name).build()),
                 body,
             )
-            .await
+            .await;
+        if matches!(
+            &created,
+            Ok(_) | Err(DockerError::DockerResponseServerError { .. })
+        ) && let Some(observer) = observer
         {
+            observer.settled().await?;
+        }
+        match created {
             Ok(created) => handle.backend_ref = created.id,
             Err(DockerError::DockerResponseServerError {
                 status_code: 409, ..

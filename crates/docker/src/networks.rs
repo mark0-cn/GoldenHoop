@@ -131,6 +131,14 @@ mod tests {
     }
 }
 impl NetworkPlan {
+    pub fn fingerprint(&self) -> Result<String, ApiError> {
+        use sha2::{Digest, Sha256};
+        self.validate()?;
+        Ok(format!(
+            "{:x}",
+            Sha256::digest(serde_json::to_vec(self).map_err(|_| invalid())?)
+        ))
+    }
     pub fn validate(&self) -> Result<(), ApiError> {
         self.identity.validate()?;
         if self.provisioning_token.is_nil() {
@@ -459,6 +467,20 @@ impl DockerNetworkProvider {
     /// Only after a newly committed provisioning dispatch. Never call this to
     /// recover a lost response: lookup the journaled name and owner instead.
     pub async fn create_fresh(&self, plan: &NetworkPlan) -> Result<NetworkObservation, ApiError> {
+        self.create_fresh_inner(plan, None).await
+    }
+    pub async fn create_fresh_observed(
+        &self,
+        plan: &NetworkPlan,
+        observer: &dyn crate::ResourceCreateObserver,
+    ) -> Result<NetworkObservation, ApiError> {
+        self.create_fresh_inner(plan, Some(observer)).await
+    }
+    async fn create_fresh_inner(
+        &self,
+        plan: &NetworkPlan,
+        observer: Option<&dyn crate::ResourceCreateObserver>,
+    ) -> Result<NetworkObservation, ApiError> {
         plan.validate()?;
         let remaining = plan.expires_at.signed_duration_since(Utc::now());
         if remaining <= chrono::Duration::zero() || remaining > chrono::Duration::days(1) {
@@ -468,13 +490,25 @@ impl DockerNetworkProvider {
         if self.lookup(plan).await?.is_some() {
             return Err(conflict());
         }
-        let response = tokio::time::timeout(
+        if let Some(observer) = observer {
+            observer.dispatched(&plan.fingerprint()?).await?;
+        }
+        let returned = tokio::time::timeout(
             Duration::from_secs(30),
             self.docker.create_network(plan.request()),
         )
-        .await
-        .map_err(|_| unknown())?
-        .map_err(backend)?;
+        .await;
+        if matches!(
+            &returned,
+            Ok(Ok(_))
+                | Ok(Err(
+                    bollard::errors::Error::DockerResponseServerError { .. }
+                ))
+        ) && let Some(observer) = observer
+        {
+            observer.settled().await?;
+        }
+        let response = returned.map_err(|_| unknown())?.map_err(backend)?;
         if !valid_id(&response.id) || !response.warning.is_empty() {
             return Err(unknown());
         }

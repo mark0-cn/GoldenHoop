@@ -1,10 +1,46 @@
 # Versioned network policy
 
-This increment exposes desired-policy metadata and an update contract for an
-allocation that already has a trusted public-source protected binding. Normal
-public sandbox creation still uses none-network isolation. `NetworkPolicy` is
-not advertised: initial public provisioning and actual hierarchy composition
-remain release gates. The private contract producer is a test setup tool.
+Public protected creation is optional and requires a pinned host controller and
+administrator network configuration. With no network configuration, profiles
+retain none-network isolation and do not advertise `NetworkPolicy`. New public
+creation, environment-probe and five-level runtime gates require their own
+supported-host acceptance; private staged contracts do not establish them.
+
+## Deployment
+
+Pass `--network-config FILE` and `--egress-controller-image sha256:<digest>` to
+the worker. The controller must be the trusted host-egress image, pinned by its
+actual image ID. The JSON file is bounded to 64 KiB and rejects unknown fields:
+
+```json
+{
+  "upstream": "8.8.8.8:53",
+  "operator": {"deny_always": [], "allow_always": [], "tcp_cap": null},
+  "private_exceptions": [],
+  "control_addresses": []
+}
+```
+
+The resolver and exceptions are administrator input. Workload policy cannot
+provide these values. The operator policy is immutable for an installation;
+changing it currently refuses rather than silently changing existing authority.
+Existing allocations retain their frozen destination bindings.
+
+While probing, the public worker registration is Unavailable. A private root
+and, when supported, child run through actual protected creation, native apply,
+commands with explicit stdout/exit, ancestor policy changes and cascade
+collection. Only a successful probe with confirmed resource absence publishes
+`NetworkPolicy`. Failed primitives make the profile Unavailable; unconfirmed
+probe collection prevents startup. There is no none-network fallback. Probes
+temporarily reserve 500 millicores, 256 MiB and 64 PIDs per node, including a
+child reservation when hierarchy is supported. Probe roots have durable private
+markers, remain absent from public sandbox listings and are collected after a
+worker crash before new support is advertised.
+
+New sandboxes on an enabled available profile take the protected path even
+with the default deny policy. Previously running none-network allocations keep
+their original isolation and cannot acquire public policy updates. A new or
+uncertain allocation cannot fall through to none-network creation.
 
 ## API and clients
 
@@ -34,7 +70,10 @@ still awaiting its protected binding returns `invalid_state`.
 
 Rust and synchronous/asynchronous Python clients provide `network_policy` and
 `set_network_policy`. The CLI provides `network-policy ID` and
-`network-policy-set ID --policy FILE --expected-revision N`. The latter prints
+`network-policy-set ID --policy FILE --expected-revision N`. Creation and
+`isolated-create` accept `--network-policy FILE`, which also requires the
+NetworkPolicy capability even when the file contains the default deny policy.
+The setter prints
 the idempotency key and operation ID before waiting; `--no-wait` returns the
 pending operation. These interfaces do not enable an unavailable profile.
 
@@ -63,5 +102,12 @@ current readiness still requires the worker's process-local lease and actual
 runtime observations. Restarted processes cannot derive that lease from SQLite.
 
 Schema 12 adds intent, change-target and historical source-acknowledgement
-tables. Schema 11 private policy/history payloads remain byte-for-byte intact;
-migration does not promote them to public bindings or live authority.
+tables. Schema 13 adds bridge/workload creation dispatch and settlement records.
+The record commits immediately before the actual daemon write. Correlated
+daemon responses or fresh matching owned physical IDs may settle it; a timeout,
+EOF or empty inventory cannot. An unsettled dispatch prevents native collection
+and cleanup completion. Prepared runtime IDs are durable before supervisor
+start; partial creation never replays through another runtime path.
+
+Schema upgrades preserve existing private/public policy and acknowledgement
+payload bytes. Migration invents neither dispatch completion nor a live lease.

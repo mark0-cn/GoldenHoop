@@ -17,6 +17,12 @@ flowchart LR
 
 Both HTTP services bind loopback. The public API requires a 32-512 byte opaque bearer token. Remote clients must reach a local TLS reverse proxy; a non-loopback API bind is refused. The worker uses a separate random credential stored only in the private database. Its private file endpoint rejects command and lifecycle methods. Workloads receive neither credential nor a daemon socket.
 
+Optional [protected networking](network-policy.md) requires a pinned host-egress
+image and `--network-config FILE`. The worker keeps public profiles Unavailable
+while actual native application and cleanup probes run. A failed environment
+probe refuses user admission; it does not select a weaker runtime. Plain
+none-network operation remains the default when this configuration is absent.
+
 ## Run locally
 
 Build the trusted image and Rust binaries:

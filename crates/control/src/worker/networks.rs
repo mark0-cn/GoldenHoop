@@ -136,6 +136,7 @@ impl Worker {
         if network.phase == NetworkPhase::Collected {
             return Ok(());
         }
+        self.store.require_network_creates_settled(id).await?;
         if network.phase != NetworkPhase::Collecting {
             network = self
                 .store

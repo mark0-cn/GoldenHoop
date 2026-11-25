@@ -94,11 +94,37 @@ impl Store {
         request: &CreateSandbox,
         key: &str,
     ) -> Result<SandboxCreated, ApiError> {
+        self.create_root(profile, request, key, false).await
+    }
+
+    /// Host-owned availability probe. Its marker commits before any external
+    /// write, so a replacement worker can collect it instead of adopting it.
+    pub async fn create_network_profile_probe(
+        &self,
+        profile: &RuntimeProfile,
+        request: &CreateSandbox,
+        key: &str,
+    ) -> Result<SandboxCreated, ApiError> {
+        goldenhoop_core::require_capability(profile, Capability::NetworkPolicy)?;
+        self.create_root(profile, request, key, true).await
+    }
+
+    async fn create_root(
+        &self,
+        profile: &RuntimeProfile,
+        request: &CreateSandbox,
+        key: &str,
+        probe: bool,
+    ) -> Result<SandboxCreated, ApiError> {
         let id = Uuid::new_v4();
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
         if let Some(existing) = reserve(
             &mut tx,
-            "sandboxes:create",
+            if probe {
+                "network-profile-probe"
+            } else {
+                "sandboxes:create"
+            },
             key,
             &request_fingerprint(request)?,
             id,
@@ -123,6 +149,13 @@ impl Store {
         let now = Utc::now();
         let expiry = now + chrono::Duration::seconds(request.ttl_seconds as i64);
         let created = insert_sandbox(&mut tx, id, request, now, expiry, &envelope).await?;
+        if probe {
+            sqlx::query("UPDATE operations SET kind='network_profile_probe' WHERE id=?")
+                .bind(created.operation.id.to_string())
+                .execute(&mut *tx)
+                .await
+                .map_err(db)?;
+        }
         super::isolated::insert_scope(&mut tx, id, None, request).await?;
         tx.commit().await.map_err(db)?;
         Ok(created)
@@ -139,7 +172,7 @@ impl Store {
                 "page limit must be 1..1000",
             ));
         }
-        let rows = sqlx::query("SELECT * FROM sandboxes WHERE id>? ORDER BY id LIMIT ?")
+        let rows = sqlx::query("SELECT b.* FROM sandboxes b JOIN sandbox_scopes s ON s.sandbox_id=b.id WHERE b.id>? AND NOT EXISTS(SELECT 1 FROM operations o WHERE o.resource_id=s.root_id AND o.kind='network_profile_probe') ORDER BY b.id LIMIT ?")
             .bind(after.map(|id| id.to_string()).unwrap_or_default())
             .bind(i64::from(limit) + 1)
             .fetch_all(&self.pool)
@@ -169,6 +202,11 @@ impl Store {
             .iter()
             .map(sandbox_row)
             .collect()
+    }
+
+    pub async fn network_profile_probes(&self) -> Result<Vec<StoredSandbox>, ApiError> {
+        sqlx::query("SELECT b.* FROM sandboxes b JOIN operations o ON o.id=b.create_operation WHERE o.kind='network_profile_probe' AND (b.cleanup<>'complete' OR o.state IN('pending','running')) ORDER BY b.id")
+            .fetch_all(&self.pool).await.map_err(db)?.iter().map(sandbox_row).collect()
     }
 
     /// Update only observed state. A concurrent API desired-state update is preserved.
@@ -336,7 +374,9 @@ impl Store {
             finished_at: satisfied.then_some(now),
             error: None,
         };
-        let pending = sqlx::query("SELECT id,kind,payload FROM operations WHERE resource_id=? AND state IN('pending','running')").bind(id.to_string()).fetch_all(&mut *tx).await.map_err(db)?;
+        // Desired lifecycle supersession must not cancel independent policy
+        // intent. Its own source-version/native-confirmation path settles it.
+        let pending = sqlx::query("SELECT id,kind,payload FROM operations WHERE resource_id=? AND kind IN('create','pause','resume','terminate') AND state IN('pending','running')").bind(id.to_string()).fetch_all(&mut *tx).await.map_err(db)?;
         for row in pending {
             if row.try_get::<&str, _>("kind").map_err(db)? == "create"
                 && desired != DesiredState::Terminated

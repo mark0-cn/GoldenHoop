@@ -6,8 +6,10 @@ pub use controllers::{ControllerAbsence, ControllerPhase, NetworkController};
 mod executions;
 mod isolated;
 mod lifecycle;
+mod network_dispatch;
 mod network_policy;
 mod network_policy_public;
+pub use network_dispatch::{NetworkCreateDispatch, NetworkCreateKind};
 pub use network_policy_public::{NetworkOperatorPolicy, NetworkPolicyInputs, NetworkPolicySource};
 mod networks;
 pub use network_policy::{NetworkPolicyControl, NetworkPolicyOwner, NetworkPolicyPhase};
@@ -258,7 +260,7 @@ impl Store {
                 .map_err(db)?;
         if !matches!(
             version.as_str(),
-            "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "10" | "11" | "12"
+            "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "10" | "11" | "12" | "13"
         ) {
             return Err(ApiError::new(
                 ErrorCode::UnsupportedCapability,
@@ -289,44 +291,56 @@ impl Store {
                 .await
                 .map_err(db)?;
         }
-        if !matches!(version.as_str(), "6" | "7" | "8" | "9" | "10" | "11" | "12") {
+        if !matches!(
+            version.as_str(),
+            "6" | "7" | "8" | "9" | "10" | "11" | "12" | "13"
+        ) {
             sqlx::raw_sql(include_str!("schema-v6.sql"))
                 .execute(&mut *tx)
                 .await
                 .map_err(db)?;
         }
-        if !matches!(version.as_str(), "7" | "8" | "9" | "10" | "11" | "12") {
+        if !matches!(
+            version.as_str(),
+            "7" | "8" | "9" | "10" | "11" | "12" | "13"
+        ) {
             sqlx::raw_sql(include_str!("schema-v7.sql"))
                 .execute(&mut *tx)
                 .await
                 .map_err(db)?;
         }
-        if !matches!(version.as_str(), "8" | "9" | "10" | "11" | "12") {
+        if !matches!(version.as_str(), "8" | "9" | "10" | "11" | "12" | "13") {
             sqlx::raw_sql(include_str!("schema-v8.sql"))
                 .execute(&mut *tx)
                 .await
                 .map_err(db)?;
         }
-        if !matches!(version.as_str(), "9" | "10" | "11" | "12") {
+        if !matches!(version.as_str(), "9" | "10" | "11" | "12" | "13") {
             sqlx::raw_sql(include_str!("schema-v9.sql"))
                 .execute(&mut *tx)
                 .await
                 .map_err(db)?;
         }
-        if !matches!(version.as_str(), "10" | "11" | "12") {
+        if !matches!(version.as_str(), "10" | "11" | "12" | "13") {
             sqlx::raw_sql(include_str!("schema-v10.sql"))
                 .execute(&mut *tx)
                 .await
                 .map_err(db)?;
         }
-        if !matches!(version.as_str(), "11" | "12") {
+        if !matches!(version.as_str(), "11" | "12" | "13") {
             sqlx::raw_sql(include_str!("schema-v11.sql"))
                 .execute(&mut *tx)
                 .await
                 .map_err(db)?;
         }
-        if version != "12" {
+        if !matches!(version.as_str(), "12" | "13") {
             sqlx::raw_sql(include_str!("schema-v12.sql"))
+                .execute(&mut *tx)
+                .await
+                .map_err(db)?;
+        }
+        if version != "13" {
+            sqlx::raw_sql(include_str!("schema-v13.sql"))
                 .execute(&mut *tx)
                 .await
                 .map_err(db)?;
