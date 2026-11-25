@@ -1,9 +1,7 @@
 use futures_util::FutureExt;
 use goldenhoop_protocol::*;
 use goldenhoop_store::Store;
-use std::{
-    collections::BTreeSet, future::Future, panic::AssertUnwindSafe, path::PathBuf, time::Duration,
-};
+use std::{collections::BTreeSet, future::Future, panic::AssertUnwindSafe, path::PathBuf};
 use uuid::Uuid;
 
 #[tokio::test]
@@ -834,7 +832,9 @@ async fn inheritance_refuses_broader_profile_features_and_network_before_allocat
 
 #[tokio::test]
 async fn hierarchy_clamps_deadlines_preserves_own_pause_and_closes_all_descendants() {
-    checked(|store, _| async move {
+    use sqlx::{Connection, SqliteConnection, sqlite::SqliteConnectOptions};
+
+    checked(|store, path| async move {
         let parent = root(&store, Some(limits(1000, 1024, 256)), 300).await;
         let parent_expiry = store.sandbox(parent).await.unwrap().sandbox.expires_at;
         let mut ids = vec![parent];
@@ -924,7 +924,7 @@ async fn hierarchy_clamps_deadlines_preserves_own_pause_and_closes_all_descendan
                 DesiredState::Terminated
             );
         }
-        let expiring = root(&store, Some(limits(100, 64, 16)), 1).await;
+        let expiring = root(&store, Some(limits(100, 64, 16)), 300).await;
         let spec = CreateIsolatedSession {
             resources: limits(100, 64, 16),
             ttl_seconds: Some(300),
@@ -937,7 +937,48 @@ async fn hierarchy_clamps_deadlines_preserves_own_pause_and_closes_all_descendan
             .sandbox
             .id;
         running(&store, child).await;
-        tokio::time::sleep(Duration::from_millis(1100)).await;
+        let mut snapshots = [
+            store.sandbox(expiring).await.unwrap().sandbox,
+            store.sandbox(child).await.unwrap().sandbox,
+        ];
+        assert!(snapshots[1].expires_at <= snapshots[0].expires_at);
+        // Supply expired fixture snapshots after setup, preserving their time
+        // ordering and clamped deadlines. Native wall-clock expiry has its own
+        // runtime gate; filesystem latency must not expire this test's setup.
+        let shift = chrono::Utc::now() - chrono::Duration::seconds(1) - snapshots[0].expires_at;
+        let mut updates = Vec::new();
+        for snapshot in &mut snapshots {
+            snapshot.created_at += shift;
+            snapshot.expires_at += shift;
+            if let Some(observed) = snapshot.observed_at.as_mut() {
+                *observed += shift;
+            }
+            updates.push((
+                snapshot.id.to_string(),
+                serde_json::to_string(snapshot).unwrap(),
+            ));
+        }
+        let mut connection =
+            SqliteConnection::connect_with(&SqliteConnectOptions::new().filename(&path))
+                .await
+                .unwrap();
+        let updated = async {
+            let mut tx = connection.begin().await?;
+            for (id, payload) in updates {
+                let result = sqlx::query("UPDATE sandboxes SET payload=? WHERE id=?")
+                    .bind(payload)
+                    .bind(id)
+                    .execute(&mut *tx)
+                    .await?;
+                if result.rows_affected() != 1 {
+                    return Err(sqlx::Error::RowNotFound);
+                }
+            }
+            tx.commit().await
+        }
+        .await;
+        connection.close().await.unwrap();
+        updated.unwrap();
         assert_eq!(
             store.effective_desired(child).await.unwrap(),
             DesiredState::Terminated
