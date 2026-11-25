@@ -5,6 +5,7 @@ pub use upstream::Upstream;
 mod leases;
 pub use leases::{Authority, KernelLease, LeaseBook, LeaseTransaction};
 mod sets;
+pub(crate) use sets::duration_ms;
 pub use sets::{SetConfirmation, SetNames, StagedSets};
 #[cfg(target_os = "linux")]
 mod probe;

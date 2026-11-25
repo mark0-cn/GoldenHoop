@@ -1,6 +1,8 @@
 //! Private allocation/controller contracts; trusted-agent bootstrap is explicit.
 #[path = "network_allocation/bootstrap.rs"]
 mod bootstrap;
+#[path = "network_allocation/effective.rs"]
+mod effective;
 #[path = "network_allocation/probe.rs"]
 mod probe;
 use chrono::{Duration, Utc};
@@ -93,6 +95,8 @@ struct Args {
     controller_resume_binding_json: Option<String>,
     #[arg(long)]
     recovery_dns_upstream: Option<std::net::SocketAddr>,
+    #[arg(long)]
+    effective_policy_contract: bool,
     #[arg(long)]
     probe_generation: Option<Uuid>,
     #[arg(long)]
@@ -384,11 +388,12 @@ async fn exercise_controller(
                 .is_err(),
     )?;
     Ok(
-        json!({"exchange":result,"exited":exited,"journal":running,"exited_controller_not_restarted":true,"workload_publication":false,"packet_permissions_granted":false,"quarantine_installed":args.controller_leave_quarantine}),
+        json!({"exchange":result,"exited":exited,"journal":running,"exited_controller_not_restarted":true,"workload_publication":false,"packet_permissions_granted":args.effective_policy_contract,"quarantine_installed":args.controller_leave_quarantine}),
     )
 }
 
 async fn exercise(args: &Args, store: &Store) -> Result<Value, ApiError> {
+    require(!args.effective_policy_contract || matches!(args.action, Action::ControllerResume))?;
     require(
         args.controller_resume_binding_json.is_none()
             || matches!(

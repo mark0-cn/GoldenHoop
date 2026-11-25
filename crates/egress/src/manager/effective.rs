@@ -1,0 +1,206 @@
+use super::*;
+use crate::{
+    EffectivePolicyReceipt, ProtectedBindingReceipt,
+    dns::{SetNames, StagedSets},
+};
+
+pub(super) struct KernelPolicy {
+    pub until: Instant,
+    pub sha256: String,
+}
+impl Manager {
+    pub(super) fn live_milliseconds(&self) -> Result<u64, ApiError> {
+        let maximum = u64::from(LEASE_SECONDS) * 1000;
+        let remaining = self
+            .dns
+            .as_ref()
+            .map(|dns| {
+                dns.deadline
+                    .saturating_duration_since(Instant::now())
+                    .as_millis()
+                    .saturating_sub(250)
+                    .min(u128::from(maximum)) as u64
+            })
+            .unwrap_or(maximum);
+        if remaining == 0 {
+            return Err(error(
+                ErrorCode::DeadlineExceeded,
+                "original lifetime has no live lease window",
+            ));
+        }
+        Ok(remaining)
+    }
+
+    pub(super) async fn verify_kernel_policy(
+        &self,
+        revision: u64,
+        config: &Config,
+        names: Option<&SetNames>,
+    ) -> Result<KernelPolicy, ApiError> {
+        self.expected(revision).await?;
+        let (_, native) = self
+            .table()
+            .await?
+            .ok_or_else(|| error(ErrorCode::Conflict, "effective policy is absent"))?;
+        crate::policy_readback::verify_structure(
+            &self.allocation,
+            revision,
+            config,
+            self.dns.as_ref().and_then(|s| s.binding.as_ref()),
+            names,
+            &native,
+        )?;
+        let started = Instant::now();
+        let bytes = nft(&["list", "table", "inet", &self.allocation.table()], None).await?;
+        let finished = Instant::now();
+        let text = std::str::from_utf8(&bytes).map_err(|_| {
+            error(
+                ErrorCode::BackendUnavailable,
+                "invalid native policy observation",
+            )
+        })?;
+        let until = crate::policy_readback::verify_native_lease(
+            &self.allocation,
+            text,
+            started,
+            finished,
+            self.dns.as_ref().map(|s| s.deadline),
+        )?;
+        if let Some(names) = names {
+            let memberships = if let Some(book) = self.dns.as_ref().and_then(|s| s.book.as_ref()) {
+                book.memberships(started)?
+            } else if names.token().is_none() {
+                Vec::new()
+            } else {
+                return Err(error(
+                    ErrorCode::InvalidState,
+                    "active DNS authority is absent",
+                ));
+            };
+            StagedSets::observation(&self.allocation, names.clone(), &memberships)?
+                .confirm_current_native(text, started, finished)?;
+        }
+        self.expected(revision).await?;
+        let (_, after) = self
+            .table()
+            .await?
+            .ok_or_else(|| error(ErrorCode::Conflict, "effective policy disappeared"))?;
+        crate::policy_readback::verify_structure(
+            &self.allocation,
+            revision,
+            config,
+            self.dns.as_ref().and_then(|s| s.binding.as_ref()),
+            names,
+            &after,
+        )?;
+        if until <= Instant::now() {
+            return Err(error(
+                ErrorCode::DeadlineExceeded,
+                "kernel live lease elapsed during readback",
+            ));
+        }
+        Ok(KernelPolicy {
+            until,
+            sha256: format!(
+                "{:x}",
+                Sha256::digest(serde_json::to_vec(&after).expect("native JSON"))
+            ),
+        })
+    }
+
+    pub async fn inspect_policy(
+        &mut self,
+        expected: u64,
+    ) -> Result<EffectivePolicyReceipt, ApiError> {
+        self.check_lifetime()?;
+        if self.uncertain
+            || !self.can_renew
+            || self.revision != Some(expected)
+            || self.lease_until.is_none_or(|end| end <= Instant::now())
+            || !self.ethernet_required
+            || self.source_scope.is_none()
+            || self.destinations.is_none()
+            || self.effective_policy.is_none()
+        {
+            return Err(error(
+                ErrorCode::InvalidState,
+                "effective policy inspection requires a known protected live lease",
+            ));
+        }
+        let result = self.inspect_policy_inner(expected).await;
+        if result.is_err() {
+            self.uncertain = true;
+            self.can_renew = false;
+            self.lease_until = None;
+        }
+        result
+    }
+    async fn inspect_policy_inner(
+        &self,
+        expected: u64,
+    ) -> Result<EffectivePolicyReceipt, ApiError> {
+        let config = self
+            .effective_policy
+            .as_ref()
+            .ok_or_else(|| error(ErrorCode::InvalidState, "effective policy is absent"))?;
+        let dns = self
+            .dns
+            .as_ref()
+            .ok_or_else(|| error(ErrorCode::InvalidState, "trusted DNS is absent"))?;
+        let expires_at = dns
+            .expires_at
+            .ok_or_else(|| error(ErrorCode::InvalidState, "original DNS lifetime is absent"))?;
+        if dns.binding.is_none()
+            || dns
+                .config
+                .as_ref()
+                .map(Config::digest)
+                .transpose()?
+                .as_ref()
+                != Some(&config.digest()?)
+            || dns.book.as_ref().is_none_or(|book| book.is_unknown())
+        {
+            return Err(error(
+                ErrorCode::InvalidState,
+                "trusted DNS policy authority is absent",
+            ));
+        }
+        let kernel = self
+            .verify_kernel_policy(expected, config, Some(&dns.active))
+            .await?;
+        let source = self
+            .source_guard()
+            .await?
+            .ok_or_else(|| error(ErrorCode::Conflict, "source guard is absent"))?;
+        let destinations = self
+            .destination_guard()
+            .await?
+            .ok_or_else(|| error(ErrorCode::Conflict, "destination guard is absent"))?;
+        if !self.source_matches(Some(&source)) || !self.destinations_match(Some(&destinations)) {
+            return Err(error(ErrorCode::Conflict, "protected policy guard changed"));
+        }
+        self.check_bridge()?;
+        self.check_lifetime()?;
+        let until = kernel.until.min(
+            self.lease_until
+                .ok_or_else(|| error(ErrorCode::InvalidState, "local lease is absent"))?,
+        );
+        let remaining = until.saturating_duration_since(Instant::now()).as_millis();
+        let receipt = EffectivePolicyReceipt {
+            binding: ProtectedBindingReceipt {
+                allocation: self.allocation.clone(),
+                source: source.scope,
+                destinations: destinations.definition,
+                revision: expected,
+                expires_at,
+                observed_at: chrono::Utc::now(),
+            },
+            config_sha256: config.digest()?,
+            native_sha256: kernel.sha256,
+            lease_remaining_milliseconds: u32::try_from(remaining)
+                .map_err(|_| error(ErrorCode::Conflict, "invalid live lease bound"))?,
+        };
+        receipt.validate_config(config)?;
+        Ok(receipt)
+    }
+}

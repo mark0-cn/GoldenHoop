@@ -119,6 +119,13 @@ impl DnsBindings {
 }
 
 impl Config {
+    pub fn digest(&self) -> Result<String, ApiError> {
+        self.model()?;
+        Ok(format!(
+            "{:x}",
+            Sha256::digest(serde_json::to_vec(self).expect("serializable configuration"))
+        ))
+    }
     pub fn model(&self) -> Result<goldenhoop_policy::Model, ApiError> {
         if self.policies.is_empty() || self.policies.len() > 5 {
             return Err(error(
@@ -172,7 +179,14 @@ impl Plan {
         revision: u64,
         config: &Config,
     ) -> Result<Self, ApiError> {
-        Self::compile_mode(allocation, revision, config, None, None)
+        Self::compile_mode(
+            allocation,
+            revision,
+            config,
+            None,
+            None,
+            u64::from(LEASE_SECONDS) * 1000,
+        )
     }
 
     /// Explicit trusted DNS mode; callers must provide the concrete installer.
@@ -188,6 +202,26 @@ impl Plan {
             config,
             Some(SetNames::bootstrap()),
             binding,
+            u64::from(LEASE_SECONDS) * 1000,
+        )
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(crate) fn compile_with_lease(
+        allocation: Allocation,
+        revision: u64,
+        config: &Config,
+        dns: bool,
+        binding: Option<&DnsBindings>,
+        milliseconds: u64,
+    ) -> Result<Self, ApiError> {
+        Self::compile_mode(
+            allocation,
+            revision,
+            config,
+            dns.then(SetNames::bootstrap),
+            binding,
+            milliseconds,
         )
     }
 
@@ -197,9 +231,16 @@ impl Plan {
         config: &Config,
         dns: Option<SetNames>,
         binding: Option<&DnsBindings>,
+        milliseconds: u64,
     ) -> Result<Self, ApiError> {
         allocation.validate()?;
         config.model()?;
+        if milliseconds == 0 || milliseconds > u64::from(LEASE_SECONDS) * 1000 {
+            return Err(error(
+                ErrorCode::DeadlineExceeded,
+                "live policy lease is outside its bound",
+            ));
+        }
         let mut p = Self {
             allocation,
             revision,
@@ -216,8 +257,13 @@ impl Plan {
         p.line(
             "add element",
             &format!(
-                "live {{ \"{}\" timeout {LEASE_SECONDS}s }}",
-                p.allocation.bridge
+                "live {{ \"{}\" timeout {} }}",
+                p.allocation.bridge,
+                if milliseconds == u64::from(LEASE_SECONDS) * 1000 {
+                    format!("{LEASE_SECONDS}s")
+                } else {
+                    format!("{milliseconds}ms")
+                }
             ),
         );
         p.bounded()?;

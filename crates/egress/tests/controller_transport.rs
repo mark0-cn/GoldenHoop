@@ -363,6 +363,12 @@ async fn actual_controller_stdio_refuses_unopened_operations_and_exits_after_eof
         (Request::Inspect {}, ErrorCode::InvalidState),
         (recovery_request(), ErrorCode::InvalidState),
         (
+            Request::InspectPolicy {
+                expected_revision: 0,
+            },
+            ErrorCode::InvalidState,
+        ),
+        (
             Request::ConfigureDns {
                 expected_revision: 0,
                 upstream: "127.0.0.1:19004".parse().unwrap(),
@@ -426,6 +432,9 @@ async fn actual_collection_only_binary_refuses_enforcement_before_any_allocation
     for command in [
         Request::Install {},
         recovery_request(),
+        Request::InspectPolicy {
+            expected_revision: 0,
+        },
         Request::ConfigureDns {
             expected_revision: 0,
             upstream: "127.0.0.1:19004".parse().unwrap(),

@@ -18,6 +18,7 @@ const NFT: &str = "/usr/sbin/nft";
 const MAX_OUTPUT: u64 = 4 * 1024 * 1024;
 mod binding;
 mod destinations;
+mod effective;
 mod resolver;
 mod source;
 pub use resolver::{Listening, Resolution};
@@ -43,6 +44,7 @@ pub struct Manager {
     uncertain: bool,
     can_renew: bool,
     lease_until: Option<Instant>,
+    effective_policy: Option<Config>,
     dns: Option<resolver::DnsState>,
     ethernet_required: bool,
     source_scope: Option<crate::SourceScope>,
@@ -75,6 +77,7 @@ impl Manager {
             uncertain: false,
             can_renew: false,
             lease_until: None,
+            effective_policy: None,
             dns: None,
             ethernet_required: false,
             source_scope: None,
@@ -313,7 +316,7 @@ impl Manager {
                 "egress table already exists or is uncertain",
             ));
         }
-        self.commit(Plan::quarantine(self.allocation.clone(), 0)?, false, false)
+        self.commit(Plan::quarantine(self.allocation.clone(), 0)?, false, None)
             .await
     }
 
@@ -355,18 +358,16 @@ impl Manager {
             .checked_add(1)
             .ok_or_else(|| error(ErrorCode::Conflict, "egress revision exhausted"))?;
         let model = self.dns.as_ref().map(|_| config.model()).transpose()?;
-        let plan = if self.dns.is_some() {
-            Plan::compile_with_dns(
-                self.allocation.clone(),
-                next,
-                config,
-                self.dns.as_ref().and_then(|state| state.binding.as_ref()),
-            )?
-        } else {
-            Plan::compile(self.allocation.clone(), next, config)?
-        };
+        let plan = Plan::compile_with_lease(
+            self.allocation.clone(),
+            next,
+            config,
+            self.dns.is_some(),
+            self.dns.as_ref().and_then(|s| s.binding.as_ref()),
+            self.live_milliseconds()?,
+        )?;
         self.expected(expected).await?;
-        let observed = self.commit(plan, true, true).await?;
+        let observed = self.commit(plan, true, Some(config)).await?;
         if let Some(dns) = &mut self.dns {
             dns.model = model;
             dns.config = Some(config.clone());
@@ -391,7 +392,7 @@ impl Manager {
                     self.dns.as_ref().and_then(|state| state.binding.as_ref()),
                 )?,
                 true,
-                false,
+                None,
             )
             .await?;
         if let Some(dns) = &mut self.dns {
@@ -404,7 +405,7 @@ impl Manager {
         &mut self,
         plan: Plan,
         replace: bool,
-        can_renew: bool,
+        policy: Option<&Config>,
     ) -> Result<Observation, ApiError> {
         let mut batch = String::new();
         if replace {
@@ -414,6 +415,7 @@ impl Manager {
         self.uncertain = true;
         self.can_renew = false;
         self.lease_until = None;
+        self.effective_policy = None;
         let started = Instant::now();
         nft(&["--file", "-"], Some(batch.as_bytes())).await?;
         let observed = self.inspect().await?;
@@ -427,11 +429,29 @@ impl Manager {
                 "kernel did not confirm policy revision",
             ));
         }
+        let confirmed = if let Some(config) = policy {
+            Some(
+                self.verify_kernel_policy(
+                    plan.revision,
+                    config,
+                    self.dns
+                        .as_ref()
+                        .map(|_| crate::dns::SetNames::bootstrap())
+                        .as_ref(),
+                )
+                .await?
+                .until,
+            )
+        } else {
+            None
+        };
         self.revision = Some(plan.revision);
         self.uncertain = false;
-        self.can_renew = can_renew;
-        self.lease_until = can_renew
-            .then_some(started + Duration::from_millis(u64::from(LEASE_SECONDS) * 1000 - 11));
+        self.can_renew = policy.is_some();
+        self.effective_policy = policy.cloned();
+        self.lease_until = confirmed.map(|end| {
+            end.min(started + Duration::from_millis(u64::from(LEASE_SECONDS) * 1000 - 11))
+        });
         Ok(Observation {
             uncertain: false,
             ..observed
@@ -446,9 +466,20 @@ impl Manager {
                 "egress lease is not renewable",
             ));
         }
+        let config = self
+            .effective_policy
+            .clone()
+            .ok_or_else(|| error(ErrorCode::InvalidState, "effective policy is unavailable"))?;
+        let names = self.dns.as_ref().map(|s| s.active.clone());
+        self.uncertain = true;
+        self.can_renew = false;
+        self.lease_until = None;
         self.expected(expected).await?;
+        self.verify_kernel_policy(expected, &config, names.as_ref())
+            .await?;
+        let milliseconds = self.live_milliseconds()?;
         let batch = format!(
-            "flush set inet {} live\nadd element inet {} live {{ \"{}\" timeout {LEASE_SECONDS}s }}\n",
+            "flush set inet {} live\nadd element inet {} live {{ \"{}\" timeout {milliseconds}ms }}\n",
             self.allocation.table(),
             self.allocation.table(),
             self.allocation.bridge
@@ -469,10 +500,14 @@ impl Manager {
                 "kernel did not confirm lease revision",
             ));
         }
+        let confirmed = self
+            .verify_kernel_policy(expected, &config, names.as_ref())
+            .await?
+            .until;
         self.uncertain = false;
         self.can_renew = true;
         self.lease_until =
-            Some(started + Duration::from_millis(u64::from(LEASE_SECONDS) * 1000 - 11));
+            Some(confirmed.min(started + Duration::from_millis(milliseconds.saturating_sub(11))));
         Ok(Observation {
             uncertain: false,
             ..observed

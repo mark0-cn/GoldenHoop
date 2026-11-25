@@ -93,8 +93,13 @@ pub(super) async fn resume(
     )?;
     let current = store.sandbox(id).await?;
     require(current.sandbox.state == SandboxState::Starting && !current.ever_running)?;
+    let policy = if args.effective_policy_contract {
+        Some(super::effective::run(&driver, handle, &network, session, &recovered).await?)
+    } else {
+        None
+    };
     Ok(
-        json!({"handle":handle,"network":network,"frozen_binding":frozen,"recovered_binding":recovered,"duplicate_recovery_refused":true,"guard":controller_call(session,ControllerRequest::Inspect{}).await?,"stored":current.sandbox,"ever_running":current.ever_running,"workload_ready":false,"user_execution_dispatched":false}),
+        json!({"handle":handle,"network":network,"frozen_binding":frozen,"recovered_binding":recovered,"effective_policy":policy,"duplicate_recovery_refused":true,"guard":controller_call(session,ControllerRequest::Inspect{}).await?,"stored":current.sandbox,"ever_running":current.ever_running,"workload_ready":false,"user_execution_dispatched":false}),
     )
 }
 

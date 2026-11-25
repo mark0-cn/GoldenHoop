@@ -24,7 +24,7 @@ jobs:
       - name: Build the production worker and private allocation contract
         run: |
           cargo build --locked -p goldenhoop-control --bin goldenhoopd --example network_allocation
-          cargo build --locked -p goldenhoop-egress --example quarantine_readback
+          cargo build --locked -p goldenhoop-egress --example quarantine_readback --example policy_readback
       - name: Verify actual owned quarantine semantics and weakened-rule refusal
         run: python3 -B tests/quarantine_readback_contract.py --binary target/debug/examples/network_allocation --readback-binary target/debug/examples/quarantine_readback --work-dir .test-work --output evidence/quarantine-readback.json
       - name: Verify durable controller epochs, dispatch recovery, native binding and collection
@@ -36,6 +36,8 @@ jobs:
           for mode in reserve create-loss start-loss table-blocked; do
             python3 -B tests/native_probe_contract.py --binary target/debug/examples/network_allocation --worker-binary target/debug/goldenhoopd --work-dir .test-work --mode "$mode" --output "evidence/native-probe-$mode.json"
           done
+      - name: Verify actual effective policy and finite lease readback without host access
+        run: python3 -B tests/policy_readback_contract.py --binary target/debug/examples/policy_readback --output evidence/policy-readback.json
       - name: Verify production worker collection of actual expired owned rules
         run: python3 -B tests/worker_network_recovery_contract.py --binary target/debug/examples/network_allocation --worker-binary target/debug/goldenhoopd --work-dir .test-work --output evidence/worker-network-recovery.json --remove-image
       - name: Verify all owned prerequisite resources are absent
@@ -114,6 +116,8 @@ jobs:
         run: python3 -B tests/guarded_bootstrap_contract.py --runtime ${{ matrix.runtime }} --mode prepared-exit --binary target/debug/examples/network_allocation --worker-binary target/debug/goldenhoopd --work-dir .test-work --output evidence/guarded-prepared-exit-${{ matrix.runtime }}.json
       - name: Verify exact DNS recovery after controller replacement and occupied-port refusal
         run: python3 -B tests/dns_recovery_contract.py --runtime ${{ matrix.runtime }} --binary target/debug/examples/network_allocation --worker-binary target/debug/goldenhoopd --readback-binary target/debug/examples/quarantine_readback --work-dir .test-work --output evidence/dns-recovery-${{ matrix.runtime }}.json
+      - name: Verify full protected policy readback, renewal, tightening and expiry
+        run: python3 -B tests/effective_policy_contract.py --runtime ${{ matrix.runtime }} --binary target/debug/examples/network_allocation --worker-binary target/debug/goldenhoopd --readback-binary target/debug/examples/quarantine_readback --work-dir .test-work --output evidence/effective-policy-${{ matrix.runtime }}.json
       - name: Verify the IPv4 routed-filter mechanism and scoped collection
         run: python3 -B tests/network_contract.py --runtime ${{ matrix.runtime }} --receiver-publication routed --ci-host-diagnostics --output evidence/network-ipv4-${{ matrix.runtime }}.json
       - name: Verify workload DNS interception, grants, source expiry and controller loss

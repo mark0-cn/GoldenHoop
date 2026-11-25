@@ -78,6 +78,9 @@ pub enum Request {
     InspectBinding {
         expected_revision: u64,
     },
+    InspectPolicy {
+        expected_revision: u64,
+    },
     Resolve {
         wire: Vec<u8>,
         #[serde(default)]

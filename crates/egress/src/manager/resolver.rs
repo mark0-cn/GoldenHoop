@@ -104,7 +104,7 @@ impl Manager {
             .ok_or_else(|| error(ErrorCode::Conflict, "egress revision exhausted"))?;
         self.dns.as_mut().expect("configured DNS").binding = Some(binding.clone());
         let plan = Plan::quarantine_with_binding(self.allocation.clone(), next, Some(&binding))?;
-        let observed = self.commit(plan, true, false).await?;
+        let observed = self.commit(plan, true, None).await?;
         self.dns.as_mut().expect("configured DNS").invalidate(next);
         // Quarantine now protects all endpoints. Close the initial sockets so
         // data queued before the filter existed cannot borrow a later policy.
@@ -210,7 +210,7 @@ impl Manager {
                 .commit(
                     Plan::quarantine_with_binding(self.allocation.clone(), next, Some(&binding))?,
                     true,
-                    false,
+                    None,
                 )
                 .await?;
             self.dns.as_mut().expect("recovered DNS").invalidate(next);
@@ -549,6 +549,20 @@ impl GrantInstaller for Manager {
             ));
         }
         state.active = staged.names().clone();
+        // Source bookkeeping and marker identity alone cannot confirm the
+        // activated policy. Reobserve every effective rule and its live lease.
+        let active = state.active.clone();
+        let kernel = self
+            .verify_kernel_policy(revision, &config, Some(&active))
+            .await?;
+        self.lease_until = Some(global.min(kernel.until));
+        receipt.expires_at = receipt.expires_at.min(kernel.until);
+        if !request.addresses().is_empty() && receipt.expires_at <= Instant::now() {
+            return Err(error(
+                ErrorCode::DeadlineExceeded,
+                "DNS grant elapsed during effective policy readback",
+            ));
+        }
         self.uncertain = false;
         self.can_renew = true;
         Ok(receipt)

@@ -2,7 +2,7 @@
 //! Activation must not recreate elements or renew their deadlines.
 use super::*;
 use crate::Allocation;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use uuid::Uuid;
 
 #[derive(Clone, Debug)]
@@ -117,6 +117,34 @@ impl SetConfirmation {
 }
 
 impl StagedSets {
+    /// Expected upper bounds for an already committed active set generation.
+    /// Missing expired grants are not permission; every actual member must
+    /// still have an original, unexpired source credit.
+    pub fn observation(
+        allocation: &Allocation,
+        names: SetNames,
+        memberships: &[KernelLease],
+    ) -> Result<Self, ApiError> {
+        allocation.validate()?;
+        let mut wanted = BTreeMap::new();
+        for member in memberships {
+            if wanted
+                .insert((member.authority, member.address), (member.expires_at, 0))
+                .is_some()
+            {
+                return Err(error(
+                    ErrorCode::InvalidRequest,
+                    "duplicate DNS observation member",
+                ));
+            }
+        }
+        Ok(Self {
+            table: allocation.table(),
+            names,
+            wanted,
+            script: String::new(),
+        })
+    }
     pub fn new(
         allocation: &Allocation,
         transaction: &LeaseTransaction,
@@ -182,6 +210,27 @@ impl StagedSets {
         started: Instant,
         finished: Instant,
     ) -> Result<SetConfirmation, ApiError> {
+        self.confirm_observation(native, started, finished, true)
+    }
+
+    /// Periodic readback may observe a conservative subset after early kernel
+    /// expiry. This never acknowledges a new grant or publishes a DNS answer.
+    pub fn confirm_current_native(
+        &self,
+        native: &str,
+        started: Instant,
+        finished: Instant,
+    ) -> Result<SetConfirmation, ApiError> {
+        self.confirm_observation(native, started, finished, false)
+    }
+
+    fn confirm_observation(
+        &self,
+        native: &str,
+        started: Instant,
+        finished: Instant,
+        require_all: bool,
+    ) -> Result<SetConfirmation, ApiError> {
         let bad = || {
             error(
                 ErrorCode::BackendUnavailable,
@@ -196,6 +245,7 @@ impl StagedSets {
         }
         let lines = native.lines().collect::<Vec<_>>();
         let mut lower = BTreeMap::new();
+        let mut seen = BTreeSet::new();
         for (name, authority, v4) in self.names.entries() {
             let header = format!("\tset {name} {{");
             let indices = lines
@@ -292,23 +342,30 @@ impl StagedSets {
                 let until = started
                     .checked_add(Duration::from_millis(remaining.saturating_sub(11)))
                     .ok_or_else(bad)?;
-                if upper > expiry
-                    || until <= finished
-                    || lower.insert((authority, address), until).is_some()
-                {
+                if upper > expiry || !seen.insert((authority, address)) {
                     return Err(bad());
                 }
+                if until <= finished {
+                    if require_all {
+                        return Err(bad());
+                    }
+                    // Periodic policy inspection does not acknowledge grants.
+                    // An already expiring member is finite and within its
+                    // original authority, but supplies no live-source credit.
+                    continue;
+                }
+                lower.insert((authority, address), until);
             }
         }
         // Missing/expired members cannot be treated as a successful grant.
-        if lower.len() != self.wanted.len() {
+        if require_all && lower.len() != self.wanted.len() {
             return Err(bad());
         }
         Ok(SetConfirmation { lower })
     }
 }
 
-fn duration_ms(mut value: &str) -> Option<u64> {
+pub(crate) fn duration_ms(mut value: &str) -> Option<u64> {
     if value.is_empty() {
         return None;
     }

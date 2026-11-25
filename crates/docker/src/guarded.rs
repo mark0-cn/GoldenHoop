@@ -8,7 +8,9 @@ use goldenhoop_egress::{
 };
 use serde::{Deserialize, Serialize};
 use std::net::{Ipv4Addr, Ipv6Addr};
+mod policy;
 mod protection;
+pub use policy::VerifiedPolicyLease;
 mod recovery;
 mod source;
 pub use protection::QuarantineProtection;

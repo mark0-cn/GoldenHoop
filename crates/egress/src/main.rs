@@ -18,6 +18,7 @@ mod server {
         Collected(goldenhoop_egress::CollectionReceipt),
         BoundSource(goldenhoop_egress::SourceBindingReceipt),
         Binding(goldenhoop_egress::ProtectedBindingReceipt),
+        Effective(goldenhoop_egress::EffectivePolicyReceipt),
     }
 
     async fn execute(
@@ -150,6 +151,32 @@ mod server {
                     ));
                 }
                 return Ok(Reply::Binding(receipt));
+            }
+            Request::InspectPolicy { expected_revision } => {
+                let bound = native_context.as_ref().ok_or_else(|| {
+                    ApiError::new(
+                        ErrorCode::InvalidState,
+                        "bind original native lifetime before policy inspection",
+                    )
+                })?;
+                bound.validate_at(chrono::Utc::now())?;
+                if !frontend.as_ref().is_some_and(|f| f.is_running()) {
+                    return Err(ApiError::new(
+                        ErrorCode::InvalidState,
+                        "protected DNS frontend is not running",
+                    ));
+                }
+                let receipt = manager.inspect_policy(expected_revision).await?;
+                if receipt.binding.expires_at != bound.expires_at
+                    || receipt.binding.allocation.owner() != bound.allocation.owner()
+                    || !frontend.as_ref().is_some_and(|f| f.is_running())
+                {
+                    return Err(ApiError::new(
+                        ErrorCode::BackendUnavailable,
+                        "effective policy frontend or original context changed",
+                    ));
+                }
+                return Ok(Reply::Effective(receipt));
             }
             Request::ProtectDestinations {
                 expected_revision,

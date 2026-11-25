@@ -29,6 +29,9 @@ pub use destinations::{DestinationClass, DestinationScope, ProtectedDestinations
 mod destination_plan;
 pub use destination_plan::{DestinationDefinition, DestinationListener, DestinationPlan};
 mod plan;
+mod policy_binding;
+pub mod policy_readback;
+pub use policy_binding::EffectivePolicyReceipt;
 pub mod quarantine;
 pub use plan::{Allocation, Config, DnsBinding, DnsBindings, LEASE_SECONDS, Plan};
 #[cfg(target_os = "linux")]
