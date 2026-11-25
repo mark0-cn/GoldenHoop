@@ -125,7 +125,7 @@ class Contract:
     def owned(self,obj):
         labels=obj.get('Labels',obj.get('Config',{}).get('Labels',{}))
         assert labels.get('dev.goldenhoop.installation')==self.installation
-        assert labels.get('dev.goldenhoop.role') in ('sandbox','bootstrap','agent-bundle','egress-network','network-provider-peer','network-provider-audit'),labels
+        assert labels.get('dev.goldenhoop.role') in ('sandbox','bootstrap','agent-bundle','egress-network','network-provider-peer','network-provider-audit','native-probe'),labels
         return labels
 
     def cleanup(self):

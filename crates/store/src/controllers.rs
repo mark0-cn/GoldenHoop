@@ -1,7 +1,8 @@
 //! Durable trusted-controller identity and dispatch fences; never packet grants.
 use super::*;
 use goldenhoop_egress::{
-    COLLECTION_SECONDS, ControllerPlan, ControllerPurpose, native::NativeBridgePlan,
+    COLLECTION_SECONDS, ControllerPlan, ControllerPurpose, HostProcessPlan, ProbePlan,
+    ProbePurpose, native::NativeBridgePlan,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,8 +36,8 @@ pub struct NetworkController {
     pub sandbox_id: Uuid,
     pub allocation_generation: Uuid,
     pub controller_generation: Uuid,
-    pub network_id: String,
-    pub plan: ControllerPlan,
+    pub network_id: Option<String>,
+    pub plan: HostProcessPlan,
     pub revision: u64,
     pub phase: ControllerPhase,
     pub container_id: Option<String>,
@@ -60,14 +61,18 @@ fn valid_id(id: &str) -> bool {
 impl NetworkController {
     fn validate(&self, installation: Uuid) -> Result<(), ApiError> {
         self.plan.validate().map_err(|_| internal())?;
-        let identity = &self.plan.native.identity;
+        let identity = self.plan.identity();
         if self.installation_id != installation
             || self.installation_id != identity.installation_id
             || self.sandbox_id != identity.sandbox_id
             || self.allocation_generation != identity.generation
             || self.controller_generation.is_nil()
-            || self.plan.controller_generation != Some(self.controller_generation)
-            || !valid_id(&self.network_id)
+            || self.plan.generation() != Some(self.controller_generation)
+            || self.network_id.as_deref().is_some_and(|v| !valid_id(v))
+            || match &self.plan {
+                HostProcessPlan::Controller(_) => self.network_id.is_none(),
+                HostProcessPlan::Probe(p) => self.network_id != p.network_id,
+            }
             || self.revision > i64::MAX as u64
             || self.container_id.as_deref().is_some_and(|s| !valid_id(s))
             || [self.create_token, self.start_token, self.collection_token]
@@ -188,28 +193,80 @@ async fn live(
 ) -> Result<(), ApiError> {
     value.plan.validate_dispatch_at(Utc::now())?;
     let network = super::networks::source(tx, value.sandbox_id, value.installation_id).await?;
-    let native = network.native_binding().ok_or_else(conflict)?;
     let sandbox = sqlx::query("SELECT * FROM sandboxes WHERE id=?")
         .bind(value.sandbox_id.to_string())
         .fetch_one(&mut **tx)
         .await
         .map_err(db)?;
     let sandbox = sandbox_row(&sandbox)?;
+    if let HostProcessPlan::Probe(plan) = &value.plan {
+        if network.generation != value.allocation_generation
+            || sandbox.sandbox.profile != plan.identity.profile
+            || sandbox.sandbox.expires_at != plan.expires_at
+            || sandbox.sandbox.cleanup == CleanupState::Complete
+            || network.native_binding().is_some()
+        {
+            return Err(conflict());
+        }
+        match plan.purpose {
+            ProbePurpose::Discover => {
+                if network.phase != NetworkPhase::Provisioning
+                    || network.token != plan.provisioning_token
+                    || sandbox.sandbox.desired_state != DesiredState::Running
+                    || !matches!(
+                        sandbox.sandbox.state,
+                        SandboxState::Pending | SandboxState::Starting
+                    )
+                    || sandbox.handle.is_some()
+                    || sandbox.ever_running
+                {
+                    return Err(conflict());
+                }
+            }
+            ProbePurpose::ObserveAbsence => {
+                if network.phase != NetworkPhase::Collecting
+                    || (sandbox.sandbox.desired_state != DesiredState::Terminated
+                        && !goldenhoop_core::expired(&sandbox.sandbox, Utc::now())
+                        && (sandbox.ever_running || sandbox.sandbox.state != SandboxState::Failed))
+                    || super::networks::provisioning_token_optional(
+                        tx,
+                        value.sandbox_id,
+                        value.allocation_generation,
+                        value.installation_id,
+                    )
+                    .await?
+                        != plan.provisioning_token
+                {
+                    return Err(conflict());
+                }
+            }
+        }
+        if network
+            .network_id
+            .as_ref()
+            .is_some_and(|id| Some(id) != plan.network_id.as_ref())
+        {
+            return Err(conflict());
+        }
+        return Ok(());
+    }
+    let plan = value.plan.controller()?;
+    let native = network.native_binding().ok_or_else(conflict)?;
     if network.generation != value.allocation_generation
-        || native.network_id != value.network_id
-        || fingerprint(&native.allocation)? != fingerprint(&value.plan.native.allocation)?
-        || sandbox.sandbox.profile != value.plan.native.identity.profile
-        || sandbox.sandbox.expires_at != value.plan.native.expires_at
+        || Some(&native.network_id) != value.network_id.as_ref()
+        || fingerprint(&native.allocation)? != fingerprint(&plan.native.allocation)?
+        || sandbox.sandbox.profile != plan.native.identity.profile
+        || sandbox.sandbox.expires_at != plan.native.expires_at
         || sandbox.sandbox.cleanup == CleanupState::Complete
     {
         return Err(conflict());
     }
-    match value.plan.purpose {
+    match plan.purpose {
         ControllerPurpose::Enforce => {
             if !matches!(
                 network.phase,
                 NetworkPhase::Provisioning | NetworkPhase::Bound
-            ) || network.token != Some(value.plan.native.provisioning_token)
+            ) || network.token != Some(plan.native.provisioning_token)
                 || sandbox.sandbox.desired_state != DesiredState::Running
                 || !matches!(
                     sandbox.sandbox.state,
@@ -231,7 +288,7 @@ async fn live(
                     value.installation_id,
                 )
                 .await?
-                    != value.plan.native.provisioning_token
+                    != plan.native.provisioning_token
             {
                 return Err(conflict());
             }
@@ -258,6 +315,28 @@ pub(super) async fn require_collected(
     }
     Ok(())
 }
+pub(super) async fn check_native_probe_binding(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    id: Uuid,
+    network_id: &str,
+    installation: Uuid,
+) -> Result<(), ApiError> {
+    let rows = sqlx::query("SELECT * FROM network_controllers WHERE sandbox_id=?")
+        .bind(id.to_string())
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(db)?;
+    for value in rows {
+        let record = row(&value, installation)?;
+        if let HostProcessPlan::Probe(plan) = record.plan
+            && plan.purpose == ProbePurpose::Discover
+            && plan.network_id.as_deref() != Some(network_id)
+        {
+            return Err(conflict());
+        }
+    }
+    Ok(())
+}
 pub(super) async fn collect_all(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     id: Uuid,
@@ -273,6 +352,113 @@ pub(super) async fn collect_all(
     Ok(())
 }
 impl Store {
+    pub async fn network_controllers(&self, id: Uuid) -> Result<Vec<NetworkController>, ApiError> {
+        let rows = sqlx::query(
+            "SELECT * FROM network_controllers WHERE sandbox_id=? ORDER BY controller_generation",
+        )
+        .bind(id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db)?;
+        if rows.len() > 257 {
+            return Err(internal());
+        }
+        rows.iter().map(|v| row(v, self.installation_id)).collect()
+    }
+    /// Reserve a read-only pre-native process in the same durable lifecycle.
+    /// Its plan never carries a synthetic allocation/interface index.
+    pub async fn reserve_network_probe(
+        &self,
+        id: Uuid,
+        allocation_generation: Uuid,
+        generation: Uuid,
+        image_id: &str,
+        purpose: ProbePurpose,
+        network_id: Option<&str>,
+    ) -> Result<NetworkController, ApiError> {
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+        if let Some(existing) =
+            sqlx::query("SELECT * FROM network_controllers WHERE controller_generation=?")
+                .bind(generation.to_string())
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(db)?
+        {
+            let value = row(&existing, self.installation_id)?;
+            if value.sandbox_id != id
+                || value.allocation_generation != allocation_generation
+                || value.plan.image_id() != image_id
+                || value.network_id.as_deref() != network_id
+                || !matches!(&value.plan,HostProcessPlan::Probe(p) if p.purpose==purpose)
+            {
+                return Err(conflict());
+            }
+            tx.commit().await.map_err(db)?;
+            return Ok(value);
+        }
+        require_collected(&mut tx, id).await?;
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM network_controllers WHERE sandbox_id=?")
+                .bind(id.to_string())
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(db)?;
+        if count >= 256 {
+            return Err(ApiError::new(
+                ErrorCode::QuotaExceeded,
+                "host process history budget exhausted",
+            ));
+        }
+        let network = super::networks::source(&mut tx, id, self.installation_id).await?;
+        if network.generation != allocation_generation || network.native_binding().is_some() {
+            return Err(conflict());
+        }
+        let sandbox = sqlx::query("SELECT * FROM sandboxes WHERE id=?")
+            .bind(id.to_string())
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(db)?;
+        let sandbox = sandbox_row(&sandbox)?;
+        let token = super::networks::provisioning_token_optional(
+            &mut tx,
+            id,
+            allocation_generation,
+            self.installation_id,
+        )
+        .await?;
+        let plan = ProbePlan {
+            purpose,
+            identity: network.identity(),
+            network_id: network_id.map(str::to_owned),
+            provisioning_token: token,
+            expires_at: sandbox.sandbox.expires_at,
+            image_id: image_id.to_owned(),
+            controller_generation: generation,
+            collection_deadline: (purpose == ProbePurpose::ObserveAbsence)
+                .then(|| Utc::now() + chrono::Duration::seconds(COLLECTION_SECONDS)),
+        };
+        let value = NetworkController {
+            installation_id: self.installation_id,
+            sandbox_id: id,
+            allocation_generation,
+            controller_generation: generation,
+            network_id: plan.network_id.clone(),
+            plan: plan.into(),
+            revision: 0,
+            phase: ControllerPhase::Reserved,
+            container_id: None,
+            create_token: None,
+            start_token: None,
+            collection_token: None,
+            absence: None,
+        };
+        value.validate(self.installation_id)?;
+        live(&mut tx, &value).await?;
+        sqlx::query("INSERT INTO network_controllers(controller_generation,sandbox_id,allocation_generation,phase,revision,payload) VALUES(?,?,?,'reserved',0,?)").bind(generation.to_string()).bind(id.to_string()).bind(allocation_generation.to_string()).bind(encode(&value)?).execute(&mut *tx).await.map_err(db)?;
+        sqlx::query("INSERT INTO network_controller_events(controller_generation,revision,payload) VALUES(?,0,?)").bind(generation.to_string()).bind(encode(&value)?).execute(&mut *tx).await.map_err(db)?;
+        tx.commit().await.map_err(db)?;
+        Ok(value)
+    }
     pub async fn network_controller(
         &self,
         id: Uuid,
@@ -393,8 +579,8 @@ impl Store {
             let value = row(&existing, self.installation_id)?;
             if value.sandbox_id != id
                 || value.allocation_generation != allocation_generation
-                || value.plan.image_id != image_id
-                || value.plan.purpose != purpose
+                || value.plan.image_id() != image_id
+                || !value.plan.controller().is_ok_and(|p| p.purpose == purpose)
             {
                 return Err(conflict());
             }
@@ -416,7 +602,7 @@ impl Store {
             .collect::<Result<Vec<_>, _>>()?;
         if previous
             .iter()
-            .filter(|record| record.plan.purpose == purpose)
+            .filter(|record| record.plan.controller().is_ok_and(|p| p.purpose == purpose))
             .count()
             >= 128
         {
@@ -441,7 +627,7 @@ impl Store {
             sandbox_id: id,
             allocation_generation,
             controller_generation: generation,
-            network_id: native.network_id,
+            network_id: Some(native.network_id),
             plan: ControllerPlan {
                 purpose,
                 collection_deadline: (purpose == ControllerPurpose::Collect)
@@ -464,7 +650,8 @@ impl Store {
                 },
                 image_id: image_id.to_owned(),
                 controller_generation: Some(generation),
-            },
+            }
+            .into(),
             revision: 0,
             phase: ControllerPhase::Reserved,
             container_id: None,

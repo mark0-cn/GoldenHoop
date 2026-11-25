@@ -53,6 +53,16 @@ class Contract(ProviderContract):
 
     def owned(self, obj):
         labels = obj.get('Labels', obj.get('Config', {}).get('Labels', {}))
+        if labels.get('dev.goldenhoop.role') == 'native-probe':
+            super().owned(obj)
+            plan=json.loads(labels['dev.goldenhoop.probe-plan'])
+            with closing(sqlite3.connect(self.database.as_uri()+'?mode=ro',uri=True,timeout=2)) as connection:
+                row=connection.execute('SELECT payload FROM network_controllers WHERE sandbox_id=? AND controller_generation=?',(self.sandbox,plan['controller_generation'])).fetchone()
+                assert row;record=json.loads(row[0])
+            assert record['plan']==plan and (record['container_id'] is None or record['container_id']==obj['Id'])
+            assert obj['Image']==obj['Config']['Image']==plan['image_id']
+            assert obj['Name']=='/goldenhoop-probe-'+plan['identity']['generation'].replace('-','')+'-'+plan['controller_generation'].replace('-','')
+            return labels
         if labels.get('dev.goldenhoop.role') != 'egress-controller':
             return super().owned(obj)
         assert labels['dev.goldenhoop.installation'] == self.installation

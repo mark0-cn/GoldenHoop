@@ -260,6 +260,16 @@ pub(super) async fn provisioning_token(
     generation: Uuid,
     installation: Uuid,
 ) -> Result<Uuid, ApiError> {
+    provisioning_token_optional(tx, id, generation, installation)
+        .await?
+        .ok_or_else(internal)
+}
+pub(super) async fn provisioning_token_optional(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    id: Uuid,
+    generation: Uuid,
+    installation: Uuid,
+) -> Result<Option<Uuid>, ApiError> {
     let rows=sqlx::query("SELECT payload FROM network_allocation_events WHERE sandbox_id=? ORDER BY revision LIMIT 128").bind(id.to_string()).fetch_all(&mut **tx).await.map_err(db)?;
     for row in rows {
         let value: NetworkAllocation = decode(row.try_get("payload").map_err(db)?)?;
@@ -268,10 +278,10 @@ pub(super) async fn provisioning_token(
             return Err(internal());
         }
         if value.phase == NetworkPhase::Provisioning {
-            return value.token.ok_or_else(internal);
+            return value.token.map(Some).ok_or_else(internal);
         }
     }
-    Err(internal())
+    Ok(None)
 }
 pub(super) async fn save(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
@@ -535,6 +545,14 @@ impl Store {
             return Ok(value);
         }
         provisionable(&mut tx, id, true).await?;
+        super::controllers::require_collected(&mut tx, id).await?;
+        super::controllers::check_native_probe_binding(
+            &mut tx,
+            id,
+            &binding.network_id,
+            self.installation_id,
+        )
+        .await?;
         native_available(&mut tx, &value, &binding).await?;
         value.network_id = Some(binding.network_id.clone());
         value.native = Some(binding);

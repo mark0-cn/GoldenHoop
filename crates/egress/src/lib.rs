@@ -6,7 +6,14 @@ pub use binding::ProtectedBindingReceipt;
 pub mod controller;
 pub use collection::CollectionReceipt;
 mod controller_plan;
+mod probe;
 pub use controller_plan::{COLLECTION_SECONDS, ControllerPlan, ControllerPurpose};
+#[cfg(target_os = "linux")]
+pub use probe::observe_probe;
+pub use probe::{
+    HostProcessPlan, HostPurpose, NativeProbe, ProbeAbsence, ProbeObservation, ProbePlan,
+    ProbePurpose,
+};
 pub mod dns;
 mod identity;
 pub use identity::NetworkIdentity;

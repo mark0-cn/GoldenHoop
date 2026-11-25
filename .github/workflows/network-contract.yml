@@ -29,6 +29,13 @@ jobs:
         run: python3 -B tests/quarantine_readback_contract.py --binary target/debug/examples/network_allocation --readback-binary target/debug/examples/quarantine_readback --work-dir .test-work --output evidence/quarantine-readback.json
       - name: Verify durable controller epochs, dispatch recovery, native binding and collection
         run: python3 -B tests/controller_provider_contract.py --binary target/debug/examples/network_allocation --work-dir .test-work --output evidence/network-provider.json
+      - name: Verify pre-native probe process loss and read-only worker collection
+        shell: bash
+        run: |
+          set -euo pipefail
+          for mode in reserve create-loss start-loss table-blocked; do
+            python3 -B tests/native_probe_contract.py --binary target/debug/examples/network_allocation --worker-binary target/debug/goldenhoopd --work-dir .test-work --mode "$mode" --output "evidence/native-probe-$mode.json"
+          done
       - name: Verify production worker collection of actual expired owned rules
         run: python3 -B tests/worker_network_recovery_contract.py --binary target/debug/examples/network_allocation --worker-binary target/debug/goldenhoopd --work-dir .test-work --output evidence/worker-network-recovery.json --remove-image
       - name: Verify all owned prerequisite resources are absent
@@ -40,6 +47,7 @@ jobs:
           test -z "$remaining"
           test -z "$(docker ps -a --filter label=dev.goldenhoop.test=network-provider --format '{{.ID}}')"
           test -z "$(docker ps -a --filter label=dev.goldenhoop.role=egress-controller --format '{{.ID}}')"
+          test -z "$(docker ps -a --filter label=dev.goldenhoop.role=native-probe --format '{{.ID}}')"
           test -z "$(docker network ls --filter label=dev.goldenhoop.role=egress-network --format '{{.ID}}')"
           test -z "$(docker volume ls --filter label=dev.goldenhoop.role=agent-bundle --format '{{.Name}}')"
           if docker image inspect goldenhoop-network-fixture:test >/dev/null 2>&1; then

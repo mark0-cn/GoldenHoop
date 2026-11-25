@@ -430,6 +430,32 @@ impl DockerNetworkProvider {
         }
         Ok(Some(observation))
     }
+    /// A reserved, never-dispatched allocation has no creation token. Any
+    /// object at its exact derived name blocks absence; it is never deleted.
+    pub async fn reserved_name_absent(&self, identity: &NetworkIdentity) -> Result<bool, ApiError> {
+        identity.validate()?;
+        let name = identity.network_name();
+        let absent = !self
+            .inventory("name", &name)
+            .await?
+            .iter()
+            .any(|v| v.name.as_deref() == Some(&name));
+        if !absent {
+            return Ok(false);
+        }
+        match tokio::time::timeout(
+            Duration::from_secs(15),
+            self.docker.inspect_network(&name, None),
+        )
+        .await
+        .map_err(|_| unknown())?
+        .map_err(backend)
+        {
+            Err(e) if e.code == ErrorCode::NotFound => Ok(true),
+            Ok(_) => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
     /// Only after a newly committed provisioning dispatch. Never call this to
     /// recover a lost response: lookup the journaled name and owner instead.
     pub async fn create_fresh(&self, plan: &NetworkPlan) -> Result<NetworkObservation, ApiError> {

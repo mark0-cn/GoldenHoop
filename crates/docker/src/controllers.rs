@@ -32,6 +32,7 @@ const PATH: &str = "/usr/local/bin/goldenhoop-egress";
 const ENV: &str = "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 const MEMORY: i64 = 128 * 1024 * 1024;
 mod inspection;
+mod probes;
 use inspection::{observe, request};
 #[cfg(test)]
 mod tests;

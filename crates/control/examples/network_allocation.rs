@@ -1,6 +1,8 @@
 //! Private allocation/controller contracts; trusted-agent bootstrap is explicit.
 #[path = "network_allocation/bootstrap.rs"]
 mod bootstrap;
+#[path = "network_allocation/probe.rs"]
+mod probe;
 use chrono::{Duration, Utc};
 use clap::{Parser, ValueEnum};
 use goldenhoop_docker::{
@@ -27,6 +29,10 @@ enum Action {
     Init,
     Recover,
     Native,
+    AutoNative,
+    ProbeReserve,
+    ProbeCreate,
+    ProbeRun,
     Negative,
     RejectNonempty,
     Collect,
@@ -87,6 +93,12 @@ struct Args {
     controller_resume_binding_json: Option<String>,
     #[arg(long)]
     recovery_dns_upstream: Option<std::net::SocketAddr>,
+    #[arg(long)]
+    probe_generation: Option<Uuid>,
+    #[arg(long)]
+    fault_after_probe_create: bool,
+    #[arg(long)]
+    fault_after_probe_start: bool,
     #[arg(long)]
     workload_image: Option<String>,
 }
@@ -156,7 +168,9 @@ async fn collect_controller_journal(
         )
         .await?;
     let id = collecting.container_id.as_deref().ok_or_else(invalid)?;
-    let removed = controllers.collect(&collecting.plan, id).await?;
+    let removed = controllers
+        .collect(collecting.plan.controller()?, id)
+        .await?;
     let done = if collecting.phase == ControllerPhase::Collected {
         collecting.clone()
     } else {
@@ -175,11 +189,16 @@ async fn collect_controller_journal(
             )
             .await?
     };
-    let replay = controllers.collect(&collecting.plan, id).await?;
+    let replay = controllers
+        .collect(collecting.plan.controller()?, id)
+        .await?;
     require(
         removed.provider_absent
             && replay.provider_absent
-            && controllers.lookup(&collecting.plan).await?.is_none(),
+            && controllers
+                .lookup(collecting.plan.controller()?)
+                .await?
+                .is_none(),
     )?;
     Ok(
         json!({"removed":removed,"repeated_collection":replay,"journal":done,"native_collection_attested":false}),
@@ -219,8 +238,10 @@ async fn exercise_controller(
             .begin_controller_create(id, generation, reserved.revision)
             .await?;
         frame(&json!({"controller_plan":creating.plan,"controller_intent":creating}));
-        let controllers = DockerControllerProvider::connect(&creating.plan.image_id).await?;
-        let created = controllers.create_fresh(&creating.plan).await?;
+        let controllers = DockerControllerProvider::connect(creating.plan.image_id()).await?;
+        let created = controllers
+            .create_fresh(creating.plan.controller()?)
+            .await?;
         frame(&json!({"created_controller":created}));
         if args.fault_after_controller {
             eprintln!(
@@ -242,7 +263,7 @@ async fn exercise_controller(
     }
     require(args.controller_image.is_none())?;
     let mut journal = store.network_controller(id, generation).await?;
-    let plan = journal.plan.clone();
+    let plan = journal.plan.controller()?.clone();
     let controllers = DockerControllerProvider::connect(&plan.image_id).await?;
     frame(&json!({"controller_plan":plan,"journal":journal}));
     let actual = controllers.lookup(&plan).await?;
@@ -394,8 +415,21 @@ async fn exercise(args: &Args, store: &Store) -> Result<Value, ApiError> {
             | Action::ControllerCollect
             | Action::ControllerStartIntent
     );
+    let probing = matches!(
+        args.action,
+        Action::AutoNative | Action::ProbeReserve | Action::ProbeCreate | Action::ProbeRun
+    );
+    require(
+        probing
+            || (args.probe_generation.is_none()
+                && !args.fault_after_probe_create
+                && !args.fault_after_probe_start),
+    )?;
+    require(!args.fault_after_probe_create || matches!(args.action, Action::ProbeCreate))?;
+    require(!args.fault_after_probe_start || matches!(args.action, Action::ProbeRun))?;
     require(
         controller
+            || probing
             || (args.controller_image.is_none()
                 && args.controller_generation.is_none()
                 && !args.fault_after_controller),
@@ -476,6 +510,9 @@ async fn exercise(args: &Args, store: &Store) -> Result<Value, ApiError> {
     let id = args.sandbox.ok_or_else(invalid)?;
     let record = store.network_allocation(id).await?;
     let plan = plan(store, &record).await?;
+    if probing {
+        return Box::pin(probe::run(args, store, &provider, &record, &plan)).await;
+    }
     if controller {
         let future = Box::pin(exercise_controller(args, store, &provider, &record, &plan));
         if args.bootstrap_workload {
@@ -485,6 +522,9 @@ async fn exercise(args: &Args, store: &Store) -> Result<Value, ApiError> {
     }
     match args.action {
         Action::Init => unreachable!(),
+        Action::AutoNative | Action::ProbeReserve | Action::ProbeCreate | Action::ProbeRun => {
+            unreachable!("handled above")
+        }
         Action::ControllerCreate
         | Action::ControllerRecover
         | Action::ControllerRun

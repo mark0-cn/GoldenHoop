@@ -80,7 +80,7 @@ class Contract(RecoveryContract):
         try:
             return ProviderContract.invoke(self, action, *extra, expected=expected)
         except BaseException:
-            if action in ('controller-create','controller-run','controller-resume') and self.report['invocations'][-1]['timed_out']:
+            if action in ('auto-native','controller-create','controller-run','controller-resume') and self.report['invocations'][-1]['timed_out']:
                 self.creation_uncertain = True
                 self.settled = False
             raise
@@ -172,7 +172,11 @@ class Contract(RecoveryContract):
             recovered = self.invoke('recover')
             native = self.audit()
             assert native['bridge_exists'] and native['ifindex']>0 and not native['owned_tables']
-            self.invoke('native','--native-ifindex',str(native['ifindex']))
+            automatic=self.invoke('auto-native','--controller-image',self.controller_image_id,'--probe-generation',str(uuid.uuid4()))
+            assert automatic['binding']['allocation']['ifindex']==native['ifindex'] and not automatic['manual_ifindex_input']
+            assert automatic['probe']['phase']=='collected' and automatic['probe']['plan']['purpose']=='discover' and 'native' not in automatic['probe']['plan']
+            assert automatic['observation']['value']['allocation']==automatic['binding']['allocation']
+            self.report['automatic_native_discovery']=automatic
             self.report['native_checkpoint_recovered_from_file_database'] = self.records()['network']
             self.check('a_real_file_database_and_owned_native_checkpoint_precede_runtime_creation')
             preflight=self.docker('run','--rm','--name','goldenhoop-bootstrap-preflight-'+self.attempt,

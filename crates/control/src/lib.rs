@@ -1,5 +1,6 @@
 //! Authenticated public API and separately supervised runtime worker.
 pub mod api;
+pub mod host_process;
 pub mod http;
 pub mod worker;
 

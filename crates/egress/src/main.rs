@@ -236,6 +236,22 @@ mod server {
     pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         if std::env::args_os()
             .nth(1)
+            .is_some_and(|v| v == "--probe-native")
+            && std::env::args_os().len() == 3
+        {
+            let raw = std::env::args().nth(2).ok_or("missing probe plan")?;
+            if raw.len() as u64 > MAX_FRAME {
+                return Err("oversized probe plan".into());
+            }
+            let plan: goldenhoop_egress::ProbePlan = serde_json::from_str(&raw)?;
+            let observed = goldenhoop_egress::observe_probe(plan).await?;
+            let mut bytes = serde_json::to_vec(&observed)?;
+            bytes.push(b'\n');
+            tokio::io::stdout().write_all(&bytes).await?;
+            return Ok(());
+        }
+        if std::env::args_os()
+            .nth(1)
             .is_some_and(|arg| arg == "--probe-dns-sets")
             && std::env::args_os().len() == 2
         {

@@ -5,7 +5,7 @@ use goldenhoop_egress::{
     CollectionReceipt,
     controller::{Reply, Request},
 };
-use goldenhoop_store::{ControllerAbsence, NetworkAbsence, NetworkController, NetworkPhase};
+use goldenhoop_store::{NetworkAbsence, NetworkController, NetworkPhase};
 use serde_json::Value;
 
 fn unknown() -> ApiError {
@@ -15,51 +15,115 @@ fn unknown() -> ApiError {
     )
 }
 impl Worker {
-    async fn settle_controller(&self, mut record: NetworkController) -> Result<(), ApiError> {
-        let provider = DockerControllerProvider::connect(&record.plan.image_id).await?;
-        record = self
-            .store
-            .begin_controller_collection(
-                record.sandbox_id,
-                record.controller_generation,
-                record.revision,
-            )
-            .await?;
-        let observed = provider.lookup(&record.plan).await?;
-        if record.container_id.is_none() {
-            if let Some(observed) = observed {
-                record = self
-                    .store
-                    .record_controller_created(
-                        record.sandbox_id,
-                        record.controller_generation,
-                        record.create_token.ok_or_else(unknown)?,
-                        &observed.container_id,
-                    )
-                    .await?;
-            } else if record.create_token.is_some() {
+    async fn collect_pre_native(
+        &self,
+        stored: &StoredSandbox,
+        network: &goldenhoop_store::NetworkAllocation,
+        image: &str,
+    ) -> Result<(), ApiError> {
+        use goldenhoop_egress::{HostProcessPlan, ProbeObservation, ProbePurpose};
+        let id = stored.sandbox.id;
+        let history = self.store.network_allocation_history(id, None, 128).await?;
+        let dispatched = history
+            .iter()
+            .find(|r| r.phase == NetworkPhase::Provisioning);
+        let original_token = dispatched
+            .map(|v| v.token.ok_or_else(unknown))
+            .transpose()?;
+        let processes = self.store.network_controllers(id).await?;
+        if processes
+            .iter()
+            .any(|p| matches!(p.plan, HostProcessPlan::Controller(_)))
+        {
+            return Err(unknown());
+        }
+        let mut known = network
+            .network_id
+            .iter()
+            .cloned()
+            .chain(processes.iter().filter_map(|p| p.network_id.clone()))
+            .collect::<std::collections::BTreeSet<_>>();
+        if known.len() > 1 {
+            return Err(unknown());
+        }
+        let provider = DockerNetworkProvider::connect().await?;
+        let plan = original_token.map(|provisioning_token| NetworkPlan {
+            identity: network.identity(),
+            provisioning_token,
+            expires_at: stored.sandbox.expires_at,
+        });
+        if let Some(plan) = &plan {
+            if let Some(actual) = provider.lookup(plan).await? {
+                if actual.attached_endpoints != 0
+                    || known
+                        .iter()
+                        .next()
+                        .is_some_and(|id| id != &actual.network_id)
+                {
+                    return Err(unknown());
+                }
+                known.insert(actual.network_id);
+            } else if known.is_empty() {
                 return Err(unknown());
             }
+        } else if !known.is_empty() || !provider.reserved_name_absent(&network.identity()).await? {
+            return Err(unknown());
         }
-        let absent = if let Some(id) = &record.container_id {
-            provider.collect(&record.plan, id).await?.provider_absent
-        } else {
-            true
+        let network_id = known.iter().next().map(String::as_str);
+        // Record known provider identity before removal, including a crash
+        // between that removal and dispatch of the read-only absence probe.
+        let reserved = self
+            .store
+            .reserve_network_probe(
+                id,
+                network.generation,
+                Uuid::new_v4(),
+                image,
+                ProbePurpose::ObserveAbsence,
+                network_id,
+            )
+            .await?;
+        if let Some(plan) = &plan
+            && !provider
+                .remove_empty(plan, network_id)
+                .await?
+                .provider_absent
+        {
+            return Err(unknown());
+        }
+        let (observed, _) = crate::host_process::run_probe(&self.store, &reserved).await?;
+        let ProbeObservation::Absence(receipt) = observed else {
+            return Err(unknown());
         };
+        if !receipt.bridge_absent || !receipt.owned_tables_absent {
+            return Err(unknown());
+        }
+        if let Some(plan) = &plan {
+            if provider.lookup(plan).await?.is_some() {
+                return Err(unknown());
+            }
+        } else if !provider.reserved_name_absent(&network.identity()).await? {
+            return Err(unknown());
+        }
         self.store
-            .confirm_controller_absence(
-                record.sandbox_id,
-                record.controller_generation,
-                record.collection_token.ok_or_else(unknown)?,
-                ControllerAbsence {
-                    container_id: record.container_id.clone(),
-                    creation_settled: true,
-                    start_settled: true,
-                    provider_absent: absent,
-                    observed_at: Utc::now(),
+            .confirm_network_absence(
+                id,
+                network.generation,
+                network.token.ok_or_else(unknown)?,
+                NetworkAbsence {
+                    provisioning_settled: true,
+                    endpoints_absent: true,
+                    network_absent: true,
+                    bridge_absent: true,
+                    owned_tables_absent: true,
+                    observed_at: receipt.observed_at,
                 },
             )
             .await?;
+        Ok(())
+    }
+    async fn settle_controller(&self, record: NetworkController) -> Result<(), ApiError> {
+        crate::host_process::collect(&self.store, record).await?;
         Ok(())
     }
     pub(super) async fn collect_network(&self, stored: &StoredSandbox) -> Result<(), ApiError> {
@@ -84,10 +148,12 @@ impl Worker {
                 "configure a pinned egress controller image to collect owned networks",
             )
         })?;
-        let native = network.native_binding().ok_or_else(unknown)?;
         if let Some(active) = self.store.active_network_controller(id).await? {
             self.settle_controller(active).await?;
         }
+        let Some(native) = network.native_binding() else {
+            return self.collect_pre_native(stored, &network, image).await;
+        };
         let token = self
             .store
             .network_allocation_history(id, None, 128)
@@ -117,7 +183,9 @@ impl Worker {
             .begin_controller_create(id, reserved.controller_generation, reserved.revision)
             .await?;
         let controllers = DockerControllerProvider::connect(image).await?;
-        let actual = controllers.create_fresh(&creating.plan).await?;
+        let actual = controllers
+            .create_fresh(creating.plan.controller()?)
+            .await?;
         let created = self
             .store
             .record_controller_created(
@@ -132,7 +200,7 @@ impl Worker {
             .begin_controller_start(id, created.controller_generation, created.revision)
             .await?;
         let mut session = controllers
-            .start_created(&starting.plan, &actual.container_id)
+            .start_created(starting.plan.controller()?, &actual.container_id)
             .await?;
         let running = self
             .store

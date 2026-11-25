@@ -81,29 +81,37 @@ pub(super) fn observe(
     value: &ContainerInspectResponse,
     expected: &ContainerCreateBody,
 ) -> Result<ControllerObservation, ApiError> {
+    observe_process(&plan.name(), &plan.image_id, value, expected)
+}
+pub(super) fn observe_process(
+    name: &str,
+    image: &str,
+    value: &ContainerInspectResponse,
+    expected: &ContainerCreateBody,
+) -> Result<ControllerObservation, ApiError> {
     let container = value.id.as_deref().filter(|v| id(v)).ok_or_else(unknown)?;
     let config = value.config.as_ref().ok_or_else(unknown)?;
     let host = value.host_config.as_ref().ok_or_else(unknown)?;
     let state = value.state.as_ref().ok_or_else(unknown)?;
     let wanted = expected.host_config.as_ref().expect("fixed host config");
-    if value.name.as_deref() != Some(format!("/{}", plan.name()).as_str())
-        || value.image.as_deref() != Some(&plan.image_id)
+    if value.name.as_deref() != Some(format!("/{name}").as_str())
+        || value.image.as_deref() != Some(image)
         || value.path.as_deref() != Some(PATH)
         || value.args.as_ref()
             != Some(&expected.entrypoint.as_ref().expect("fixed entrypoint")[1..].to_vec())
         || value.mounts.as_ref().is_none_or(|v| !v.is_empty())
-        || config.image.as_deref() != Some(&plan.image_id)
+        || config.image.as_deref() != Some(image)
         || config.labels != expected.labels
         || config.user != expected.user
         || config.entrypoint != expected.entrypoint
         || config.cmd.as_ref().is_some_and(|v| !v.is_empty())
         || config.working_dir != expected.working_dir
         || config.env != expected.env
-        || config.attach_stdin != Some(true)
-        || config.attach_stdout != Some(true)
-        || config.attach_stderr != Some(true)
-        || config.open_stdin != Some(true)
-        || config.stdin_once != Some(true)
+        || config.attach_stdin != expected.attach_stdin
+        || config.attach_stdout != expected.attach_stdout
+        || config.attach_stderr != expected.attach_stderr
+        || config.open_stdin != expected.open_stdin
+        || config.stdin_once != expected.stdin_once
         || config.tty != Some(false)
         || config.volumes.as_ref().is_some_and(|v| !v.is_empty())
         || config.exposed_ports.as_ref().is_some_and(|v| !v.is_empty())
@@ -124,7 +132,18 @@ pub(super) fn observe(
         || host.pids_limit != wanted.pids_limit
         || host.auto_remove != Some(false)
         || host.restart_policy != wanted.restart_policy
-        || host.log_config.as_ref().and_then(|l| l.typ.as_deref()) != Some("none")
+        || host.log_config.as_ref().and_then(|l| l.typ.as_ref())
+            != wanted.log_config.as_ref().and_then(|l| l.typ.as_ref())
+        || host
+            .log_config
+            .as_ref()
+            .and_then(|l| l.config.as_ref())
+            .filter(|m| !m.is_empty())
+            != wanted
+                .log_config
+                .as_ref()
+                .and_then(|l| l.config.as_ref())
+                .filter(|m| !m.is_empty())
         || host.pid_mode.as_ref().is_some_and(|v| !v.is_empty())
         || host.uts_mode.as_ref().is_some_and(|v| !v.is_empty())
         || host.userns_mode.as_ref().is_some_and(|v| !v.is_empty())
@@ -157,7 +176,7 @@ pub(super) fn observe(
     }
     Ok(ControllerObservation {
         container_id: container.into(),
-        image_id: plan.image_id.clone(),
+        image_id: image.to_owned(),
         status,
         running,
         paused: state.paused.ok_or_else(unknown)?,
