@@ -370,6 +370,9 @@ pub struct ControllerSession {
     client: Option<Channel>,
 }
 impl ControllerSession {
+    pub(crate) fn plan(&self) -> &ControllerPlan {
+        &self.plan
+    }
     pub fn is_uncertain(&self) -> bool {
         self.client.as_ref().is_none_or(Client::is_uncertain)
     }

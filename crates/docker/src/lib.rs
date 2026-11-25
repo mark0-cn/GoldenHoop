@@ -17,6 +17,7 @@ use uuid::Uuid;
 
 mod contexts;
 mod controllers;
+mod guarded;
 mod isolated;
 mod networks;
 mod sessions;
@@ -24,6 +25,7 @@ pub use controllers::{
     ControllerObservation, ControllerPlan, ControllerRemoval, ControllerSession,
     DockerControllerProvider,
 };
+pub use guarded::{WorkloadEndpoint, WorkloadNetworkPlan};
 pub use networks::{DockerNetworkProvider, NetworkObservation, NetworkPlan, NetworkRemoval};
 struct ProbeSupport {
     diagnostics: bool,
@@ -364,6 +366,16 @@ impl DockerDriver {
         sandbox: &Sandbox,
         request: &CreateSandbox,
     ) -> Result<RuntimeHandle, ApiError> {
+        let handle = self.prepare_runtime(sandbox, request, None).await?;
+        self.start_prepared(&handle).await
+    }
+
+    async fn prepare_runtime(
+        &self,
+        sandbox: &Sandbox,
+        request: &CreateSandbox,
+        network: Option<&WorkloadNetworkPlan>,
+    ) -> Result<RuntimeHandle, ApiError> {
         if request.resources.memory_bytes < 64 * 1024 * 1024 || request.resources.pids < 16 {
             return Err(ApiError::new(
                 ErrorCode::InvalidRequest,
@@ -415,7 +427,7 @@ impl DockerDriver {
             profile: request.profile.clone(),
             backend_ref: name.clone(),
         };
-        let body = ContainerCreateBody {
+        let mut body = ContainerCreateBody {
             image: image.id,
             user: Some("0:0".into()),
             working_dir: Some("/workspace".into()),
@@ -501,6 +513,17 @@ impl DockerDriver {
             }),
             ..Default::default()
         };
+        if let Some(network) = network {
+            body.host_config
+                .as_mut()
+                .expect("fixed host config")
+                .network_mode = Some(network.network_id.clone());
+            body.labels.as_mut().expect("fixed labels").insert(
+                guarded::NETWORK_PLAN_LABEL.into(),
+                serde_json::to_string(network)
+                    .map_err(|_| unavailable("invalid owned workload network plan"))?,
+            );
+        }
         match self
             .docker
             .create_container(
@@ -517,6 +540,7 @@ impl DockerDriver {
                     .owned(&handle)
                     .await?
                     .ok_or_else(|| unavailable("conflicting sandbox disappeared"))?;
+                guarded::match_requested_plan(&observation, network)?;
                 let labels = observation
                     .config
                     .as_ref()
@@ -537,9 +561,13 @@ impl DockerDriver {
             }
             Err(error) => return Err(backend(error)),
         }
+        Ok(handle)
+    }
+
+    async fn start_prepared(&self, handle: &RuntimeHandle) -> Result<RuntimeHandle, ApiError> {
         let outcome = async {
             let observation = self
-                .owned(&handle)
+                .owned(handle)
                 .await?
                 .ok_or_else(|| unavailable("sandbox disappeared during start"))?;
             if observation.state.as_ref().and_then(|state| state.paused) == Some(true) {
@@ -561,7 +589,7 @@ impl DockerDriver {
             }
             for _ in 0..50 {
                 if matches!(
-                    self.bridge(&handle, &AgentRequest::Ping).await,
+                    self.bridge(handle, &AgentRequest::Ping).await,
                     Ok(AgentResponse::Pong { .. })
                 ) {
                     return Ok(handle.clone());
@@ -572,7 +600,7 @@ impl DockerDriver {
         }
         .await;
         if outcome.is_err() {
-            self.remove(&handle).await?;
+            self.remove(handle).await?;
         }
         outcome
     }

@@ -1,4 +1,6 @@
-//! Allocation-only real-backend contract. No workload is attached or published.
+//! Private allocation/controller contracts; trusted-agent bootstrap is explicit.
+#[path = "network_allocation/bootstrap.rs"]
+mod bootstrap;
 use chrono::{Duration, Utc};
 use clap::{Parser, ValueEnum};
 use goldenhoop_docker::{
@@ -35,6 +37,11 @@ enum Action {
     ControllerCollect,
     ControllerStartIntent,
 }
+#[derive(Clone, Copy, ValueEnum)]
+enum ContractRuntime {
+    Runc,
+    Runsc,
+}
 #[derive(Parser)]
 struct Args {
     #[arg(long)]
@@ -65,6 +72,16 @@ struct Args {
     ttl_seconds: u64,
     #[arg(long)]
     controller_leave_quarantine: bool,
+    #[arg(long, value_enum, default_value_t=ContractRuntime::Runc)]
+    runtime: ContractRuntime,
+    #[arg(long, conflicts_with = "controller_leave_quarantine")]
+    bootstrap_workload: bool,
+    #[arg(long, requires = "bootstrap_workload")]
+    bootstrap_expect_bridge_unavailable: bool,
+    #[arg(long, requires = "bootstrap_workload")]
+    bootstrap_stop_after_prepare: bool,
+    #[arg(long)]
+    workload_image: Option<String>,
 }
 fn invalid() -> ApiError {
     ApiError::new(
@@ -300,7 +317,13 @@ async fn exercise_controller(
         let inspected=controller_call(&mut session,ControllerRequest::Inspect {}).await?;require(inspected==opened)?;
         require(controllers.create_fresh(&plan).await.is_err() && controllers.start_created(&plan,&actual.container_id).await.is_err())?;
         let quarantine=if args.controller_leave_quarantine {let observed=controller_call(&mut session,ControllerRequest::Install {}).await?;require(observed["installed"]==true && observed["revision"]==0 && observed["uncertain"]==false)?;Some(observed)} else {None};
-        Ok::<Value,ApiError>(json!({"native_alias":bound,"manager":opened,"quarantine":quarantine,"foreign_refusals":refusals,"duplicate_create_start_refused":true,"expired_local_call_did_not_fence_channel":!session.is_uncertain()}))
+        let bootstrap = if args.bootstrap_workload {
+            frame(&json!({"bootstrap_stage":"constructing_future"}));
+            let future = Box::pin(bootstrap::run(args,store,&plan,&mut session));
+            frame(&json!({"bootstrap_future_bytes":std::mem::size_of_val(&*future)}));
+            Some(future.await?)
+        } else { None };
+        Ok::<Value,ApiError>(json!({"native_alias":bound,"manager":opened,"quarantine":quarantine,"bootstrap":bootstrap,"foreign_refusals":refusals,"duplicate_create_start_refused":true,"expired_local_call_did_not_fence_channel":!session.is_uncertain()}))
     }.await;
     let exited = session.close().await;
     if result.is_err() || exited.is_err() {
@@ -327,6 +350,8 @@ async fn exercise_controller(
 
 async fn exercise(args: &Args, store: &Store) -> Result<Value, ApiError> {
     require(!args.controller_leave_quarantine || matches!(args.action, Action::ControllerRun))?;
+    require(!args.bootstrap_workload || matches!(args.action, Action::ControllerRun))?;
+    require(args.workload_image.is_none() || matches!(args.action, Action::Init))?;
     let controller = matches!(
         args.action,
         Action::ControllerCreate
@@ -355,8 +380,11 @@ async fn exercise(args: &Args, store: &Store) -> Result<Value, ApiError> {
         let driver = DockerDriver::connect(DockerConfig {
             installation_id: store.installation_id(),
             agent_image: args.agent_image.clone(),
-            profile: DockerProfile::RuncDevelopment,
-            allow_runc_development: true,
+            profile: match args.runtime {
+                ContractRuntime::Runc => DockerProfile::RuncDevelopment,
+                ContractRuntime::Runsc => DockerProfile::Gvisor,
+            },
+            allow_runc_development: matches!(args.runtime, ContractRuntime::Runc),
         })
         .await?;
         let profile = driver.probe().await;
@@ -366,7 +394,7 @@ async fn exercise(args: &Args, store: &Store) -> Result<Value, ApiError> {
                 && !profile.capabilities.contains(&Capability::NetworkPolicy),
         )?;
         let request: CreateSandbox = serde_json::from_value(
-            json!({"profile":profile.id,"image":args.agent_image,"ttl_seconds":args.ttl_seconds}),
+            json!({"profile":profile.id,"image":args.workload_image.as_ref().unwrap_or(&args.agent_image),"ttl_seconds":args.ttl_seconds}),
         )
         .map_err(|_| invalid())?;
         let created = store
@@ -415,7 +443,11 @@ async fn exercise(args: &Args, store: &Store) -> Result<Value, ApiError> {
     let record = store.network_allocation(id).await?;
     let plan = plan(store, &record).await?;
     if controller {
-        return exercise_controller(args, store, &provider, &record, &plan).await;
+        let future = Box::pin(exercise_controller(args, store, &provider, &record, &plan));
+        if args.bootstrap_workload {
+            frame(&json!({"controller_future_bytes":std::mem::size_of_val(&*future)}));
+        }
+        return future.await;
     }
     match args.action {
         Action::Init => unreachable!(),
@@ -593,7 +625,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let store = Store::open(&args.database).await?;
     frame(&json!({"installation_id":store.installation_id()}));
-    let result = exercise(&args, &store).await;
+    let future = Box::pin(exercise(&args, &store));
+    if args.bootstrap_workload {
+        frame(&json!({"exercise_future_bytes":std::mem::size_of_val(&*future)}));
+    }
+    let result = future.await;
     store.close().await;
     match result {
         Ok(value) => {
