@@ -1,11 +1,11 @@
 # M4 delivery and acceptance
 
-M4 remains incomplete. Implemented increments include actual KVM prerequisites,
-jailed guest boot, private native lifecycle and an opt-in worker backend that
-publishes only its actually probed basic capabilities. The full shared public
-contract, production image orchestration, disk/memory snapshots, templates and
-combined stage still require acceptance. M0-M3 evidence and the full M4-M6
-objective remain in the unchanged [roadmap](roadmap.md).
+M4 remains incomplete. Actual KVM prerequisites, jailed guest boot, private
+native lifecycle and the shared basic API/Python SDK/Rust CLI contract now have
+accepted exact-source hardware evidence. The opt-in backend publishes only its
+actually probed basic capabilities. Production image orchestration, disk/memory
+snapshots, templates and combined stage still require acceptance. M0-M3 evidence
+and the full M4-M6 objective remain in the unchanged [roadmap](roadmap.md).
 
 ## Pinned upstream and control boundary
 
@@ -428,3 +428,26 @@ binaries with arithmetic checks/debug assertions explicitly retained and records
 service/command readiness timing. Authentication, resource, expiry and success
 conditions remain intact. This build change does not retroactively diagnose or
 accept the failed run, and requires new complete private/public evidence.
+
+## Actual basic native private/public lifecycle accepted
+
+[Run 45911958287](https://github.com/mark0-cn/GoldenHoop/actions/runs/45911958287)
+at cae28c8 passes all 23 retained groups: six bootstrap, nine private and eight
+public. The [archive](evidence/m4-native-45911958287-archive.json) verifies all
+300 immutable source inputs and retains Passed/Complete. Public API/SDK/CLI
+execution, pause/resume, worker SIGKILL with the same VM/execution and exactly
+one side effect, artifact retention/collection and independent paused expiry
+all pass. Every owned VM/manager/export container and workflow image is
+positively collected.
+
+The actual checked-release supervisor is 7934848 bytes. Running is observed
+0.844 seconds after command submission and its guest marker is read back at
+1.087 seconds, inside the original 25-second fault-injection window. Worker
+startup/restart samples are 6.115-6.316 seconds. These measured results establish
+the optimized checked candidate's contract; the earlier Pending reports retain
+their uncertainty and are not rewritten. No authentication, resource, expiry
+or acceptance condition is weakened. Portable CI 45911858045 also passes.
+
+This accepts the basic local native lifecycle on the tested host. It does not
+accept production image preparation, disk/memory snapshot/restore identities,
+templates, hard-manager-crash recovery or the combined M4-M6 stage.
