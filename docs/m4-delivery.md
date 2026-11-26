@@ -80,3 +80,52 @@ The [pinned Rust VMM/Linux comparison](evidence/m4-kvm-ioctl-zero-argument-upstr
 The corrected [native run 45862682399](https://github.com/mark0-cn/GoldenHoop/actions/runs/45862682399) at 0e026e0d3ca39dddbd7436f4ba827f0fc9731cde passes both prerequisite groups. Its [archive](evidence/m4-native-45862682399-archive.json) verifies all 21 source inputs against that immutable commit, records actual API 12 with no errno and confirms collection of the empty VM descriptor/child. The [summary](evidence/m4-control-kvm-prerequisite-summary.json) retains the first failed run, all current source-bound results and the explicit guest/runtime limitations. [Portable CI 45862561992](https://github.com/mark0-cn/GoldenHoop/actions/runs/45862561992) passes both platforms.
 
 This is a positive hardware prerequisite on the tested hosted Linux machine. No guest started, no jailed driver/profile was published, and M4 remains incomplete under the remaining increments above.
+
+## Guest bootstrap implementation, pending hardware acceptance
+
+The next component adds Rust PID1 guest initialization and host-to-guest vsock
+transport while reusing the existing Rust agent. Guest init refuses ordinary
+host processes before mounting anything. Inside the guest it mounts private
+filesystems, enables loopback, disables new user namespaces, applies no-new-privileges,
+bounds the agent/workload process tree to 256 tasks and reaps adopted children.
+Only host CID2 may reach the reserved control port. Control frames and concurrent
+connections are bounded; unavailable vsock has no alternate transport.
+
+The private `probe-guest` path verifies root-owned image/tool ancestors and
+streams digest-checked copies with 64 KiB buffers. It persists a generation
+intent before launch, uses a separately configured cgroup v2 leaf, runs the
+matching pinned jailer with a private PID/network namespace and tracks the actual
+VMM through executable digest, UID, parent, start time, boot ID, generation,
+cgroup and pidfd. A PID file alone never grants signaling authority. Guest disks
+use an owned short path on `/var/lib`, avoiding the host's small `/run` tmpfs.
+An API or process acknowledgement does not establish guest readiness.
+
+The [pinned artifacts](../images/microvm/upstream.json) identify Firecracker
+v1.18.0 and the exact official Linux 6.18.62 guest kernel/configuration. The
+[upstream comparison](evidence/m4-guest-bootstrap-upstream-comparison.json)
+records the applied jailer/vsock contracts and exact Tokio/libc source inputs.
+The initial static build failed after GNU tests passed because libc's ioctl
+request type differs on GNU and musl; the
+[failure evidence](evidence/m4-guest-bootstrap-component-validation-linux-failed-20261126T174857Z.json)
+is retained. Fixed low loopback request numbers now use the target ABI type.
+
+The manual `Firecracker guest bootstrap` workflow prepares a trusted offline ext4
+test fixture from the `microvm-rootfs` image target. Its export container is
+never executed. Actual Rust validation must reject a corrupt kernel digest,
+boot a jailed hardware VM, obtain an authenticated guest reply, roundtrip a file,
+execute a nonce command as UID1000 and confirm privilege/task/no-NIC constraints.
+It must also confirm VMM reaping and jail/cgroup/disk collection on both branches.
+The source-fingerprinted report preserves failures and Unknown collection.
+
+This implementation does not register a public Firecracker driver/profile.
+Current hardware acceptance still requires a successful immutable-candidate run.
+Public lifecycle, expiry/recovery, disk and memory snapshots, restore identity,
+templates and combined Stage acceptance above remain required for M4.
+
+[Windows checks](evidence/m4-guest-bootstrap-component-validation-windows.json)
+pass all 269 Rust tests plus format/strict workspace lint;
+[Linux checks](evidence/m4-guest-bootstrap-component-validation-linux.json)
+pass 302 tests and the static musl guest/rootfs build. The
+[input review](evidence/m4-guest-bootstrap-local-input-review.json) verifies all
+257 inputs on each platform and isolates the later build-only concurrency bound.
+These portable/build results cannot accept the hardware gate.

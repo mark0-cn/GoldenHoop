@@ -1,9 +1,15 @@
 //! Trusted Firecracker control components. These do not advertise a runtime
 //! profile: actual jailed boot, execution and collection remain separate gates.
 #[cfg(target_os = "linux")]
+pub mod agent;
+#[cfg(target_os = "linux")]
 pub mod api;
 pub mod kvm;
+#[cfg(target_os = "linux")]
+pub mod machine;
 pub mod models;
+#[cfg(target_os = "linux")]
+pub mod vsock;
 
 use goldenhoop_protocol::ApiError;
 #[cfg(target_os = "linux")]

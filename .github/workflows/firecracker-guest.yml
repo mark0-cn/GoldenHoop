@@ -1,0 +1,41 @@
+name: Firecracker guest bootstrap
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  M4_IMAGE: goldenhoop-m4-rootfs:${{ github.run_id }}-${{ github.run_attempt }}
+  M4_OWNER: ${{ github.run_id }}-${{ github.run_attempt }}
+jobs:
+  guest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build actual Rust host bootstrap
+        run: cargo build --locked -p goldenhoop-firecracker
+      - name: Build trusted Rust guest init and unchanged agent
+        run: docker build --target microvm-rootfs --label dev.goldenhoop.task=m4-guest --label dev.goldenhoop.run="$M4_OWNER" --tag "$M4_IMAGE" --file images/agent/Dockerfile .
+      - name: Require actual jailed KVM boot, guest command, files and collection
+        run: sudo -n python3 -B tests/firecracker_guest_contract.py --source-commit "$GITHUB_SHA" --binary "$PWD/target/debug/goldenhoop-firecracker" --image "$M4_IMAGE" --owner "$M4_OWNER" --output "$PWD/evidence/firecracker-guest.json"
+      - name: Collect only the owned rootfs fixture image
+        if: always()
+        shell: python
+        run: |
+          import json, os, subprocess
+          image = os.environ['M4_IMAGE']
+          check = subprocess.run(['docker', 'image', 'inspect', image], capture_output=True)
+          if check.returncode == 0:
+              value = json.loads(check.stdout)[0]
+              assert value['Config']['Labels']['dev.goldenhoop.run'] == os.environ['M4_OWNER']
+              assert value['Config']['Labels']['dev.goldenhoop.task'] == 'm4-guest'
+              subprocess.run(['docker', 'image', 'rm', image], check=True)
+              assert subprocess.run(['docker', 'image', 'inspect', image], capture_output=True).returncode != 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: firecracker-guest
+          path: evidence/*.json
+          if-no-files-found: error

@@ -1,4 +1,5 @@
 FROM rust:1-bookworm AS build
+ENV CARGO_BUILD_JOBS=2
 WORKDIR /src
 RUN apt-get update && apt-get install -y --no-install-recommends musl-tools \
     && rm -rf /var/lib/apt/lists/* \
@@ -17,8 +18,10 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     && cargo test --locked --workspace \
     && cargo build --locked --release --target x86_64-unknown-linux-musl -p goldenhoop-agent \
     && cargo build --locked --release --target x86_64-unknown-linux-musl -p goldenhoop-egress \
+    && cargo build --locked --release --target x86_64-unknown-linux-musl -p goldenhoop-init \
     && cp /src/target/x86_64-unknown-linux-musl/release/goldenhoop-agent /goldenhoop-agent \
-    && cp /src/target/x86_64-unknown-linux-musl/release/goldenhoop-egress /goldenhoop-egress
+    && cp /src/target/x86_64-unknown-linux-musl/release/goldenhoop-egress /goldenhoop-egress \
+    && cp /src/target/x86_64-unknown-linux-musl/release/goldenhoop-init /goldenhoop-init
 
 FROM debian:bookworm-slim AS host-egress
 LABEL dev.goldenhoop.egress="host-netfilter"
@@ -27,7 +30,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends nftables ca-cer
 COPY --from=build /goldenhoop-egress /usr/local/bin/goldenhoop-egress
 ENTRYPOINT ["/usr/local/bin/goldenhoop-egress"]
 
-FROM debian:bookworm-slim AS agent
+FROM debian:bookworm-slim AS agent-base
 LABEL dev.goldenhoop.agent.libc="musl"
 RUN apt-get update && apt-get install -y --no-install-recommends python3 ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
@@ -38,3 +41,12 @@ COPY --from=build /goldenhoop-agent /usr/local/bin/goldenhoop-agent
 ENV GOLDENHOOP_ISOLATED_AGENT=1
 WORKDIR /workspace
 ENTRYPOINT ["/usr/local/bin/goldenhoop-agent", "serve"]
+
+FROM agent-base AS microvm-rootfs
+LABEL dev.goldenhoop.microvm="rootfs"
+COPY --from=build /goldenhoop-init /sbin/goldenhoop-init
+COPY images/microvm/guest.json /etc/goldenhoop/guest.json
+ENTRYPOINT ["/sbin/goldenhoop-init"]
+
+# Keep the default build target compatible with the existing container backend.
+FROM agent-base AS agent

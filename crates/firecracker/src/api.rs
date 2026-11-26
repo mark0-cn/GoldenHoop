@@ -1,7 +1,10 @@
 //! Private HTTP/1 over a Unix socket owned by the tracked VMM process. Each
 //! operation first reads that same connection's instance identity. There is no
 //! retry, redirect, TCP fallback, capability publication or success inferred from EOF.
-use std::{path::PathBuf, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use bytes::Bytes;
 use goldenhoop_protocol::ErrorCode;
@@ -45,7 +48,42 @@ fn failure(dispatch: DispatchState, message: &'static str) -> CallError {
     CallError::new(dispatch, ErrorCode::BackendUnavailable, message)
 }
 
+pub(crate) async fn authenticated_socket(
+    socket: &Path,
+    peer: PeerIdentity,
+) -> Result<UnixStream, CallError> {
+    use std::os::unix::fs::{FileTypeExt, MetadataExt};
+    let metadata = tokio::fs::symlink_metadata(socket)
+        .await
+        .map_err(|_| failure(DispatchState::NotSent, "private VMM socket is absent"))?;
+    if !metadata.file_type().is_socket() || metadata.uid() != peer.uid {
+        return Err(failure(
+            DispatchState::NotSent,
+            "private VMM socket ownership mismatch",
+        ));
+    }
+    let stream = UnixStream::connect(socket).await.map_err(|_| {
+        failure(
+            DispatchState::NotSent,
+            "cannot connect to private VMM socket",
+        )
+    })?;
+    let credentials = stream
+        .peer_cred()
+        .map_err(|_| failure(DispatchState::NotSent, "cannot observe private VMM peer"))?;
+    if credentials.uid() != peer.uid || credentials.pid() != Some(peer.pid as i32) {
+        return Err(failure(
+            DispatchState::NotSent,
+            "private VMM peer identity mismatch",
+        ));
+    }
+    Ok(stream)
+}
+
 impl ApiClient {
+    pub(crate) fn peer_identity(&self) -> PeerIdentity {
+        self.peer
+    }
     /// Bounds the whole connection, identity read, request and response exchange.
     pub fn new(socket: PathBuf, peer: PeerIdentity, timeout: Duration) -> Result<Self, CallError> {
         if !socket.is_absolute()
@@ -147,35 +185,9 @@ impl ApiClient {
         &self,
         mutation: Option<(Method, &'static str, Vec<u8>)>,
     ) -> Result<InstanceInfo, CallError> {
-        use std::os::unix::fs::{FileTypeExt, MetadataExt};
-
         let mut dispatched = false;
         let result = tokio::time::timeout(self.timeout, async {
-            let metadata = tokio::fs::symlink_metadata(&self.socket)
-                .await
-                .map_err(|_| failure(DispatchState::NotSent, "private VMM socket is absent"))?;
-            if !metadata.file_type().is_socket() || metadata.uid() != self.peer.uid {
-                return Err(failure(
-                    DispatchState::NotSent,
-                    "private VMM socket ownership mismatch",
-                ));
-            }
-            let stream = UnixStream::connect(&self.socket).await.map_err(|_| {
-                failure(
-                    DispatchState::NotSent,
-                    "cannot connect to private VMM socket",
-                )
-            })?;
-            let credentials = stream
-                .peer_cred()
-                .map_err(|_| failure(DispatchState::NotSent, "cannot observe private VMM peer"))?;
-            if credentials.uid() != self.peer.uid || credentials.pid() != Some(self.peer.pid as i32)
-            {
-                return Err(failure(
-                    DispatchState::NotSent,
-                    "private VMM peer identity mismatch",
-                ));
-            }
+            let stream = authenticated_socket(&self.socket, self.peer).await?;
             let (mut sender, connection) =
                 hyper::client::conn::http1::handshake(TokioIo::new(stream))
                     .await
