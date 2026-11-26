@@ -82,6 +82,24 @@ class Manager:
         observed = self.observe(value)['processes']['supervisor']
         assert observed['identity_start_matches'] and observed['parent_pid'] == self.process.pid, observed
 
+    def wait_collected(self, value, deadline, samples):
+        assert value.get('process') and value.get('supervisor'), 'expiry requires both recorded process identities'
+        started = time.monotonic()
+        while True:
+            observed = self.observe(value)
+            state = {key: observed[key] for key in ['paths', 'processes']}
+            if not samples or any(samples[-1][key] != state[key] for key in state):
+                samples.append(dict(state, elapsed_seconds=round(time.monotonic() - started, 3)))
+                del samples[:-64]
+            processes = state['processes']
+            assert time.monotonic() <= deadline, f'owned expiry collection deadline exceeded: {state}'
+            if (not any(state['paths'].values()) and all(
+                    name in processes and (not processes[name]['present']
+                    or processes[name].get('identity_start_matches') is False)
+                    for name in ['process', 'supervisor'])):
+                return
+            time.sleep(.2)
+
     def close(self):
         if not self.process:
             return

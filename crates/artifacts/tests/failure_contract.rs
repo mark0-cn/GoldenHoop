@@ -59,6 +59,57 @@ async fn deletion_acknowledgement_without_confirmed_absence_is_not_success() {
 }
 
 #[tokio::test]
+async fn large_collection_does_not_accept_delete_ack_when_head_still_finds_the_object() {
+    use axum::{
+        http::{Method, Uri, header},
+        response::IntoResponse,
+    };
+    let deletes = Arc::new(AtomicUsize::new(0));
+    let heads = Arc::new(AtomicUsize::new(0));
+    let deleted = deletes.clone();
+    let observed = heads.clone();
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let trace = seen.clone();
+    // Protocol fault injection only. Listing reports an empty upload scope,
+    // DELETE acknowledges, but a real subsequent HEAD observes an object.
+    let router=Router::new().fallback(any(move |method:Method,uri:Uri,body:axum::body::Bytes|{
+        let deleted=deleted.clone();let observed=observed.clone();let trace=trace.clone();
+        async move {
+            trace.lock().unwrap().push(format!("{method} {uri}"));
+            if method==Method::GET && uri.query().is_some_and(|query|query.contains("list-type=2")) {
+                (StatusCode::OK,[(header::CONTENT_TYPE,"application/xml")],
+                    "<ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><IsTruncated>false</IsTruncated></ListBucketResult>").into_response()
+            }else if method==Method::GET {
+                (StatusCode::NOT_FOUND,[(header::CONTENT_TYPE,"application/xml")],"<Error><Code>NoSuchKey</Code></Error>").into_response()
+            }else if method==Method::POST && uri.query()==Some("delete") {
+                deleted.fetch_add(1,Ordering::SeqCst);
+                let text=std::str::from_utf8(&body).unwrap();
+                let key=text.split("<Key>").nth(1).unwrap().split("</Key>").next().unwrap();
+                (StatusCode::OK,[(header::CONTENT_TYPE,"application/xml")],format!("<DeleteResult><Deleted><Key>{key}</Key></Deleted></DeleteResult>")).into_response()
+            }else if method==Method::HEAD {
+                observed.fetch_add(1,Ordering::SeqCst);
+                (StatusCode::OK,[(header::CONTENT_LENGTH,"0"),(header::LAST_MODIFIED,"Thu, 01 Jan 1970 00:00:00 GMT"),(header::ETAG,"\"fixture\"")]).into_response()
+            }else {StatusCode::METHOD_NOT_ALLOWED.into_response()}
+        }
+    }));
+    let (endpoint, _server) = server(router).await;
+    let backend = store(endpoint);
+    let reference = backend
+        .large_reference(Uuid::new_v4(), "0".repeat(64), 0)
+        .unwrap();
+    let error = backend.collect_large(&reference).await.unwrap_err();
+    assert_eq!(error.code, ErrorCode::BackendUnavailable);
+    assert!(!error.retryable);
+    assert_eq!(
+        deletes.load(Ordering::SeqCst),
+        1,
+        "{:?}",
+        seen.lock().unwrap()
+    );
+    assert_eq!(heads.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
 async fn signed_storage_requests_do_not_follow_redirects() {
     let forwarded = Arc::new(AtomicUsize::new(0));
     let counter = forwarded.clone();

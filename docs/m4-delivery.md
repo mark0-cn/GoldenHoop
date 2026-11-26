@@ -312,3 +312,30 @@ construction. Both include format, strict workspace/all-target lint and all 266
 input fingerprints. A new actual native-public gate remains required before
 accepting this component. Image preparation, snapshots/restores/templates,
 combined M4 and all M5-M6 deliverables remain outstanding.
+
+## Independent expiry observation and large storage foundation
+
+The [next native-public archive](evidence/m4-native-45897727960-archive.json)
+verifies all 291 inputs at 01cce17. Six bootstrap and seven private groups pass,
+including caller SIGKILL recovery, before a failed expiry assertion; final
+collection is Complete. The original report lacks the assertion line, but it
+records the paused VM's paths gone with its manager-owned supervisor still in
+Z state. This actual intermediate observation must not be treated as absence or
+used to reconstruct the prior run's unknown residual.
+
+Both native expiry fixtures now wait for path and recorded-process absence
+together, using their original deadlines and retaining bounded transitions and
+precise failure sites. A replay of the captured Z observation confirms that the
+joint check waits and still refuses an expired deadline. Corrected actual
+hardware acceptance remains required.
+
+The Rust [large artifact store](large-artifacts.md) provides bounded immutable
+streaming for future image/snapshot objects. Local 25-MiB transfers and the
+[18-group actual RustFS/S3 contract](evidence/m4-large-stream-s3-frozen-validation-windows.json)
+pass, including interrupted unpublished uploads, same-generation resume,
+independent versions and confirmed scoped collection. Full portable checks pass
+[275 Windows tests](evidence/m4-large-stream-validation-windows.json) and
+[321 Linux tests](evidence/m4-large-stream-validation-linux.json), plus strict
+format/lint and static guest/rootfs construction. This component does not
+implement image conversion, guest quiescence, snapshots, restore authority or
+templates. Their implementation and all combined M4-M6 gates remain required.

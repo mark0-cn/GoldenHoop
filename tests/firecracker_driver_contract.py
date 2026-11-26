@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import subprocess
 import time
+import traceback
 import uuid
 from firecracker_manager_fixture import Manager
 
@@ -207,19 +208,18 @@ def suite(binary, boot, fixture):
         original_group.mkdir()
         d = call(d_request, original_scope=original_group); handles[d['sandbox_id']] = d
         d_record = record(d['sandbox_id'])
-        assert d_record['original_cgroup'] == manager.owner['cgroup']
-        assert 'populated 0' in (original_group / 'cgroup.events').read_text().splitlines()
+        assert d_record['original_cgroup'] == manager.owner['cgroup'], d_record['original_cgroup']
+        assert 'populated 0' in (original_group / 'cgroup.events').read_text().splitlines(), 'original caller service group remains populated'
         original_group.rmdir()
         call({'operation': 'pause', 'handle': d})
-        assert call({'operation': 'inspect', 'handle': d})['state'] == 'paused'
+        paused = call({'operation': 'inspect', 'handle': d})
+        assert paused['state'] == 'paused', paused
         expiry = datetime.datetime.fromisoformat(d_record['owner']['expires_at'].replace('Z', '+00:00')).timestamp()
-        while time.time() <= expiry + 10:
-            if all(not path.exists() for path in generation_paths(d_record)):
-                break
-            time.sleep(.2)
-        assert all(not path.exists() for path in generation_paths(d_record)), 'paused VM outlived absolute expiry'
-        assert not (Path('/proc') / str(d_record['process']['pid'])).exists()
-        assert not (Path('/proc') / str(d_record['supervisor']['pid'])).exists()
+        samples = report['observations']['independent_expiry'] = []
+        # Keep the original expiry+10s budget. Directory removal precedes the
+        # persistent parent's actual wait; an unreaped zombie is not absence.
+        deadline = time.monotonic() + max(0, expiry + 10 - time.time())
+        manager.wait_collected(d_record, deadline, samples)
         call({'operation': 'rpc', 'handle': d, 'request': {'method': 'ping'}}, expect=False)
         remove(d)
         report['cases'].append('independent_absolute_expiry_collects_paused_VM_after_callers_and_caller_service_group_disappear')
@@ -230,7 +230,9 @@ def suite(binary, boot, fixture):
         report['cases'].append('idempotent_generation_collection_and_empty_owned_discovery')
         report['result'] = 'passed'
     except Exception as error:
-        report['error'] = str(error)
+        report['error'] = f'{type(error).__name__}: {error}'
+        report['failure_site'] = [{'file': Path(frame.filename).name, 'line': frame.lineno,
+                                   'function': frame.name} for frame in traceback.extract_tb(error.__traceback__)]
     finally:
         if restore_record:
             restore_record[0].write_bytes(restore_record[1])

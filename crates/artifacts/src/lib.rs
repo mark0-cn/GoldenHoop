@@ -1,4 +1,7 @@
 //! Private installation-owned blobs. Public artifact metadata belongs to control state.
+mod stream;
+pub use stream::{LARGE_CHUNK_BYTES, LargeBlobRef, MAX_LARGE_BLOB_BYTES};
+
 use std::{path::Path as FsPath, sync::Arc, time::Duration};
 
 use bytes::Bytes;

@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import subprocess
 import time
+import traceback
 import uuid
 
 import httpx
@@ -209,17 +210,16 @@ def suite(control, cli, native, boot, fixture):
         expired_record = record(eid)
         stop('worker', kill=True)
         until = time.monotonic() + 90
-        while any(p.exists() for p in paths(expired_record)):
-            assert time.monotonic() < until, 'paused native VM outlived independent expiry'
-            time.sleep(.2)
-        for identity in [expired_record['process'], expired_record['supervisor']]:
-            assert not (Path('/proc') / str(identity['pid'])).exists()
+        samples = report['observations']['independent_expiry'] = []
+        manager.wait_collected(expired_record, until, samples)
         start('worker')
         terminate(eid)
         report['cases'].append('paused_VM_expires_with_worker_dead_and_public_recovery_confirms_physical_collection')
         report['result'] = 'passed'
     except Exception as error:
-        report['error'] = str(error)
+        report['error'] = f'{type(error).__name__}: {error}'
+        report['failure_site'] = [{'file': Path(frame.filename).name, 'line': frame.lineno,
+                                   'function': frame.name} for frame in traceback.extract_tb(error.__traceback__)]
     finally:
         cleanup_errors = []
         for name in ['worker', 'api']:
