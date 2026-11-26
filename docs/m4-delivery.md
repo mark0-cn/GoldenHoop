@@ -66,3 +66,11 @@ the hardware backend. The complete M0-M6 objective remains in scope.
 ## Verified first component increment
 
 [Windows validation](evidence/m4-kvm-api-component-validation-windows.json) passes format, strict workspace/all-target Clippy and all 267 Rust tests. [Linux validation](evidence/m4-kvm-api-component-validation-linux.json) passes the same checks and all 295 Rust tests, including six actual Unix socket transport groups. The five shared new tests cover wire shapes, refused paths/CIDs/resources/states and actual host/CLI observations. Socket fixture directories are positively collected by the tests. Linux uses a cache-only build, with no service containers or image tags. The [pinned upstream comparison](evidence/m4-firecracker-upstream-comparison.json) records source hashes and the future VMM release digest. None of these checks establishes actual jailed guest support.
+
+## Native query failure and zero-argument correction
+
+The [first actual KVM gate](evidence/m4-native-45859682866-archive.json) failed on immutable dcfdbe2. Its root process opened the fixed character device but GET_API_VERSION returned a negative result, so no numeric API version was observed; its errno was not recorded. The process and its descriptors were collected. This remains a failed prerequisite.
+
+The [pinned Rust VMM/Linux comparison](evidence/m4-kvm-ioctl-zero-argument-upstream-diagnosis.json) identifies an interface error: the original variadic libc ioctl call omitted its third argument. Linux requires a zero argument for GET_API_VERSION; the Rust VMM helper supplies it explicitly. The corrected call supplies zero, records errno for failed queries/creation and distinguishes a failed syscall from a numeric unsupported API. An actual /dev/null control verifies ENOTTY and no claimed API version. The original native errno is unknown; the correction still requires a new actual KVM gate.
+
+[Windows checks](evidence/m4-kvm-ioctl-zero-argument-validation-windows.json) pass all 267 tests plus format/strict workspace-all-target lint. [Linux checks](evidence/m4-kvm-ioctl-zero-argument-validation-linux.json) pass all 296 tests and the same checks. No device, permission, module or capability requirement is relaxed. Jailed guest acceptance remains required.

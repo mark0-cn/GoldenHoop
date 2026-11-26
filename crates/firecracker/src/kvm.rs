@@ -8,6 +8,7 @@ pub enum KvmState {
     MissingDevice,
     AccessDenied,
     InvalidDevice,
+    DeviceQueryFailed,
     UnsupportedApi,
     VmCreationRefused,
     Ready,
@@ -19,6 +20,7 @@ pub struct KvmObservation {
     pub architecture: &'static str,
     pub state: KvmState,
     pub api_version: Option<i32>,
+    pub error_errno: Option<i32>,
     pub observed_at: DateTime<Utc>,
     /// A device/empty-VM check cannot establish guest execution or isolation.
     pub runtime_capabilities_verified: bool,
@@ -27,14 +29,7 @@ pub struct KvmObservation {
 /// Opens the actual fixed KVM device and creates/drops an empty VM fd. Does not
 /// load modules, alter permissions, allocate guest RAM, start a VMM or fall back.
 pub fn probe_kvm() -> KvmObservation {
-    let observation = KvmObservation {
-        operating_system: std::env::consts::OS,
-        architecture: std::env::consts::ARCH,
-        state: KvmState::UnsupportedHost,
-        api_version: None,
-        observed_at: Utc::now(),
-        runtime_capabilities_verified: false,
-    };
+    let observation = initial_observation();
     #[cfg(target_os = "linux")]
     {
         let mut observation = observation;
@@ -47,10 +42,21 @@ pub fn probe_kvm() -> KvmObservation {
     }
 }
 
+fn initial_observation() -> KvmObservation {
+    KvmObservation {
+        operating_system: std::env::consts::OS,
+        architecture: std::env::consts::ARCH,
+        state: KvmState::UnsupportedHost,
+        api_version: None,
+        error_errno: None,
+        observed_at: Utc::now(),
+        runtime_capabilities_verified: false,
+    }
+}
+
 #[cfg(target_os = "linux")]
 fn probe_linux(observation: &mut KvmObservation) {
     use std::fs::OpenOptions;
-    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
     use std::os::unix::fs::{FileTypeExt, OpenOptionsExt};
 
     let device = match OpenOptions::new()
@@ -61,6 +67,7 @@ fn probe_linux(observation: &mut KvmObservation) {
     {
         Ok(device) => device,
         Err(error) => {
+            observation.error_errno = error.raw_os_error();
             observation.state = match error.kind() {
                 std::io::ErrorKind::NotFound => KvmState::MissingDevice,
                 std::io::ErrorKind::PermissionDenied => KvmState::AccessDenied,
@@ -76,9 +83,22 @@ fn probe_linux(observation: &mut KvmObservation) {
         observation.state = KvmState::InvalidDevice;
         return;
     }
-    // SAFETY: GET_API_VERSION takes no pointer; the fd stays open for the call.
-    let version = unsafe { libc::ioctl(device.as_raw_fd(), 0xae00) };
+    probe_device(observation, &device);
+}
+
+#[cfg(target_os = "linux")]
+fn probe_device(observation: &mut KvmObservation, device: &std::fs::File) {
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+
+    // SAFETY: GET_API_VERSION takes a zero value, not a pointer. Supply that
+    // third C-varargs argument explicitly: the kernel rejects a nonzero arg.
+    let version = unsafe { libc::ioctl(device.as_raw_fd(), 0xae00, 0 as libc::c_ulong) };
     observation.api_version = (version >= 0).then_some(version);
+    if version < 0 {
+        observation.error_errno = std::io::Error::last_os_error().raw_os_error();
+        observation.state = KvmState::DeviceQueryFailed;
+        return;
+    }
     if version != 12 {
         observation.state = KvmState::UnsupportedApi;
         return;
@@ -87,10 +107,31 @@ fn probe_linux(observation: &mut KvmObservation) {
     // a pointer. On success it returns a new independently owned descriptor.
     let vm = unsafe { libc::ioctl(device.as_raw_fd(), 0xae01, 0 as libc::c_ulong) };
     if vm < 0 {
+        observation.error_errno = std::io::Error::last_os_error().raw_os_error();
         observation.state = KvmState::VmCreationRefused;
         return;
     }
     // SAFETY: a successful CREATE_VM returns a fresh fd that has no other owner.
     drop(unsafe { OwnedFd::from_raw_fd(vm) });
     observation.state = KvmState::Ready;
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn actual_non_kvm_descriptor_records_query_errno_without_claiming_an_api_version() {
+        let device = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open("/dev/null")
+            .unwrap();
+        let mut observation = initial_observation();
+        probe_device(&mut observation, &device);
+        assert_eq!(observation.state, KvmState::DeviceQueryFailed);
+        assert_eq!(observation.api_version, None);
+        assert_eq!(observation.error_errno, Some(libc::ENOTTY));
+        assert!(!observation.runtime_capabilities_verified);
+    }
 }

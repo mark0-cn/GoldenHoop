@@ -1,0 +1,49 @@
+{
+  "suite": "KVM GET_API_VERSION explicit zero argument diagnosis",
+  "timestamp": "2026-11-26T16:44:34.760939+00:00",
+  "native_failed_run": 45859682866,
+  "native_candidate": "dcfdbe2e5c5bba73eb07055a52cea221174667e4",
+  "native_report": "m4-native-45859682866-firecracker-prerequisites-firecracker-prerequisites.json",
+  "native_report_sha256": "48dad8d8c0d21ad4320c61d25a6e819775fbb47416f7d13c34845c3eb2648103",
+  "actual_observation": {
+    "host": {
+      "system": "Linux",
+      "architecture": "x86_64",
+      "kernel": "7.0.0-1020-azure",
+      "uid": 0
+    },
+    "probe": {
+      "operating_system": "linux",
+      "architecture": "x86_64",
+      "state": "unsupported_api",
+      "api_version": null,
+      "observed_at": "2026-11-26T16:33:42.084531244Z",
+      "runtime_capabilities_verified": false
+    },
+    "process_reaped": true,
+    "cleanup": "complete"
+  },
+  "original_errno": "not recorded; do not invent an observed errno or infer a reported unsupported numeric API version",
+  "upstream": [
+    {
+      "project": "rust-vmm/vmm-sys-util",
+      "revision": "273e5d4a2e2db0c75684bc91a804b32e37a8874c",
+      "path": "src/linux/ioctl.rs",
+      "blob_sha": "5c27918c52bcc43abd0fe5968a012ed94caafbce",
+      "sha256": "feb9fab9413110756e11a7aafe07c94995d21a874fd2ab07d33e4e802401b540",
+      "url": "https://github.com/rust-vmm/vmm-sys-util/blob/273e5d4a2e2db0c75684bc91a804b32e37a8874c/src/linux/ioctl.rs"
+    },
+    {
+      "project": "torvalds/linux",
+      "revision": "25faec9ce61c01fb45abf812a222c5b43c3cd5c5",
+      "path": "virt/kvm/kvm_main.c",
+      "blob_sha": "83e727bf6452cdb2f71d791617c0e4269e2bac60",
+      "sha256": "a46eb84b08017c71b6bdfbf8deb1232b5d598d5080dd15501f4ade6f9ff7ab34",
+      "url": "https://github.com/torvalds/linux/blob/25faec9ce61c01fb45abf812a222c5b43c3cd5c5/virt/kvm/kvm_main.c"
+    }
+  ],
+  "interface_error": "Original C-varargs call supplied only fd and request. Linux checks the third argument is zero; Rust VMM ioctl helpers explicitly supply zero even for no-payload ioctls.",
+  "correction": "Supply the explicit third zero argument. Preserve API12 and actual empty-VM creation as mandatory. Distinguish negative ioctl failure from a numeric unsupported version; retain fixed errno diagnostics.",
+  "regression": "Actual /dev/null ioctl must report DeviceQueryFailed and ENOTTY with no claimed API version or runtime capability. This is an error-path check, not a KVM emulator.",
+  "remaining_acceptance": "Fresh native KVM gate must pass on corrected immutable source. Component checks cannot accept the backend."
+}

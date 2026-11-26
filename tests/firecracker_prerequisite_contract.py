@@ -32,7 +32,7 @@ def main():
         'source_files_sha256': {p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in sources},
         'host': {'system': platform.system(), 'architecture': platform.machine(),
                  'kernel': platform.release(), 'uid': os.geteuid() if hasattr(os, 'geteuid') else None},
-        'result': 'failed', 'cleanup': 'complete', 'process_reaped': False,
+        'result': 'failed', 'cleanup': 'complete', 'process_reaped': False, 'cases': [],
         'guest_started': False, 'runtime_capabilities_verified': False,
         'scope': 'KVM device/ioctl prerequisite only; jailed boot, guest commands/files, expiry, recovery and snapshots remain unverified',
     }
@@ -59,7 +59,10 @@ def main():
         assert not process.stderr, 'unexpected Rust probe diagnostic'
         assert process.returncode == 0 and report['probe']['state'] == 'ready', 'actual host refuses KVM prerequisites'
         assert report['probe']['api_version'] == 12, 'unsupported actual KVM API'
+        assert report['probe']['error_errno'] is None, 'unexpected KVM query or creation errno'
         assert report['probe']['runtime_capabilities_verified'] is False, 'a prerequisite must not publish runtime support'
+        report['cases'] = ['actual_KVM_API_12_on_the_fixed_character_device',
+                           'actual_empty_VM_descriptor_created_and_collected_without_runtime_capability_publication']
         report['result'] = 'passed'
     except Exception as error:
         report['error'] = str(error)
