@@ -14,6 +14,10 @@ fn failed() -> ApiError {
         "actual credential deployment probe did not confirm HTTP/TLS forwarding",
     )
 }
+fn context(stage: &'static str, mut error: ApiError) -> ApiError {
+    error.message = format!("credential deployment probe {stage}: {}", error.message);
+    error
+}
 const CLIENT: &str = r#"import http.client,os,ssl,urllib.parse
 assert os.geteuid()==1000
 assert int(next(line.split()[1] for line in open('/proc/self/status') if line.startswith('CapEff:')),16)==0
@@ -63,8 +67,14 @@ impl Worker {
                 &Uuid::new_v4().to_string(),
             )
             .await?;
-        self.wait_probe_ready(&[root]).await?;
-        let public_ca = self.store.ensure_credential_ca(&setup.key, root).await?;
+        self.wait_probe_ready(&[root])
+            .await
+            .map_err(|e| context("network readiness", e))?;
+        let public_ca = self
+            .store
+            .ensure_credential_ca(&setup.key, root)
+            .await
+            .map_err(|e| context("CA", e))?;
         let audit_start = self.store.audit_page(0, 1).await?.through_sequence;
         let mut bindings = BTreeSet::new();
         for (url, scheme) in urls.iter().zip([Scheme::Http, Scheme::Https]) {
@@ -95,20 +105,26 @@ impl Worker {
                         },
                     },
                 )
-                .await?;
+                .await
+                .map_err(|e| context("binding admission", e))?;
             bindings.insert(id);
         }
         let deadline = tokio::time::Instant::now() + Duration::from_secs(90);
         loop {
-            Box::pin(self.reconcile(root)).await?;
+            self.reconcile_probe_pending(root)
+                .await
+                .map_err(|e| context("binding reconciliation", e))?;
             let current = self.store.credentials(root).await?;
+            let sandbox = self.store.sandbox(root).await?.sandbox;
             if bindings.iter().all(|id| {
                 current.iter().any(|r| {
                     r.id == *id
                         && r.state == CredentialState::Active
                         && r.applied_revision == Some(r.revision)
                 })
-            }) && self.require_network_dispatch(root).await.is_ok()
+            }) && sandbox.state == SandboxState::Running
+                && sandbox.desired_state == DesiredState::Running
+                && self.require_network_dispatch(root).await.is_ok()
             {
                 break;
             }
@@ -121,13 +137,45 @@ impl Worker {
             "argv":["python3","-c",CLIENT],"timeout_seconds":20,
             "env":{"GH_HTTP_PROBE":urls[0].as_str(),"GH_HTTPS_PROBE":urls[1].as_str(),"GH_PUBLIC_CA":public_ca,"GH_EXPECTED_PROBE_BODY":probe.expected_body}
         })).map_err(|_|failed())?;
-        let execution = self
-            .store
-            .create_execution(root, &spec, &Uuid::new_v4().to_string())
-            .await?;
         let deadline = tokio::time::Instant::now() + Duration::from_secs(35);
+        let key = Uuid::new_v4().to_string();
+        let execution = loop {
+            if tokio::time::Instant::now() >= deadline {
+                return Err(context("client admission deadline", failed()));
+            }
+            match self.store.create_execution(root, &spec, &key).await {
+                Ok(execution) => break execution,
+                Err(error) => {
+                    let current = self.store.sandbox(root).await?.sandbox;
+                    if current.desired_state != DesiredState::Running
+                        || current.expires_at <= chrono::Utc::now()
+                        || !matches!(
+                            current.state,
+                            SandboxState::Starting
+                                | SandboxState::Running
+                                | SandboxState::Unknown
+                                | SandboxState::Paused
+                                | SandboxState::Resuming
+                        )
+                        || !(error.code == ErrorCode::InvalidState
+                            || (error.code == ErrorCode::BackendUnavailable && error.retryable))
+                    {
+                        return Err(context("client admission", error));
+                    }
+                }
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Err(context("client admission deadline", failed()));
+            }
+            self.reconcile_probe_pending(root)
+                .await
+                .map_err(|e| context("client admission reconciliation", e))?;
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        };
         loop {
-            Box::pin(self.reconcile(root)).await?;
+            self.reconcile_probe_pending(root)
+                .await
+                .map_err(|e| context("client execution", e))?;
             let current = self.store.execution(execution.id).await?.execution;
             if current.state.is_terminal() {
                 if current.state != ExecutionState::Succeeded || current.exit_code != Some(0) {

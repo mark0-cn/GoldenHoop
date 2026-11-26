@@ -179,7 +179,7 @@ impl Worker {
         loop {
             let mut ready = true;
             for id in ids {
-                Box::pin(self.reconcile(*id)).await?;
+                self.reconcile_probe_pending(*id).await?;
                 let stored = self.store.sandbox(*id).await?;
                 if matches!(
                     stored.sandbox.state,
@@ -188,6 +188,8 @@ impl Worker {
                     return Err(unknown());
                 }
                 ready &= stored.sandbox.state == SandboxState::Running
+                    && stored.sandbox.desired_state == DesiredState::Running
+                    && stored.sandbox.expires_at > chrono::Utc::now()
                     && self.require_network_dispatch(*id).await.is_ok();
             }
             if ready {
@@ -203,6 +205,35 @@ impl Worker {
         }
     }
 
+    /// Deployment probes share the ordinary reconciliation state machine.
+    /// A bounded readiness loop may observe its transient starting/lease gap;
+    /// it still needs every original positive state/dispatch predicate before
+    /// proceeding. Ownership conflicts and terminal/expired states are fatal.
+    pub(super) async fn reconcile_probe_pending(&self, id: Uuid) -> Result<(), ApiError> {
+        let Err(error) = Box::pin(self.reconcile(id)).await else {
+            return Ok(());
+        };
+        let current = self.store.sandbox(id).await?.sandbox;
+        let active = current.desired_state == DesiredState::Running
+            && current.expires_at > chrono::Utc::now()
+            && matches!(
+                current.state,
+                SandboxState::Starting
+                    | SandboxState::Running
+                    | SandboxState::Unknown
+                    | SandboxState::Paused
+                    | SandboxState::Resuming
+            );
+        if active
+            && ((error.code == ErrorCode::BackendUnavailable && error.retryable)
+                || (error.code == ErrorCode::InvalidState
+                    && current.state != SandboxState::Running))
+        {
+            return Ok(());
+        }
+        Err(error)
+    }
+
     async fn probe_command(&self, id: Uuid) -> Result<(), ApiError> {
         let spec: CommandSpec = serde_json::from_value(serde_json::json!({
             "argv":["/bin/sh","-c","printf goldenhoop_network_profile_probe"],"timeout_seconds":10
@@ -214,7 +245,7 @@ impl Worker {
             .await?;
         let deadline = tokio::time::Instant::now() + Duration::from_secs(25);
         loop {
-            Box::pin(self.reconcile(id)).await?;
+            self.reconcile_probe_pending(id).await?;
             let current = self.store.execution(execution.id).await?.execution;
             if current.state.is_terminal() {
                 if current.state != ExecutionState::Succeeded || current.exit_code != Some(0) {
