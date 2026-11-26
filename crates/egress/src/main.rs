@@ -138,7 +138,9 @@ mod server {
                     .map(Reply::Audit);
             }
             Request::InspectCredentialIngress {} => {
-                return Ok(Reply::Ingress(credentials.ingress.observation()));
+                return Ok(Reply::Ingress(manager.credential_ingress_observation(
+                    credentials.ingress.observation(),
+                )));
             }
             Request::RecoverDns {
                 expected_revision,

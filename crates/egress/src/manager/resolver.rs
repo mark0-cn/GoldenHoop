@@ -1,4 +1,5 @@
 use super::*;
+use crate::controller::{CredentialIngressObservation, DnsResolutionStage};
 use crate::dns::{
     Authority, GrantInstaller, GrantReceipt, GrantRequest, LeaseBook, Request, SetConfirmation,
     SetNames, StagedSets, Upstream,
@@ -330,6 +331,31 @@ impl Manager {
     }
 
     pub async fn resolve(&mut self, wire: &[u8], tcp: bool) -> Result<Resolution, ApiError> {
+        let started = Instant::now();
+        self.dns_resolution.attempts = self.dns_resolution.attempts.saturating_add(1);
+        self.dns_resolution.last_stage = Some(DnsResolutionStage::Admission);
+        let result = self.resolve_inner(wire, tcp).await;
+        self.dns_resolution.elapsed_milliseconds =
+            u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        self.dns_resolution.last_error_code = result.as_ref().err().map(|error| error.code);
+        if result.is_ok() {
+            self.dns_resolution.last_stage = Some(DnsResolutionStage::Completed);
+        } else {
+            self.dns_resolution.errors = self.dns_resolution.errors.saturating_add(1);
+        }
+        result
+    }
+
+    pub fn credential_ingress_observation(
+        &self,
+        mut observation: CredentialIngressObservation,
+    ) -> CredentialIngressObservation {
+        observation.dns_resolution =
+            (self.dns_resolution.attempts != 0).then(|| self.dns_resolution.clone());
+        observation
+    }
+
+    async fn resolve_inner(&mut self, wire: &[u8], tcp: bool) -> Result<Resolution, ApiError> {
         self.live_dns()?;
         let revision = self
             .revision
@@ -346,6 +372,7 @@ impl Manager {
                 .as_ref()
                 .ok_or_else(|| error(ErrorCode::InvalidState, "DNS policy is unavailable"))?;
             let request = Request::parse(wire, model, revision)?;
+            self.dns_resolution.last_stage = Some(DnsResolutionStage::Upstream);
             state.upstream.exchange(&request).await?
         };
         let wire = pending.finish(self, tcp).await?;
@@ -419,6 +446,7 @@ impl Manager {
 #[async_trait::async_trait]
 impl GrantInstaller for Manager {
     async fn install(&mut self, request: &GrantRequest) -> Result<GrantReceipt, ApiError> {
+        self.dns_resolution.last_stage = Some(DnsResolutionStage::DestinationCheck);
         self.live_dns()?;
         let revision = self
             .revision
@@ -488,6 +516,7 @@ impl GrantInstaller for Manager {
                 state.active.clone(),
             )
         };
+        self.dns_resolution.last_stage = Some(DnsResolutionStage::ExistingPolicyReadback);
         self.expected(revision).await?;
         let now = Instant::now();
         let transaction = self
@@ -499,7 +528,9 @@ impl GrantInstaller for Manager {
         self.uncertain = true;
         self.can_renew = false;
         let staged = StagedSets::new(&self.allocation, &transaction, now)?;
+        self.dns_resolution.last_stage = Some(DnsResolutionStage::StagedSets);
         nft(&["--file", "-"], Some(staged.script().as_bytes())).await?;
+        self.dns_resolution.last_stage = Some(DnsResolutionStage::StagedReadback);
         self.confirm_sets(&staged, revision, old.token()).await?;
         let activation = Plan::activate_dns(
             self.allocation.clone(),
@@ -508,7 +539,9 @@ impl GrantInstaller for Manager {
             &old,
             staged.names(),
         )?;
+        self.dns_resolution.last_stage = Some(DnsResolutionStage::Activation);
         nft(&["--file", "-"], Some(activation.script().as_bytes())).await?;
+        self.dns_resolution.last_stage = Some(DnsResolutionStage::ActivatedReadback);
         let confirmation = self
             .confirm_sets(&staged, revision, Some(transaction.id()))
             .await?;
@@ -534,6 +567,7 @@ impl GrantInstaller for Manager {
             .ok_or_else(|| error(ErrorCode::Conflict, "DNS activation marker disappeared"))?;
         self.expected(revision).await?;
         self.check_live_destination_addresses(request.addresses())?;
+        self.dns_resolution.last_stage = Some(DnsResolutionStage::BookCommit);
         let state = self.dns.as_mut().expect("configured DNS state");
         let mut receipt = state.book.as_mut().expect("configured DNS book").commit(
             transaction,
@@ -552,6 +586,7 @@ impl GrantInstaller for Manager {
         // Source bookkeeping and marker identity alone cannot confirm the
         // activated policy. Reobserve every effective rule and its live lease.
         let active = state.active.clone();
+        self.dns_resolution.last_stage = Some(DnsResolutionStage::EffectiveReadback);
         let kernel = self
             .verify_kernel_policy(revision, &config, Some(&active))
             .await?;

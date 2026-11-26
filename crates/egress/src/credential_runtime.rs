@@ -60,6 +60,7 @@ impl CredentialIngress {
             http_socket: values[5],
             transport_failed: values[6],
             last_original_port: self.last_original_port.load(Ordering::Relaxed),
+            dns_resolution: None,
         }
     }
 }

@@ -25,6 +25,34 @@ pub struct CredentialIngressObservation {
     pub(crate) http_socket: u64,
     pub(crate) transport_failed: u64,
     pub(crate) last_original_port: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) dns_resolution: Option<DnsResolutionObservation>,
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DnsResolutionStage {
+    Admission,
+    Upstream,
+    DestinationCheck,
+    ExistingPolicyReadback,
+    StagedSets,
+    StagedReadback,
+    Activation,
+    ActivatedReadback,
+    BookCommit,
+    EffectiveReadback,
+    Completed,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DnsResolutionObservation {
+    pub attempts: u64,
+    pub errors: u64,
+    pub last_stage: Option<DnsResolutionStage>,
+    pub last_error_code: Option<goldenhoop_protocol::ErrorCode>,
+    pub elapsed_milliseconds: u64,
 }
 
 #[derive(Deserialize, Serialize)]
