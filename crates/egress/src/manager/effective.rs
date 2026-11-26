@@ -170,20 +170,8 @@ impl Manager {
                 "trusted DNS policy authority is absent",
             ));
         }
-        let kernel = self
-            .verify_kernel_policy(expected, config, Some(&dns.active))
-            .await?;
-        let source = self
-            .source_guard()
-            .await?
-            .ok_or_else(|| error(ErrorCode::Conflict, "source guard is absent"))?;
-        let destinations = self
-            .destination_guard()
-            .await?
-            .ok_or_else(|| error(ErrorCode::Conflict, "destination guard is absent"))?;
-        if !self.source_matches(Some(&source)) || !self.destinations_match(Some(&destinations)) {
-            return Err(error(ErrorCode::Conflict, "protected policy guard changed"));
-        }
+        let (kernel, source, destinations) =
+            self.protected_kernel(expected, config, &dns.active).await?;
         self.check_bridge()?;
         self.check_lifetime()?;
         let until = kernel.until.min(
@@ -195,8 +183,8 @@ impl Manager {
         let receipt = EffectivePolicyReceipt {
             binding: ProtectedBindingReceipt {
                 allocation: self.allocation.clone(),
-                source: source.scope,
-                destinations: destinations.definition,
+                source,
+                destinations,
                 revision: expected,
                 expires_at,
                 observed_at,

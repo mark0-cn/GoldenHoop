@@ -38,13 +38,16 @@ pub struct CredentialGrant {
     pub binding: CredentialBinding,
     pub policy_revision: u64,
     pub epoch: Uuid,
+    pub request_id: Uuid,
+    pub packet: Option<crate::PacketWitness>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum CredentialOutcome {
     Admitted,
     UpstreamStarted,
-    UpstreamResponded,
+    UpstreamResponded { status: u16 },
     BodyCompleted,
     Revoked,
     DeliveryUnknown,
@@ -78,6 +81,7 @@ pub struct BrokerResponse {
 pub struct Broker {
     authority: Arc<dyn CredentialAuthority>,
     extra_trust: Vec<reqwest::Certificate>,
+    requests: Arc<tokio::sync::Semaphore>,
 }
 
 fn unknown() -> ApiError {
@@ -125,11 +129,32 @@ async fn current(
         .map_err(|_| error(ErrorCode::Forbidden, "credential authority is unavailable"))?
 }
 
+async fn prepare<T, F>(
+    authority: &dyn CredentialAuthority,
+    grant: &CredentialGrant,
+    future: F,
+) -> Result<T, ApiError>
+where
+    F: std::future::Future<Output = Result<T, ApiError>>,
+{
+    let preparing = tokio::time::timeout(Duration::from_secs(10), future);
+    tokio::pin!(preparing);
+    loop {
+        tokio::select! {
+            result=&mut preparing=>return result.map_err(|_|error(ErrorCode::DeadlineExceeded,"credential preparation exceeded deadline"))?,
+            _=tokio::time::sleep(Duration::from_millis(200))=>{
+                if let Err(error)=current(authority,grant).await {let _=authority.record(grant,CredentialOutcome::Revoked).await;return Err(error);}
+            },
+        }
+    }
+}
+
 impl Broker {
     pub fn new(authority: Arc<dyn CredentialAuthority>) -> Self {
         Self {
             authority,
             extra_trust: Vec::new(),
+            requests: Arc::new(tokio::sync::Semaphore::new(32)),
         }
     }
     pub fn with_extra_trust(mut self, certificate: reqwest::Certificate) -> Self {
@@ -138,7 +163,19 @@ impl Broker {
     }
 
     pub async fn forward(&self, mut request: BoundRequest) -> Result<BrokerResponse, ApiError> {
-        let identity = &request.identity;
+        let permit = self.requests.clone().try_acquire_owned().map_err(|_| {
+            error(
+                ErrorCode::QuotaExceeded,
+                "credential broker request limit reached",
+            )
+        })?;
+        let identity = request.identity.clone();
+        if identity.path_and_query.len() > 8192 {
+            return Err(error(
+                ErrorCode::QuotaExceeded,
+                "credential request target exceeds limit",
+            ));
+        }
         let host = canonical_host(&identity.host)?;
         if host != identity.host
             || identity.port == 0
@@ -190,7 +227,13 @@ impl Broker {
                 ));
             }
         }
-        let grant = self.authority.admit(identity).await?;
+        let grant = self.authority.admit(&identity).await?;
+        if grant.binding.binding.canonicalize()? != grant.binding.binding {
+            return Err(error(
+                ErrorCode::Forbidden,
+                "noncanonical credential binding",
+            ));
+        }
         if grant.binding.sandbox_id != identity.sandbox_id
             || grant.binding.state != CredentialState::Active
             || grant.binding.applied_revision != Some(grant.binding.revision)
@@ -213,18 +256,22 @@ impl Broker {
             .await?;
         // Resolver output has no authority of its own. Rotation, revocation or
         // policy changes during exchange must be rechecked before injection.
-        let secret = tokio::time::timeout(Duration::from_secs(10), self.authority.resolve(&grant))
-            .await
-            .map_err(|_| {
-                error(
-                    ErrorCode::DeadlineExceeded,
-                    "credential exchange exceeded deadline",
-                )
-            })??;
+        let secret = prepare(
+            self.authority.as_ref(),
+            &grant,
+            self.authority.resolve(&grant),
+        )
+        .await?;
         current(self.authority.as_ref(), &grant).await?;
         strip_hop_headers(&mut request.headers);
         request.headers.remove("host");
         request.headers.remove("content-length");
+        prepare(
+            self.authority.as_ref(),
+            &grant,
+            crate::rewrite::rewrite(&mut request, &grant.binding.binding, &secret),
+        )
+        .await?;
         if request.headers.len() > 128
             || request
                 .headers
@@ -245,20 +292,35 @@ impl Broker {
                 Zeroizing::new(format!("Basic {}", STANDARD.encode(raw.as_bytes())))
             }
             Injection::Header { .. } => Zeroizing::new(secret.0.to_string()),
+            Injection::Placeholders => Zeroizing::new(String::new()),
         };
-        let mut header = HeaderValue::from_str(&value).map_err(|_| {
-            error(
-                ErrorCode::InvalidRequest,
-                "credential cannot be encoded as a header",
-            )
-        })?;
-        header.set_sensitive(true);
-        let name = match &grant.binding.binding.injection {
-            Injection::Header { name } => HeaderName::from_bytes(name.as_bytes())
-                .map_err(|_| error(ErrorCode::InvalidRequest, "invalid credential header"))?,
-            _ => HeaderName::from_static("authorization"),
-        };
-        request.headers.insert(name, header);
+        if !matches!(grant.binding.binding.injection, Injection::Placeholders) {
+            let mut header = HeaderValue::from_str(&value).map_err(|_| {
+                error(
+                    ErrorCode::InvalidRequest,
+                    "credential cannot be encoded as a header",
+                )
+            })?;
+            header.set_sensitive(true);
+            let name = match &grant.binding.binding.injection {
+                Injection::Header { name } => HeaderName::from_bytes(name.as_bytes())
+                    .map_err(|_| error(ErrorCode::InvalidRequest, "invalid credential header"))?,
+                _ => HeaderName::from_static("authorization"),
+            };
+            request.headers.insert(name, header);
+        }
+        if request
+            .headers
+            .iter()
+            .map(|(k, v)| k.as_str().len() + v.as_bytes().len())
+            .sum::<usize>()
+            > 64 * 1024
+        {
+            return Err(error(
+                ErrorCode::QuotaExceeded,
+                "injected HTTP header limit exceeded",
+            ));
+        }
         let authority = if host.parse::<std::net::Ipv6Addr>().is_ok() {
             format!("[{host}]")
         } else {
@@ -268,7 +330,7 @@ impl Broker {
             "{}://{authority}:{}{}",
             identity.scheme.as_str(),
             identity.port,
-            identity.path_and_query
+            request.identity.path_and_query
         ))
         .map_err(|_| error(ErrorCode::Forbidden, "invalid credential request target"))?;
         let mut client = reqwest::Client::builder()
@@ -335,15 +397,27 @@ impl Broker {
         current(self.authority.as_ref(), &grant).await?;
         let mut headers = response.headers().clone();
         strip_hop_headers(&mut headers);
+        let mut redactions = vec![
+            Zeroizing::new(secret.0.to_string()),
+            Zeroizing::new(value.to_string()),
+            crate::rewrite::uri_encoded(&secret.0),
+        ];
+        if let Some(basic) = value.strip_prefix("Basic ") {
+            redactions.push(Zeroizing::new(basic.to_owned()));
+        }
+        let encoded = crate::rewrite::uri_encoded(&secret.0);
+        redactions.push(crate::rewrite::lower_escapes(&encoded));
+        let form = crate::rewrite::form_encoded(&secret.0);
+        redactions.push(crate::rewrite::lower_escapes(&form));
+        redactions.push(form);
         let remove: Vec<_> = headers
             .iter()
             .filter(|(_, v)| {
                 let bytes = v.as_bytes();
-                [secret.0.as_bytes(), value.as_bytes()]
-                    .iter()
-                    .any(|secret| {
-                        !secret.is_empty() && bytes.windows(secret.len()).any(|w| w == *secret)
-                    })
+                redactions.iter().any(|secret| {
+                    !secret.is_empty()
+                        && bytes.windows(secret.len()).any(|w| w == secret.as_bytes())
+                })
             })
             .map(|(k, _)| k.clone())
             .collect();
@@ -353,13 +427,18 @@ impl Broker {
         headers.insert("cache-control", HeaderValue::from_static("no-store"));
         let status = response.status();
         self.authority
-            .record(&grant, CredentialOutcome::UpstreamResponded)
+            .record(
+                &grant,
+                CredentialOutcome::UpstreamResponded {
+                    status: status.as_u16(),
+                },
+            )
             .await?;
         let authority = self.authority.clone();
         let body = async_stream::stream! {
             // Plaintext is bounded to this request. Response bodies are an
             // approved upstream's application data and are not rewritten.
-            let _secret=secret;let _value=value;let _client=client;
+            let _secret=secret;let _value=value;let _client=client;let _permit=permit;let _redactions=redactions;
             let mut source=response.bytes_stream();
             loop {
                 if current(authority.as_ref(),&grant).await.is_err() {let _=authority.record(&grant,CredentialOutcome::Revoked).await;break;}

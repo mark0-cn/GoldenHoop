@@ -28,7 +28,9 @@ throughout SSE and before interactive controls. An admitted operation can
 finish independently of its observer; revoking observation does not cancel
 that operation. Retained transports check authority at most every 200 ms (100
 ms for interactive sockets); a slow/unavailable check fails closed after 500
-ms. Socket writes retain their existing five-second deadline. Actual measured
+ms. Recording a revoked stream's audit observation is also bounded to 500 ms;
+an unavailable audit writer cannot indefinitely retain that observer. Socket
+writes retain their existing five-second deadline. Actual measured
 transport tests remain necessary in addition to those configured bounds.
 
 Audit uses monotonically ordered durable SQLite records. Lifecycle state
@@ -63,6 +65,16 @@ asynchronous exchange, pins the independently authorized destination address,
 verifies upstream TLS, disables redirect following and automatic retries, and
 collects revoked streams. Provider secrets in response headers are removed;
 response bodies are approved upstream application data and are not rewritten.
-Upstream delivery uncertainty is not a replayable failure. TLS interception,
-substitution modes, production authority wiring and native convergence remain
-separate required implementation and acceptance work.
+Upstream delivery uncertainty is not a replayable failure.
+
+The component now accepts HTTP/1.1 and HTTP/2 over plaintext or TLS, validates
+SNI/authority/port agreement, verifies upstream certificates, and supports bearer,
+basic, custom-header and bounded path/query/header/body substitutions. Body
+replacement buffers at most 1 MiB; larger bodies preserve their streaming bytes
+while the other replacements remain active. Trailers and upgrades are refused.
+The public CA is available at `/v1/sandboxes/{sandbox}/credential-ca`; its private
+signing key is encrypted with installation/sandbox identity and restored across
+restart. Missing previously provisioned CAs and wrong installation master keys
+are refused. These components do not yet install trust or intercept container
+traffic. Production native authority, runtime convergence and actual capability
+probes remain required before SecretInjection is advertised.

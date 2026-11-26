@@ -25,6 +25,23 @@ pub enum Injection {
     Bearer,
     Basic { username: String },
     Header { name: String },
+    Placeholders,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SubstituteAt {
+    Path,
+    Query { name: String },
+    Header { name: String },
+    Body,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Substitution {
+    pub placeholder: String,
+    pub at: SubstituteAt,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -36,6 +53,8 @@ pub struct BindingSpec {
     pub methods: BTreeSet<String>,
     pub path_prefix: String,
     pub injection: Injection,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub substitutions: Vec<Substitution>,
 }
 
 pub fn canonical_host(value: &str) -> Result<String, ApiError> {
@@ -46,44 +65,58 @@ pub fn canonical_host(value: &str) -> Result<String, ApiError> {
 }
 
 /// The broker refuses path forms whose interpretation can change between HTTP
-/// stacks. Percent-encoded ordinary bytes stay legal; encoded separators,
-/// nested encoding, dot segments, controls and backslashes do not.
+/// stacks. All bounded percent-decoding forms must stay within the same binding;
+/// dot segments, controls, backslashes and excessive nesting are refused.
 pub fn canonical_path(value: &str) -> Result<(), ApiError> {
-    let path = value.split('?').next().unwrap_or("");
-    if !path.starts_with('/')
-        || path.len() > 8192
-        || path.contains(['\\', '#'])
-        || path.bytes().any(|v| v <= 32 || v >= 127)
-        || path.split('/').any(|s| s == "." || s == "..")
-    {
-        return Err(error(
-            ErrorCode::Forbidden,
-            "ambiguous credential request path",
-        ));
-    }
-    let bytes = path.as_bytes();
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] == b'%' {
-            let hex = bytes
-                .get(index + 1..index + 3)
-                .ok_or_else(|| error(ErrorCode::Forbidden, "ambiguous credential request path"))?;
-            let text = std::str::from_utf8(hex)
-                .map_err(|_| error(ErrorCode::Forbidden, "ambiguous credential request path"))?;
-            let byte = u8::from_str_radix(text, 16)
-                .map_err(|_| error(ErrorCode::Forbidden, "ambiguous credential request path"))?;
-            if matches!(byte,b'/'|b'\\'|b'.'|b'%'|b'?'|b'#'|0..=32|127..=255) {
-                return Err(error(
-                    ErrorCode::Forbidden,
-                    "ambiguous credential request path",
-                ));
-            }
-            index += 3;
-        } else {
-            index += 1;
+    path_forms(value).map(|_| ())
+}
+
+fn path_forms(value: &str) -> Result<Vec<String>, ApiError> {
+    let mut path = value.split('?').next().unwrap_or("").to_owned();
+    let mut forms = Vec::new();
+    for _ in 0..=8 {
+        if !path.starts_with('/')
+            || path.len() > 8192
+            || path.contains(['\\', '#', '?'])
+            || path.bytes().any(|v| v <= 32 || v >= 127)
+            || path.split('/').any(|s| s == "." || s == "..")
+        {
+            return Err(error(
+                ErrorCode::Forbidden,
+                "ambiguous credential request path",
+            ));
         }
+        forms.push(path.clone());
+        if !path.contains('%') {
+            return Ok(forms);
+        }
+        let bytes = path.as_bytes();
+        let mut decoded = Vec::new();
+        let mut index = 0;
+        while index < bytes.len() {
+            if bytes[index] == b'%' {
+                let hex = bytes.get(index + 1..index + 3).ok_or_else(|| {
+                    error(ErrorCode::Forbidden, "ambiguous credential request path")
+                })?;
+                let text = std::str::from_utf8(hex).map_err(|_| {
+                    error(ErrorCode::Forbidden, "ambiguous credential request path")
+                })?;
+                decoded.push(u8::from_str_radix(text, 16).map_err(|_| {
+                    error(ErrorCode::Forbidden, "ambiguous credential request path")
+                })?);
+                index += 3;
+            } else {
+                decoded.push(bytes[index]);
+                index += 1;
+            }
+        }
+        path = String::from_utf8(decoded)
+            .map_err(|_| error(ErrorCode::Forbidden, "ambiguous credential request path"))?;
     }
-    Ok(())
+    Err(error(
+        ErrorCode::Forbidden,
+        "credential path encoding exceeds limit",
+    ))
 }
 
 impl BindingSpec {
@@ -142,6 +175,69 @@ impl BindingSpec {
                 }
             }
             Injection::Bearer => {}
+            Injection::Placeholders => {
+                if self.substitutions.is_empty() {
+                    return Err(error(
+                        ErrorCode::InvalidRequest,
+                        "placeholder injection requires substitutions",
+                    ));
+                }
+            }
+        }
+        if self.substitutions.len() > 32 {
+            return Err(error(
+                ErrorCode::QuotaExceeded,
+                "credential substitution limit exceeded",
+            ));
+        }
+        for replacement in &self.substitutions {
+            if replacement.placeholder.is_empty()
+                || replacement.placeholder.len() > 256
+                || replacement
+                    .placeholder
+                    .bytes()
+                    .any(|v| !(33..=126).contains(&v))
+            {
+                return Err(error(
+                    ErrorCode::InvalidRequest,
+                    "invalid credential placeholder",
+                ));
+            }
+            match &replacement.at {
+                SubstituteAt::Header { name } => {
+                    let header =
+                        reqwest::header::HeaderName::from_bytes(name.as_bytes()).map_err(|_| {
+                            error(ErrorCode::InvalidRequest, "invalid placeholder header")
+                        })?;
+                    if [
+                        "host",
+                        "connection",
+                        "content-length",
+                        "transfer-encoding",
+                        "upgrade",
+                        "proxy-authorization",
+                        "proxy-authenticate",
+                        "te",
+                        "trailer",
+                    ]
+                    .contains(&header.as_str())
+                    {
+                        return Err(error(
+                            ErrorCode::InvalidRequest,
+                            "reserved placeholder header",
+                        ));
+                    }
+                }
+                SubstituteAt::Query { name } => {
+                    if name.is_empty() || name.len() > 128 || name.chars().any(|v| v.is_control()) {
+                        return Err(error(
+                            ErrorCode::InvalidRequest,
+                            "invalid placeholder query field",
+                        ));
+                    }
+                }
+                SubstituteAt::Path | SubstituteAt::Body => {}
+            }
         }
         let mut result = self.clone();
         result.host = canonical_host(&self.host)?;
@@ -159,13 +255,14 @@ impl BindingSpec {
         method: &str,
         path: &str,
     ) -> Result<bool, ApiError> {
-        canonical_path(path)?;
-        let path = path.split('?').next().unwrap_or("");
+        let forms = path_forms(path)?;
         let prefix = &self.path_prefix;
-        let path_matches = path == prefix
-            || path
-                .strip_prefix(prefix)
-                .is_some_and(|tail| prefix.ends_with('/') || tail.starts_with('/'));
+        let path_matches = forms.iter().all(|path| {
+            path == prefix
+                || path
+                    .strip_prefix(prefix)
+                    .is_some_and(|tail| prefix.ends_with('/') || tail.starts_with('/'))
+        });
         Ok(self.scheme == scheme
             && self.host == canonical_host(host)?
             && self.port == port

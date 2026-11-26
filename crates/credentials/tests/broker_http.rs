@@ -39,6 +39,8 @@ impl CredentialAuthority for Authority {
             binding: self.binding.clone(),
             policy_revision: 1,
             epoch: self.binding.id,
+            request_id: Uuid::new_v4(),
+            packet: None,
         })
     }
     async fn current(&self, _: &CredentialGrant) -> Result<(), ApiError> {
@@ -116,6 +118,7 @@ fn authority(port: u16) -> Arc<Authority> {
                 methods: ["POST".into()].into(),
                 path_prefix: "/v1/".into(),
                 injection: Injection::Bearer,
+                substitutions: Vec::new(),
             },
         },
         current: AtomicBool::new(true),

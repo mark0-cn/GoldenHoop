@@ -20,6 +20,7 @@ mod binding;
 mod destinations;
 mod effective;
 mod resolver;
+mod snapshot;
 mod source;
 pub use resolver::{Listening, Resolution};
 
@@ -52,6 +53,58 @@ pub struct Manager {
     // Abstract Unix names share the host network namespace, including across
     // containers with distinct /run mounts. Dropping the process releases it.
     _lock: UnixDatagram,
+}
+
+pub(super) fn table_revision(allocation: &Allocation, value: &Value) -> Result<u64, ApiError> {
+    let table = allocation.table();
+    let entries = value["nftables"].as_array().ok_or_else(|| {
+        error(
+            ErrorCode::BackendUnavailable,
+            "missing nft table observation",
+        )
+    })?;
+    let tables = entries
+        .iter()
+        .filter_map(|e| e.get("table"))
+        .collect::<Vec<_>>();
+    if tables.len() != 1 || tables[0]["family"] != "inet" || tables[0]["name"] != table {
+        return Err(error(ErrorCode::Conflict, "nft table identity differs"));
+    }
+    let chains = entries
+        .iter()
+        .filter_map(|e| e.get("chain"))
+        .collect::<Vec<_>>();
+    let owners = chains
+        .iter()
+        .filter_map(|c| c["name"].as_str())
+        .filter(|n| n.starts_with("goldenhoop_"))
+        .collect::<Vec<_>>();
+    let revisions = chains
+        .iter()
+        .filter_map(|c| c["name"].as_str())
+        .filter_map(|n| n.strip_prefix("revision_"))
+        .collect::<Vec<_>>();
+    if owners != [allocation.owner_chain()]
+        || revisions.len() != 1
+        || chains
+            .iter()
+            .any(|c| c["family"] != "inet" || c["table"] != table)
+    {
+        return Err(error(
+            ErrorCode::Conflict,
+            "nft allocation ownership differs",
+        ));
+    }
+    let revision = revisions[0]
+        .parse::<u64>()
+        .map_err(|_| error(ErrorCode::Conflict, "invalid nft policy revision"))?;
+    if revisions[0] != revision.to_string() {
+        return Err(error(
+            ErrorCode::Conflict,
+            "noncanonical nft policy revision",
+        ));
+    }
+    Ok(revision)
 }
 
 impl Manager {
@@ -162,53 +215,7 @@ impl Manager {
                 "invalid nft table observation",
             )
         })?;
-        let entries = value["nftables"].as_array().ok_or_else(|| {
-            error(
-                ErrorCode::BackendUnavailable,
-                "missing nft table observation",
-            )
-        })?;
-        let tables = entries
-            .iter()
-            .filter_map(|e| e.get("table"))
-            .collect::<Vec<_>>();
-        if tables.len() != 1 || tables[0]["family"] != "inet" || tables[0]["name"] != table {
-            return Err(error(ErrorCode::Conflict, "nft table identity differs"));
-        }
-        let chains = entries
-            .iter()
-            .filter_map(|e| e.get("chain"))
-            .collect::<Vec<_>>();
-        let owners = chains
-            .iter()
-            .filter_map(|c| c["name"].as_str())
-            .filter(|n| n.starts_with("goldenhoop_"))
-            .collect::<Vec<_>>();
-        let revisions = chains
-            .iter()
-            .filter_map(|c| c["name"].as_str())
-            .filter_map(|n| n.strip_prefix("revision_"))
-            .collect::<Vec<_>>();
-        if owners != [self.allocation.owner_chain()]
-            || revisions.len() != 1
-            || chains
-                .iter()
-                .any(|c| c["family"] != "inet" || c["table"] != table)
-        {
-            return Err(error(
-                ErrorCode::Conflict,
-                "nft allocation ownership differs",
-            ));
-        }
-        let revision = revisions[0]
-            .parse::<u64>()
-            .map_err(|_| error(ErrorCode::Conflict, "invalid nft policy revision"))?;
-        if revisions[0] != revision.to_string() {
-            return Err(error(
-                ErrorCode::Conflict,
-                "noncanonical nft policy revision",
-            ));
-        }
+        let revision = table_revision(&self.allocation, &value)?;
         Ok(Some((revision, value)))
     }
 
@@ -613,6 +620,14 @@ impl Manager {
 }
 
 pub(crate) async fn nft(args: &[&str], input: Option<&[u8]>) -> Result<Vec<u8>, ApiError> {
+    nft_bounded(args, input, MAX_OUTPUT).await
+}
+
+pub(crate) async fn nft_bounded(
+    args: &[&str],
+    input: Option<&[u8]>,
+    output_limit: u64,
+) -> Result<Vec<u8>, ApiError> {
     let mut command = Command::new(NFT);
     command
         .args(args)
@@ -631,7 +646,7 @@ pub(crate) async fn nft(args: &[&str], input: Option<&[u8]>) -> Result<Vec<u8>, 
         .stdout
         .take()
         .expect("piped stdout")
-        .take(MAX_OUTPUT + 1);
+        .take(output_limit + 1);
     let mut stderr = child
         .stderr
         .take()
@@ -670,7 +685,7 @@ pub(crate) async fn nft(args: &[&str], input: Option<&[u8]>) -> Result<Vec<u8>, 
             )
         })?
         .map_err(|_| error(ErrorCode::BackendUnavailable, "nft transport failed"))?;
-    if !status.success() || output.len() as u64 > MAX_OUTPUT || errors.len() as u64 > MAX_OUTPUT {
+    if !status.success() || output.len() as u64 > output_limit || errors.len() as u64 > MAX_OUTPUT {
         return Err(error(
             ErrorCode::BackendUnavailable,
             "nft rejected the operation or exceeded output limits",

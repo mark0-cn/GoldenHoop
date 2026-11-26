@@ -332,7 +332,10 @@ pub async fn authenticate(
             loop {
                 if principal.check(&store).await.is_err() {
                     let event=principal.event(action,AuditPhase::StreamRevoked,target,sandbox);
-                    let _=store.append_audit(&event).await;
+                    // A blocked audit writer must not retain a revoked
+                    // observer indefinitely. The transport is fail-closed
+                    // even when this separate observation cannot be stored.
+                    let _=tokio::time::timeout(Duration::from_millis(500),store.append_audit(&event)).await;
                     break;
                 }
                 tokio::select! {

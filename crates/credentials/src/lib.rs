@@ -8,6 +8,14 @@ mod secret;
 pub use secret::*;
 mod broker;
 pub use broker::*;
+mod tls;
+pub use tls::*;
+mod authority;
+pub mod frontend;
+pub use authority::*;
+mod exchange;
+mod rewrite;
+pub use exchange::*;
 
 use goldenhoop_protocol::{ApiError, ErrorCode};
 

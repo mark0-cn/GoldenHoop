@@ -3,7 +3,36 @@ use goldenhoop_credentials::{
     BindingSpec, CredentialBinding, CredentialState, Sealed, SecretSource, VaultKey,
     WriteCredential,
 };
+use subtle::ConstantTimeEq;
 use zeroize::Zeroizing;
+
+#[async_trait::async_trait]
+impl goldenhoop_credentials::CredentialAudit for Store {
+    async fn append(&self, record: goldenhoop_credentials::BrokerAudit) -> Result<(), ApiError> {
+        let status = match record.outcome {
+            goldenhoop_credentials::CredentialOutcome::UpstreamResponded { status } => Some(status),
+            _ => None,
+        };
+        let event = AuditEvent {
+            actor: AuditActor::System,
+            key_id: None,
+            request_id: Some(record.request_id),
+            target_id: Some(record.binding_id),
+            sandbox_id: Some(record.sandbox_id),
+            action: AuditAction::Credential,
+            phase: AuditPhase::Observed,
+            http_status: status,
+        };
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+        sqlx::query("INSERT INTO audit(event,observation) VALUES(?,?)")
+            .bind(encode(&event)?)
+            .bind(encode(&record)?)
+            .execute(&mut *tx)
+            .await
+            .map_err(db)?;
+        tx.commit().await.map_err(db)
+    }
+}
 
 #[derive(Serialize, Deserialize)]
 struct PrivateCredential {
@@ -25,6 +54,130 @@ fn event(request: Uuid, sandbox: Uuid, id: Uuid, phase: AuditPhase) -> AuditEven
 }
 
 impl Store {
+    pub async fn verify_vault_key(&self, key: &VaultKey) -> Result<(), ApiError> {
+        let expected = key.fingerprint(
+            self.installation_id().as_bytes(),
+            b"GoldenHoop vault master key check v1",
+        )?;
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+        sqlx::query("INSERT OR IGNORE INTO meta(key,value) VALUES('credential_vault_key_check',?)")
+            .bind(&expected)
+            .execute(&mut *tx)
+            .await
+            .map_err(db)?;
+        let actual: String =
+            sqlx::query_scalar("SELECT value FROM meta WHERE key='credential_vault_key_check'")
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(db)?;
+        if !bool::from(actual.as_bytes().ct_eq(expected.as_bytes())) {
+            return Err(ApiError::new(
+                ErrorCode::Forbidden,
+                "vault master key does not match this installation",
+            ));
+        }
+        tx.commit().await.map_err(db)
+    }
+
+    pub async fn ensure_credential_ca(
+        &self,
+        key: &VaultKey,
+        sandbox: Uuid,
+    ) -> Result<String, ApiError> {
+        self.verify_vault_key(key).await?;
+        if let Ok(material) = self.credential_ca_material(key, sandbox).await {
+            return Ok(material.certificate_pem);
+        }
+        // Never overwrite an existing damaged or undecryptable CA.
+        let exists: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM credential_cas WHERE sandbox_id=?)")
+                .bind(sandbox.to_string())
+                .fetch_one(&self.pool)
+                .await
+                .map_err(db)?;
+        if exists {
+            return Err(ApiError::new(
+                ErrorCode::Forbidden,
+                "stored credential CA cannot be restored",
+            ));
+        }
+        let expected: Option<String> = sqlx::query_scalar("SELECT value FROM meta WHERE key=?")
+            .bind(format!("credential_ca_expected:{sandbox}"))
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(db)?;
+        if expected.is_some() {
+            return Err(ApiError::new(
+                ErrorCode::Forbidden,
+                "previously provisioned credential CA is missing; refusing replacement",
+            ));
+        }
+        let material = goldenhoop_credentials::CertificateAuthority::generate()?;
+        let plaintext = Zeroizing::new(serde_json::to_vec(&material).map_err(|_| internal())?);
+        let sealed = key.seal(self.installation_id(), sandbox, Uuid::nil(), 1, &plaintext)?;
+        let fingerprint = format!("{:x}", Sha256::digest(material.certificate_pem.as_bytes()));
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+        super::isolated::require_feature_limit(&mut tx, sandbox, Capability::SecretInjection)
+            .await?;
+        if super::isolated::effective_desired(&mut tx, sandbox).await? == DesiredState::Terminated {
+            return Err(ApiError::new(
+                ErrorCode::InvalidState,
+                "sandbox is not accepting a credential CA",
+            ));
+        }
+        sqlx::query("INSERT OR IGNORE INTO credential_cas(sandbox_id,public_pem,public_sha256,sealed) VALUES(?,?,?,?)")
+            .bind(sandbox.to_string()).bind(&material.certificate_pem).bind(fingerprint).bind(encode(&sealed)?).execute(&mut *tx).await.map_err(db)?;
+        sqlx::query("INSERT OR IGNORE INTO meta(key,value) VALUES(?,'1')")
+            .bind(format!("credential_ca_expected:{sandbox}"))
+            .execute(&mut *tx)
+            .await
+            .map_err(db)?;
+        tx.commit().await.map_err(db)?;
+        Ok(self
+            .credential_ca_material(key, sandbox)
+            .await?
+            .certificate_pem)
+    }
+
+    pub async fn credential_ca_public(&self, sandbox: Uuid) -> Result<String, ApiError> {
+        sqlx::query_scalar("SELECT public_pem FROM credential_cas WHERE sandbox_id=?")
+            .bind(sandbox.to_string())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(db)?
+            .ok_or_else(|| not_found("credential CA"))
+    }
+
+    pub async fn credential_ca_material(
+        &self,
+        key: &VaultKey,
+        sandbox: Uuid,
+    ) -> Result<goldenhoop_credentials::CaMaterial, ApiError> {
+        let row = sqlx::query("SELECT * FROM credential_cas WHERE sandbox_id=?")
+            .bind(sandbox.to_string())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(db)?
+            .ok_or_else(|| not_found("credential CA"))?;
+        let sealed: Sealed = decode(row.try_get("sealed").map_err(db)?)?;
+        let plaintext = key.unseal(self.installation_id(), sandbox, Uuid::nil(), 1, &sealed)?;
+        let material: goldenhoop_credentials::CaMaterial =
+            serde_json::from_slice(&plaintext).map_err(|_| internal())?;
+        if material.certificate_pem != row.try_get::<String, _>("public_pem").map_err(db)?
+            || format!("{:x}", Sha256::digest(material.certificate_pem.as_bytes()))
+                != row.try_get::<String, _>("public_sha256").map_err(db)?
+        {
+            return Err(ApiError::new(
+                ErrorCode::Forbidden,
+                "credential CA metadata authentication failed",
+            ));
+        }
+        // Validate without exporting or retaining a second plaintext key copy.
+        let duplicate: goldenhoop_credentials::CaMaterial =
+            serde_json::from_slice(&plaintext).map_err(|_| internal())?;
+        goldenhoop_credentials::CertificateAuthority::open(duplicate)?;
+        Ok(material)
+    }
     pub async fn credential(&self, sandbox: Uuid, id: Uuid) -> Result<CredentialBinding, ApiError> {
         let payload: String = sqlx::query_scalar(
             "SELECT payload FROM credential_bindings WHERE sandbox_id=? AND id=?",
@@ -63,6 +216,7 @@ impl Store {
         id: Uuid,
         input: WriteCredential,
     ) -> Result<CredentialBinding, ApiError> {
+        self.verify_vault_key(key).await?;
         if input.expected_revision >= i64::MAX as u64 || id.is_nil() {
             return Err(ApiError::new(
                 ErrorCode::InvalidRequest,

@@ -261,7 +261,7 @@ impl Store {
                 .await
                 .map_err(db)?;
         let version: u32 = version.parse().map_err(|_| internal())?;
-        if !(1..=14).contains(&version) {
+        if !(1..=15).contains(&version) {
             return Err(ApiError::new(
                 ErrorCode::UnsupportedCapability,
                 "database schema version is unsupported",
@@ -281,6 +281,7 @@ impl Store {
             (12, include_str!("schema-v12.sql")),
             (13, include_str!("schema-v13.sql")),
             (14, include_str!("schema-v14.sql")),
+            (15, include_str!("schema-v15.sql")),
         ];
         for (target, migration) in migrations {
             if version < target {

@@ -573,7 +573,7 @@ async fn schema_twelve_upgrade_preserves_public_intent_and_acknowledgement_bytes
         }
         let mut connection=SqliteConnection::connect_with(&options).await.unwrap();
         let version:String=sqlx::query_scalar("SELECT value FROM meta WHERE key='schema_version'").fetch_one(&mut connection).await.unwrap();
-        assert_eq!(version,"14");
+        assert_eq!(version,"15");
         assert_eq!(snapshot(&mut connection).await,before);
         connection.close().await.unwrap();
     }).await;
@@ -863,7 +863,7 @@ async fn schema_eleven_upgrade_preserves_private_history_without_promoting_it_to
         let mut connection = SqliteConnection::connect_with(&options).await.unwrap();
         let version: String = sqlx::query_scalar("SELECT value FROM meta WHERE key='schema_version'")
             .fetch_one(&mut connection).await.unwrap();
-        assert_eq!(version, "14");
+        assert_eq!(version, "15");
         assert_eq!(snapshot(&mut connection).await, before);
         let overrides: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM network_policy_users")
             .fetch_one(&mut connection).await.unwrap();

@@ -29,6 +29,8 @@ pub use destinations::{DestinationClass, DestinationScope, ProtectedDestinations
 mod destination_plan;
 pub use destination_plan::{DestinationDefinition, DestinationListener, DestinationPlan};
 mod plan;
+mod snapshot;
+pub use snapshot::{MAX_SNAPSHOT_BYTES, ScopedKernelSnapshot};
 mod policy_binding;
 pub mod policy_readback;
 pub use policy_binding::EffectivePolicyReceipt;

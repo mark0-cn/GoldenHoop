@@ -88,6 +88,7 @@ fn spec() -> BindingSpec {
         methods: ["POST".into()].into(),
         path_prefix: "/v1/chat".into(),
         injection: Injection::Bearer,
+        substitutions: Vec::new(),
     }
 }
 

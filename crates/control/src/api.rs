@@ -77,6 +77,10 @@ pub fn router_with_vault(
         .route("/v1/audit", get(security::audit))
         .route("/v1/sandboxes/{id}/credentials", get(credentials::list))
         .route(
+            "/v1/sandboxes/{id}/credential-ca",
+            get(credentials::public_ca),
+        )
+        .route(
             "/v1/sandboxes/{id}/credentials/{binding}",
             get(credentials::inspect)
                 .put(credentials::put)

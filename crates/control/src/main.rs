@@ -148,6 +148,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .as_deref()
                 .map(goldenhoop_credentials::VaultKey::open)
                 .transpose()?;
+            if let Some(key) = &vault {
+                store.verify_vault_key(key).await?;
+            }
             let router = api::router_with_vault(store.clone(), &token, vault)?;
             println!(
                 "{}",
