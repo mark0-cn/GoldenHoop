@@ -10,6 +10,7 @@ struct Floors {
     source: SourceScope,
     destinations: DestinationDefinition,
     sha256: String,
+    ethernet_sha256: String,
 }
 
 impl Manager {
@@ -37,10 +38,8 @@ impl Manager {
         if table_revision(&self.allocation, main)? != expected {
             return Err(error(ErrorCode::Conflict, "egress policy revision differs"));
         }
-        EthernetPlan::verify(
-            &self.allocation,
-            snapshot.table(&self.allocation.ethernet_table())?,
-        )?;
+        let ethernet = snapshot.table(&self.allocation.ethernet_table())?;
+        EthernetPlan::verify(&self.allocation, ethernet)?;
         let table = snapshot.table(&self.allocation.source_table())?;
         let source = SourcePlan::descriptor(&self.allocation, table)?;
         SourcePlan::new(&self.allocation, &source)?.verify(&self.allocation, table)?;
@@ -99,6 +98,10 @@ impl Manager {
                 "{:x}",
                 Sha256::digest(serde_json::to_vec(main).expect("native JSON"))
             ),
+            ethernet_sha256: format!(
+                "{:x}",
+                Sha256::digest(serde_json::to_vec(ethernet).expect("native JSON"))
+            ),
         })
     }
 
@@ -153,9 +156,61 @@ impl Manager {
             KernelPolicy {
                 until,
                 sha256: floors.sha256,
+                ethernet_sha256: Some(floors.ethernet_sha256),
             },
             floors.source,
             floors.destinations,
         ))
+    }
+
+    /// Every former expected()/inspect() predicate is verified in each
+    /// protected sample. Keep the fresh observations instead of rereading
+    /// the same tables through another sequence of CLI processes.
+    pub(super) async fn renew_protected(
+        &mut self,
+        expected: u64,
+        config: &Config,
+        names: &SetNames,
+    ) -> Result<Observation, ApiError> {
+        self.protected_kernel(expected, config, names).await?;
+        let milliseconds = self.live_milliseconds()?;
+        let batch = format!(
+            "flush set inet {} live\nadd element inet {} live {{ \"{}\" timeout {milliseconds}ms }}\n",
+            self.allocation.table(),
+            self.allocation.table(),
+            self.allocation.bridge
+        );
+        let started = Instant::now();
+        nft(&["--file", "-"], Some(batch.as_bytes())).await?;
+        let (kernel, source, destinations) = self.protected_kernel(expected, config, names).await?;
+        self.check_bridge()?;
+        self.check_lifetime()?;
+        let ethernet_sha256 = kernel.ethernet_sha256.ok_or_else(|| {
+            error(
+                ErrorCode::Conflict,
+                "protected Ethernet observation is absent",
+            )
+        })?;
+        let observation = Observation {
+            installed: true,
+            revision: Some(expected),
+            uncertain: false,
+            table_sha256: Some(kernel.sha256),
+            maximum_lease_seconds: LEASE_SECONDS,
+            ethernet_guarded: true,
+            ethernet_sha256: Some(ethernet_sha256),
+            source_guarded: true,
+            source_binding_sha256: Some(source.digest()),
+            destinations_guarded: true,
+            destination_binding_sha256: Some(destinations.digest()),
+        };
+        self.lease_until = Some(
+            kernel
+                .until
+                .min(started + Duration::from_millis(milliseconds.saturating_sub(11))),
+        );
+        self.uncertain = false;
+        self.can_renew = true;
+        Ok(observation)
     }
 }

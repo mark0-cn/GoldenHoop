@@ -494,6 +494,13 @@ impl Manager {
         self.uncertain = true;
         self.can_renew = false;
         self.lease_until = None;
+        if self.ethernet_required
+            && self.source_scope.is_some()
+            && self.destinations.is_some()
+            && let Some(names) = names.as_ref()
+        {
+            return self.renew_protected(expected, &config, names).await;
+        }
         self.expected(expected).await?;
         self.verify_kernel_policy(expected, &config, names.as_ref())
             .await?;

@@ -76,6 +76,42 @@ class Contract(NetworkContract):
         self.private_values = []
         self.key_file = self.root / 'credential-master.key'
         self.credential_config = self.root / 'credentials.json'
+        self.packet_probe_observations = {}
+
+    def observe_startup(self):
+        # Read-only diagnostics during the private ordinary-UID probe. These
+        # counters never attest policy authority or replace receiver evidence.
+        try:
+            with closing(sqlite3.connect(self.database.as_uri() + '?mode=ro', uri=True, timeout=0.1)) as database:
+                rows = database.execute("SELECT id,sandbox_id,spec FROM executions WHERE state='running'").fetchall()
+            for identity, sandbox, raw in rows:
+                if 'goldenhoop_credential_profile_probe' not in raw:
+                    continue
+                progress = self.packet_probe_observations.setdefault(identity, dict(start=time.monotonic(), count=0))
+                if progress['count'] >= 2 or time.monotonic() - progress['start'] < 0.5 + progress['count']:
+                    continue
+                progress['count'] += 1
+                owner = self.controller_owner(sandbox)
+                observed = json.loads(docker('inspect', owner['container_id']))[0]
+                labels = observed['Config']['Labels']
+                assert (labels['dev.goldenhoop.installation'] == self.installation
+                        and labels['dev.goldenhoop.sandbox'] == sandbox
+                        and labels['dev.goldenhoop.role'] == 'egress-controller')
+                with closing(sqlite3.connect(self.database.as_uri() + '?mode=ro', uri=True, timeout=0.1)) as database:
+                    allocation = json.loads(database.execute('SELECT payload FROM network_allocations WHERE sandbox_id=?', (sandbox,)).fetchone()[0])
+                suffix = uuid.UUID(allocation['generation']).hex
+                tables = {prefix + suffix for prefix in ('gh_e_', 'gh_l_', 'gh_s_', 'gh_d_', 'gh_c_')}
+                native = json.loads(docker('exec', owner['container_id'], '/usr/sbin/nft', '--json', 'list', 'ruleset'))
+                scoped = [row for row in native['nftables'] if any(
+                    value.get('name' if kind == 'table' else 'table') in tables for kind, value in row.items())]
+                self.report.setdefault('probe_packet_counter_observations', []).append(dict(
+                    execution_id=identity, sandbox_id=sandbox, controller_id=owner['container_id'],
+                    diagnostic_only=True, owned_tables=sorted(tables), native=scoped))
+                self.save()
+        except (sqlite3.Error, OSError, ValueError, AssertionError, KeyError, TypeError, IndexError, RuntimeError) as error:
+            errors = self.report.setdefault('probe_packet_counter_observation_errors', [])
+            if len(errors) < 3:
+                errors.append(type(error).__name__)
 
     def launch(self, role):
         if not self.key_file.exists():

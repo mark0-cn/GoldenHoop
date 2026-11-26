@@ -101,6 +101,9 @@ class Contract(ApiContract):
                     errors = observations.setdefault('read_errors', [])
                     if len(errors) < 4:
                         errors.append(repr(error))
+                observer = getattr(self, 'observe_startup', None)
+                if observer is not None:
+                    observer()
             for line in path.read_text(encoding='utf-8', errors='replace').splitlines():
                 try:
                     event = json.loads(line)

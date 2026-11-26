@@ -7,6 +7,7 @@ use crate::{
 pub(super) struct KernelPolicy {
     pub until: Instant,
     pub sha256: String,
+    pub ethernet_sha256: Option<String>,
 }
 impl Manager {
     pub(super) fn live_milliseconds(&self) -> Result<u64, ApiError> {
@@ -119,6 +120,7 @@ impl Manager {
                 "{:x}",
                 Sha256::digest(serde_json::to_vec(&after).expect("native JSON"))
             ),
+            ethernet_sha256: None,
         })
     }
 

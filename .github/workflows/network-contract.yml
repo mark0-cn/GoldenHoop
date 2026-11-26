@@ -41,9 +41,11 @@ jobs:
       - name: Build the production worker and private allocation contract
         run: |
           cargo build --locked -p goldenhoop-control --bin goldenhoopd --example network_allocation
-          cargo build --locked -p goldenhoop-egress --example quarantine_readback --example policy_readback --example credential_redirect
+          cargo build --locked -p goldenhoop-egress --example quarantine_readback --example policy_readback --example credential_redirect --example destination_plan
       - name: Verify actual owned credential redirect semantics and weakened-rule refusal
         run: python3 -B tests/credential_redirect_contract.py --binary target/debug/examples/credential_redirect --manager --output evidence/credential-redirect-readback.json
+      - name: Verify actual private TCP redirection and original destination through inet floors
+        run: python3 -B tests/credential_packet_contract.py --redirect-binary target/debug/examples/credential_redirect --policy-binary target/debug/examples/policy_readback --destination-binary target/debug/examples/destination_plan --output evidence/credential-packet-path.json
       - name: Verify actual owned quarantine semantics and weakened-rule refusal
         run: python3 -B tests/quarantine_readback_contract.py --binary target/debug/examples/network_allocation --readback-binary target/debug/examples/quarantine_readback --work-dir .test-work --output evidence/quarantine-readback.json
       - name: Verify durable controller epochs, dispatch recovery, native binding and collection
@@ -67,6 +69,8 @@ jobs:
           test -z "$(docker ps -a --filter label=dev.goldenhoop.test=credential-broker-fixture --format '{{.ID}}')"
           test -z "$(docker network ls --filter label=dev.goldenhoop.test=credential-broker-fixture --format '{{.ID}}')"
           test -z "$(docker ps -a --filter label=dev.goldenhoop.test=credential-redirect-readback --format '{{.ID}}')"
+          test -z "$(docker ps -a --filter label=dev.goldenhoop.test=credential-packet-path --format '{{.ID}}')"
+          test -z "$(docker network ls --filter label=dev.goldenhoop.test=credential-packet-path --format '{{.ID}}')"
           remaining=$(docker ps -a --filter label=dev.goldenhoop.test=network-contract --format '{{.ID}}')
           test -z "$remaining"
           test -z "$(docker ps -a --filter label=dev.goldenhoop.test=network-provider --format '{{.ID}}')"
