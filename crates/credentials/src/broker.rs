@@ -451,12 +451,19 @@ impl Broker {
             // downstream encoder. Confirm upstream EOF and persist its audit
             // before returning those headers, rather than inferring success
             // from a status or Content-Length header alone.
-            if source.next().await.is_some() {
-                let _ = self
-                    .authority
-                    .record(&grant, CredentialOutcome::DeliveryUnknown)
-                    .await;
-                return Err(unknown());
+            loop {
+                current(self.authority.as_ref(), &grant).await?;
+                tokio::select! {
+                    chunk=source.next()=>match chunk {
+                        None=>break,
+                        Some(Ok(chunk)) if chunk.is_empty()=>{},
+                        _=>{
+                            let _=self.authority.record(&grant,CredentialOutcome::DeliveryUnknown).await;
+                            return Err(unknown());
+                        },
+                    },
+                    _=tokio::time::sleep(Duration::from_millis(200))=>{},
+                }
             }
             self.authority
                 .record(&grant, CredentialOutcome::BodyCompleted)

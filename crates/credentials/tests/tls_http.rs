@@ -93,8 +93,13 @@ async fn upstream() -> (
                         let service=hyper::service::service_fn(move |request:hyper::Request<hyper::body::Incoming>| {
                             let calls=calls.clone();async move {
                                 calls.fetch_add(1,Ordering::SeqCst);
+                                assert_eq!(request.version(),hyper::Version::HTTP_2);
                                 assert_eq!(request.headers()["authorization"],"Bearer fixture-tls-provider-private-value");
-                                let mut response=hyper::Response::new(Full::new(if request.uri().path()=="/v1/empty" || request.uri().path()=="/v1/no-content" {Bytes::new()} else {Bytes::from_static(b"approved-upstream-nonce")}));
+                                // An H2 service must implement HEAD semantics itself;
+                                // Hyper's H1 encoder alone suppresses its body.
+                                let head=request.method()==hyper::Method::HEAD;
+                                let mut response=hyper::Response::new(Full::new(if head || request.uri().path()=="/v1/empty" || request.uri().path()=="/v1/no-content" {Bytes::new()} else {Bytes::from_static(b"approved-upstream-nonce")}));
+                                if head {response.headers_mut().insert("content-length",hyper::header::HeaderValue::from_static("23"));}
                                 if request.uri().path()=="/v1/no-content" {*response.status_mut()=hyper::StatusCode::NO_CONTENT;}
                                 Ok::<_,std::convert::Infallible>(response)
                             }
@@ -287,7 +292,7 @@ async fn real_tls_h1_h2_upstream_verification_and_host_sni_mismatch() {
                 )
                 .await
                 .unwrap();
-                assert_eq!(status, expected_status);
+                assert_eq!(status, expected_status, "{method} {path} (h2={h2})");
                 assert_eq!(body, expected_body);
                 tokio::time::timeout(Duration::from_secs(1), async {
                     while authority.completed.load(Ordering::SeqCst) != index as u64 + 1 {
