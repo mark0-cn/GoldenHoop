@@ -36,10 +36,12 @@ impl DockerDriver {
             || network.native.identity.installation_id != self.config.installation_id
             || network.native.identity.profile != self.config.profile.id()
         {
-            return Err(conflict());
+            return Err(bootstrap_context("source controller identity", conflict()));
         }
         let endpoint = self.observe_quarantined_endpoint(handle, network).await?;
-        let before = call(session, Request::Inspect {}).await?;
+        let before = call(session, Request::Inspect {})
+            .await
+            .map_err(|e| bootstrap_context("source preflight readback", e))?;
         let revision = before["revision"].as_u64().ok_or_else(conflict)?;
         if before["installed"] != true
             || before["uncertain"] != false
@@ -47,7 +49,7 @@ impl DockerDriver {
             || before["source_guarded"] != false
             || !before["source_binding_sha256"].is_null()
         {
-            return Err(conflict());
+            return Err(bootstrap_context("source preflight receipt", conflict()));
         }
         let mut attempt = ControllerAttempt {
             session,
@@ -93,7 +95,7 @@ impl DockerDriver {
         }
         .await;
         attempt.confirmed = result.is_ok();
-        result
+        result.map_err(|e| bootstrap_context("source binding confirmation", e))
     }
 }
 

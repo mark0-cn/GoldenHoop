@@ -77,10 +77,84 @@ class Contract(NetworkContract):
         self.key_file = self.root / 'credential-master.key'
         self.credential_config = self.root / 'credentials.json'
         self.packet_probe_observations = {}
+        self.packet_observer = None
+        self.packet_observer_pending = False
+        self.packet_counter_tables = set()
+
+    def packet_nft(self, *argv, script=None):
+        result = subprocess.run(['docker', 'exec', '-i', self.packet_observer, '/usr/sbin/nft', *argv],
+            input=script, capture_output=True, text=True, encoding='utf-8', timeout=20)
+        if result.returncode:
+            raise RuntimeError('owned diagnostic nft command failed')
+        return result.stdout
+
+    def install_packet_counters(self, allocation):
+        # Observer chains contain counters only: no verdict, mark, NAT or
+        # authorization mutation. Their names and owner marker are task-scoped.
+        binding = allocation['binding']
+        endpoint = binding['source']['endpoint']
+        name = 'gh_x_' + uuid.UUID(allocation['generation']).hex
+        marker = 'observer_' + self.attempt
+        current = json.loads(self.packet_nft('--json', 'list', 'tables'))
+        assert not any(row.get('table', {}).get('name') == name for row in current['nftables'])
+        self.packet_counter_tables.add(name)  # Retain ambiguous creation intent.
+        script = []
+        ports = sorted({urllib.parse.urlsplit(self.url(scheme, '/')).port for scheme in ('http', 'https')})
+        port_set = '{ ' + ', '.join(map(str, ports)) + ' }'
+        for family in ('bridge', 'inet'):
+            script += [f'add table {family} {name}', f'add chain {family} {name} {marker}']
+            for hook in ('prerouting', 'input', 'forward'):
+                script.append(f'add chain {family} {name} {hook} {{ type filter hook {hook} priority -400; policy accept; }}')
+                for protocol, address in (('ip', endpoint['ipv4']), ('ip6', endpoint['ipv6'])):
+                    if not address:
+                        continue
+                    address = str(ipaddress.ip_address(address))
+                    target = (f'meta l4proto tcp ct original proto-dst {port_set}'
+                              if family == 'inet' and hook != 'prerouting'
+                              else f'tcp dport {port_set}')
+                    prefix = f'add rule {family} {name} {hook} {protocol} saddr {address} {target}'
+                    for interface in (allocation['bridge'], endpoint['port']):
+                        assert interface and len(interface) <= 15 and all(c.isalnum() for c in interface)
+                        script.append(prefix + ' iifname ' + json.dumps(interface) + ' counter')
+                    script.append(prefix + ' counter')
+        self.report.setdefault('packet_counter_intents', []).append(dict(
+            table=name, owner_marker=marker, sandbox_id=allocation['sandbox_id'],
+            bridge=allocation['bridge'], endpoint_port=endpoint['port'], diagnostic_only=True))
+        self.save()
+        self.packet_nft('--file', '-', script='\n'.join(script) + '\n')
+        return name
+
+    def collect_packet_counters(self):
+        if not self.packet_observer:
+            assert not self.packet_observer_pending and not self.packet_counter_tables
+            return
+        observed = json.loads(docker('inspect', self.packet_observer))[0]
+        assert observed['Config']['Labels']['dev.goldenhoop.attempt'] == self.attempt
+        assert observed['Config']['Labels']['dev.goldenhoop.test'] == 'credential-packet-observer'
+        assert observed['HostConfig']['NetworkMode'] == 'host'
+        native = json.loads(self.packet_nft('--json', 'list', 'ruleset'))['nftables']
+        commands = []
+        for name in sorted(self.packet_counter_tables):
+            for family in ('bridge', 'inet'):
+                exists = any(row.get('table', {}).get('name') == name and row['table']['family'] == family for row in native)
+                if exists:
+                    assert any(row.get('chain', {}).get('name') == 'observer_' + self.attempt
+                        and row['chain']['table'] == name and row['chain']['family'] == family for row in native)
+                    commands.append(f'delete table {family} {name}')
+        if commands:
+            self.packet_nft('--file', '-', script='\n'.join(commands) + '\n')
+        native = json.loads(self.packet_nft('--json', 'list', 'tables'))['nftables']
+        assert not any(row.get('table', {}).get('name') in self.packet_counter_tables for row in native)
+        self.report['packet_observer_cleanup'] = dict(tables=sorted(self.packet_counter_tables), confirmed_absent=True)
+        self.packet_counter_tables.clear()
+        docker('rm', '--force', self.packet_observer)
+        assert not docker('ps', '-aq', '--filter', 'id=' + self.packet_observer)
+        self.packet_observer = None
+        assert not self.packet_observer_pending
 
     def observe_startup(self):
-        # Read-only diagnostics during the private ordinary-UID probe. These
-        # counters never attest policy authority or replace receiver evidence.
+        # Native observations during the private ordinary-UID probe. The
+        # optional observer adds only separately owned counter-only chains.
         try:
             with closing(sqlite3.connect(self.database.as_uri() + '?mode=ro', uri=True, timeout=0.1)) as database:
                 rows = database.execute("SELECT id,sandbox_id,spec FROM executions WHERE state='running'").fetchall()
@@ -88,6 +162,10 @@ class Contract(NetworkContract):
                 if 'goldenhoop_credential_profile_probe' not in raw:
                     continue
                 progress = self.packet_probe_observations.setdefault(identity, dict(start=time.monotonic(), count=0))
+                with closing(sqlite3.connect(self.database.as_uri() + '?mode=ro', uri=True, timeout=0.1)) as database:
+                    allocation = json.loads(database.execute('SELECT payload FROM network_allocations WHERE sandbox_id=?', (sandbox,)).fetchone()[0])
+                if 'counter_table' not in progress:
+                    progress['counter_table'] = self.install_packet_counters(allocation)
                 if progress['count'] >= 2 or time.monotonic() - progress['start'] < 0.5 + progress['count']:
                     continue
                 progress['count'] += 1
@@ -97,11 +175,10 @@ class Contract(NetworkContract):
                 assert (labels['dev.goldenhoop.installation'] == self.installation
                         and labels['dev.goldenhoop.sandbox'] == sandbox
                         and labels['dev.goldenhoop.role'] == 'egress-controller')
-                with closing(sqlite3.connect(self.database.as_uri() + '?mode=ro', uri=True, timeout=0.1)) as database:
-                    allocation = json.loads(database.execute('SELECT payload FROM network_allocations WHERE sandbox_id=?', (sandbox,)).fetchone()[0])
                 suffix = uuid.UUID(allocation['generation']).hex
                 tables = {prefix + suffix for prefix in ('gh_e_', 'gh_l_', 'gh_s_', 'gh_d_', 'gh_c_')}
-                native = json.loads(docker('exec', owner['container_id'], '/usr/sbin/nft', '--json', 'list', 'ruleset'))
+                tables.add(progress['counter_table'])
+                native = json.loads(self.packet_nft('--json', 'list', 'ruleset'))
                 scoped = [row for row in native['nftables'] if any(
                     value.get('name' if kind == 'table' else 'table') in tables for kind, value in row.items())]
                 self.report.setdefault('probe_packet_counter_observations', []).append(dict(
@@ -137,6 +214,17 @@ class Contract(NetworkContract):
     def start_spy(self):
         fixture = json.loads(docker('image', 'inspect', self.args.fixture_image))[0]
         assert fixture['Config']['Labels']['dev.goldenhoop.fixture'] == 'network-interop'
+        self.packet_observer_pending = True
+        self.report['packet_observer_intent'] = dict(name='goldenhoop-packet-observer-' + self.attempt[:12], image_id=fixture['Id'])
+        self.save()
+        self.packet_observer = docker('create', '--name', self.report['packet_observer_intent']['name'],
+            '--network', 'host', '--runtime', 'runc', '--read-only', '--cap-drop', 'ALL', '--cap-add', 'NET_ADMIN',
+            '--security-opt', 'no-new-privileges:true', '--memory', '64m', '--pids-limit', '16', '--cpus', '0.25',
+            '--label', 'dev.goldenhoop.test=credential-packet-observer', '--label', 'dev.goldenhoop.attempt=' + self.attempt,
+            '--entrypoint', '/bin/sleep', fixture['Id'], '1800')
+        assert len(self.packet_observer) == 64
+        self.packet_observer_pending = False
+        docker('start', self.packet_observer)
         network_name = 'goldenhoop-credential-receiver-' + self.attempt[:12]
         subnet = f'fd{self.attempt[:2]}:{self.attempt[2:6]}:{self.attempt[6:10]}::/64'
         self.network_pending = True
@@ -541,6 +629,11 @@ class Contract(NetworkContract):
         except BaseException as error:
             failure = error
         finally:
+            try:
+                self.collect_packet_counters()
+            except BaseException as error:
+                self.report['packet_observer_cleanup_error'] = type(error).__name__
+                failure = failure or error
             if self.receiver:
                 row = json.loads(docker('inspect', self.receiver))[0]
                 assert row['Config']['Labels']['dev.goldenhoop.attempt'] == self.attempt

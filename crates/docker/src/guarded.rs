@@ -53,6 +53,15 @@ fn conflict() -> ApiError {
         "owned workload network bootstrap is unconfirmed",
     )
 }
+fn bootstrap_context(phase: &'static str, mut error: ApiError) -> ApiError {
+    // Add only a fixed operation name, preserving the sanitized error code and
+    // retry semantics. A failed phase remains unconfirmed bootstrap.
+    error.message = format!(
+        "owned workload network bootstrap {phase}: {}",
+        error.message
+    );
+    error
+}
 fn physical_id(value: &str) -> bool {
     value.len() == 64
         && value
@@ -99,7 +108,9 @@ impl DockerDriver {
         network: &WorkloadNetworkPlan,
         session: &mut ControllerSession,
     ) -> Result<(), ApiError> {
-        network.validate()?;
+        network
+            .validate()
+            .map_err(|e| bootstrap_context("quarantine plan", e))?;
         let controller = session.plan();
         controller.validate_dispatch_at(Utc::now())?;
         if controller.purpose != ControllerPurpose::Enforce
@@ -108,15 +119,19 @@ impl DockerDriver {
             || network.native.identity.installation_id != self.config.installation_id
             || network.native.identity.profile != self.config.profile.id()
         {
-            return Err(conflict());
+            return Err(bootstrap_context("controller identity", conflict()));
         }
         let provider = DockerNetworkProvider::connect().await?;
         let observed = provider
             .lookup(&network.provider_plan())
-            .await?
-            .ok_or_else(conflict)?;
+            .await
+            .map_err(|e| bootstrap_context("network lookup", e))?
+            .ok_or_else(|| bootstrap_context("network absent", conflict()))?;
         if observed.network_id != network.network_id || observed.attached_endpoints != 0 {
-            return Err(conflict());
+            return Err(bootstrap_context(
+                "network identity or nonempty attachment",
+                conflict(),
+            ));
         }
         async fn call(
             session: &mut ControllerSession,
@@ -134,13 +149,17 @@ impl DockerDriver {
                 Reply::Error(e) => Err(e),
             }
         }
-        let before = call(session, Request::Inspect {}).await?;
-        let revision = before["revision"].as_u64().ok_or_else(conflict)?;
+        let before = call(session, Request::Inspect {})
+            .await
+            .map_err(|e| bootstrap_context("deny preflight readback", e))?;
+        let revision = before["revision"]
+            .as_u64()
+            .ok_or_else(|| bootstrap_context("deny preflight revision", conflict()))?;
         if before["installed"] != true
             || before["uncertain"] != false
             || before["ethernet_guarded"] != true
         {
-            return Err(conflict());
+            return Err(bootstrap_context("deny preflight receipt", conflict()));
         }
         // Rewrite a known deny policy and wait for the actual kernel readback.
         // Reading an old revision or accepting a caller-supplied receipt is insufficient.
@@ -150,7 +169,8 @@ impl DockerDriver {
                 expected_revision: revision,
             },
         )
-        .await?;
+        .await
+        .map_err(|e| bootstrap_context("deny apply readback", e))?;
         if denied["installed"] != true
             || denied["uncertain"] != false
             || denied["ethernet_guarded"] != true
@@ -162,7 +182,7 @@ impl DockerDriver {
                 .as_str()
                 .is_none_or(|s| !physical_id(s))
         {
-            return Err(conflict());
+            return Err(bootstrap_context("deny apply receipt", conflict()));
         }
         Ok(())
     }
@@ -209,9 +229,14 @@ impl DockerDriver {
             || sandbox.id != network.native.identity.sandbox_id
             || sandbox.expires_at != network.native.expires_at
         {
-            return Err(conflict());
+            return Err(bootstrap_context(
+                "requested creation identity or lifetime",
+                conflict(),
+            ));
         }
-        self.quarantine_for_bootstrap(network, session).await?;
+        self.quarantine_for_bootstrap(network, session)
+            .await
+            .map_err(|e| bootstrap_context("prepare", e))?;
         self.prepare_runtime_observed(sandbox, request, Some(network), observer)
             .await
     }
@@ -226,8 +251,10 @@ impl DockerDriver {
     ) -> Result<(), ApiError> {
         network.validate()?;
         let actual = self.owned(handle).await?.ok_or_else(conflict)?;
-        match_requested_plan(&actual, Some(network))?;
-        admit_placement(&actual, network, self.config.profile.runtime())?;
+        match_requested_plan(&actual, Some(network))
+            .map_err(|e| bootstrap_context("recovered workload plan label", e))?;
+        admit_placement(&actual, network, self.config.profile.runtime())
+            .map_err(|e| bootstrap_context("recovered placement", e))?;
         if actual.id.as_deref() != Some(handle.backend_ref.as_str())
             || actual
                 .config
@@ -265,10 +292,15 @@ impl DockerDriver {
             return Err(conflict());
         }
         let actual = self.owned(handle).await?.ok_or_else(conflict)?;
-        match_requested_plan(&actual, Some(network))?;
-        admit_placement(&actual, network, self.config.profile.runtime())?;
+        match_requested_plan(&actual, Some(network))
+            .map_err(|e| bootstrap_context("start workload plan label", e))?;
+        admit_placement(&actual, network, self.config.profile.runtime())
+            .map_err(|e| bootstrap_context("start placement", e))?;
         if actual.state.as_ref().and_then(|s| s.status) != Some(ContainerStateStatusEnum::CREATED) {
-            return Err(conflict());
+            return Err(bootstrap_context(
+                "start requires created workload",
+                conflict(),
+            ));
         }
         self.quarantine_for_bootstrap(network, session).await?;
         self.start_prepared(handle).await?;
@@ -290,10 +322,15 @@ impl DockerDriver {
             return Err(conflict());
         }
         let actual = self.owned(handle).await?.ok_or_else(conflict)?;
-        match_requested_plan(&actual, Some(network))?;
-        admit_placement(&actual, network, self.config.profile.runtime())?;
+        match_requested_plan(&actual, Some(network))
+            .map_err(|e| bootstrap_context("endpoint workload plan label", e))?;
+        admit_placement(&actual, network, self.config.profile.runtime())
+            .map_err(|e| bootstrap_context("endpoint placement", e))?;
         if actual.state.as_ref().and_then(|s| s.running) != Some(true) {
-            return Err(conflict());
+            return Err(bootstrap_context(
+                "endpoint requires running workload",
+                conflict(),
+            ));
         }
         let provider = DockerNetworkProvider::connect().await?;
         let observed = provider
@@ -301,7 +338,10 @@ impl DockerDriver {
             .await?
             .ok_or_else(conflict)?;
         if observed.network_id != network.network_id || observed.attached_endpoints != 1 {
-            return Err(conflict());
+            return Err(bootstrap_context(
+                "endpoint network identity or attachment count",
+                conflict(),
+            ));
         }
         let native = self
             .docker
@@ -309,6 +349,7 @@ impl DockerDriver {
             .await
             .map_err(backend)?;
         endpoint(&actual, &native, network, &observed)
+            .map_err(|e| bootstrap_context("endpoint identity", e))
     }
 }
 

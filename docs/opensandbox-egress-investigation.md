@@ -67,6 +67,13 @@ it preserves every floor verifier, revision check, native timeout deduction,
 bridge identity and original sandbox deadline. The five-level native gate
 must still prove it finishes inside the existing publication budget.
 
+Classic upstream policy tightening preserves established connections by
+default; its policy mutation API offers `dropEstablished=true` for teardown.
+This is another reason upstream reachability is not equivalent to GoldenHoop's
+revocation/collection acceptance. The explicit teardown drops are retained
+across subsequent applies instead of being erased by a table rebuild.
+[Source: upstream policy replacement and port floor](https://github.com/opensandbox-group/OpenSandbox/blob/067a138cdaacce3f829fffb411acfc4001feefca/docs/architecture/network/egress.md#L39-L43).
+
 ## Readiness and retirement are separate evidence
 
 OpenSandbox keeps health pending until the listener, redirect and CA setup
@@ -99,8 +106,11 @@ evidence for those tests, and changing runtime is not an acceptance shortcut.
 
 - Retain exact ownership, source identity and original-target checks.
 - Reduce duplicate processes in protected renewal without changing deadlines.
-- Capture only owned-generation native counters during the failing private
-  credential probe. These are read-only diagnostics, never authority grants.
+- Capture owned-generation native counters during the failing private
+  credential probe. A separately owned observer uses counter-only rules to
+  distinguish bridge/veth identities at each hook; it adds no verdict, NAT or
+  mark and must confirm its tables and helper container absent afterward.
+  These observations never grant authority.
 - Keep the small private inet packet contract: TCP reaches the listener and
   SO_ORIGINAL_DST remains correct for both families through the redirect,
   main policy and immutable destination floor. It does not cover bridge-family

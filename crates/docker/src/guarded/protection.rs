@@ -144,7 +144,7 @@ impl DockerDriver {
         }
         .await;
         attempt.confirmed = result.is_ok();
-        result
+        result.map_err(|e| bootstrap_context("protected binding confirmation", e))
     }
 }
 
