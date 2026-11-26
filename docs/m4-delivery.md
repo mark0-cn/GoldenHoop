@@ -288,3 +288,27 @@ M4-M6 acceptance are still outstanding.
 passes 315 plus static guest/rootfs construction. Both include format, strict
 workspace/all-target lint and fingerprints of all 266 build inputs. These
 portable results do not replace the corrected actual KVM gate.
+
+## Manager frame exchange correction
+
+The [ce12171 native-public archive](evidence/m4-native-45894594350-archive.json)
+verifies all 291 inputs and retains Failed/Unknown collection. Its foreground
+manager becomes ready, but no native generation is created and both probe and
+stop IPC fail. The configured frame ceiling exceeds the common reader's 24-MiB
+maximum, causing rejection before either endpoint reads a message.
+
+The correction shares that exact ceiling and marks uncertain transport errors
+nonretryable. A real Unix socket test roundtrips both a stop envelope and a valid
+16-MiB file envelope with ownership-bound replies. Recovery refuses collection
+while the actual owned supervisor is still preparing and skips a recorded PID
+after positively observing its old identity gone. If stop IPC fails, the fixture
+retains that failure while signaling only its actual child for graceful drainage;
+physical collection remains an independent observation.
+
+[Windows checks](evidence/m4-native-manager-frame-validation-windows.json) pass
+270 tests and [Linux checks](evidence/m4-native-manager-frame-validation-linux.json)
+pass 316, including the real socket regression, plus static musl guest/rootfs
+construction. Both include format, strict workspace/all-target lint and all 266
+input fingerprints. A new actual native-public gate remains required before
+accepting this component. Image preparation, snapshots/restores/templates,
+combined M4 and all M5-M6 deliverables remain outstanding.

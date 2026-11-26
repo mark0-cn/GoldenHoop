@@ -721,7 +721,8 @@ impl NativeEngine {
             if matches!(
                 self.child_state(record.owner.sandbox_id, record.supervisor.as_ref())?,
                 ChildState::NotOwned
-            ) && let Some(identity) = &record.supervisor
+            ) && !self.supervisor_gone(record)?
+                && let Some(identity) = &record.supervisor
                 && let Some(target) = super::reaper::recorded(identity)?
             {
                 let _ = target.collected()?;
@@ -756,6 +757,15 @@ impl NativeEngine {
     }
 
     async fn collect_dead(&self, record: &VmJournal) -> Result<()> {
+        if matches!(
+            self.child_state(record.owner.sandbox_id, record.supervisor.as_ref())?,
+            ChildState::Running
+        ) {
+            return Err(invalid(
+                "owned supervisor is still preparing; refresh its durable identity before recovery",
+            )
+            .into());
+        }
         if self.supervisor_alive(record)? {
             return Err(invalid("live native supervisor must own collection").into());
         }

@@ -260,7 +260,10 @@ def suite(binary, boot, fixture):
                 except Exception as error:
                     cleanup_errors.append(str(error))
         try:
-            manager.close()
+            stop_error = manager.close()
+            if stop_error:
+                report['manager_stop_error'] = stop_error
+                report['result'] = 'failed'
         except Exception as error:
             cleanup_errors.append(str(error))
         report['observations']['manager'] = manager.diagnostics()

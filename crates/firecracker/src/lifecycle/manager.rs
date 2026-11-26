@@ -20,7 +20,7 @@ use tokio::{
 };
 
 pub(super) const MANAGER_MEMORY: u64 = 768 * MIB;
-const FRAME_LIMIT: usize = 24 * 1024 * 1024 + 65536;
+const FRAME_LIMIT: usize = crate::vsock::MAX_AGENT_FRAME;
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -69,10 +69,12 @@ fn manager_group(cfg: &DriverConfig, epoch: Uuid) -> PathBuf {
     ))
 }
 fn unavailable() -> ApiError {
-    ApiError::new(
+    let mut error = ApiError::new(
         ErrorCode::BackendUnavailable,
         "native manager exchange is unconfirmed; reconcile the owned generation",
-    )
+    );
+    error.retryable = false;
+    error
 }
 fn deadline(call: &DriverCall) -> Duration {
     Duration::from_secs(match call {
@@ -527,4 +529,98 @@ pub async fn run_manager(config: PathBuf) -> Result<()> {
         return Err(invalid("native manager metadata collection incomplete").into());
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use base64::Engine;
+
+    #[tokio::test]
+    async fn manager_envelopes_cross_real_sockets_with_the_shared_frame_ceiling() {
+        // Framing integration only. This fixture does not establish a usable
+        // runtime, manager service or hardware capability.
+        let installation_id = Uuid::new_v4();
+        let epoch = Uuid::new_v4();
+        let config_sha256 = "a".repeat(64);
+        let encoded = base64::engine::general_purpose::STANDARD.encode(vec![0u8; 16 * 1024 * 1024]);
+        for operation in [
+            Operation::Shutdown,
+            Operation::Call {
+                call: Box::new(DriverCall::Rpc {
+                    handle: RuntimeHandle {
+                        sandbox_id: Uuid::new_v4(),
+                        profile: PROFILE.into(),
+                        backend_ref: format!("fc1:{installation_id}:{}", Uuid::new_v4()),
+                    },
+                    request: AgentRequest::WriteFile {
+                        path: "frame-boundary".into(),
+                        data_base64: encoded.clone(),
+                    },
+                }),
+            },
+        ] {
+            let (client, server) = UnixStream::pair().unwrap();
+            let digest = config_sha256.clone();
+            let responder = tokio::spawn(async move {
+                let mut server = BufReader::new(server);
+                let frame = read_frame(&mut server, FRAME_LIMIT).await.unwrap();
+                let request: Request = serde_json::from_slice(&frame).unwrap();
+                assert_eq!(request.installation_id, installation_id);
+                assert_eq!(request.epoch, epoch);
+                assert_eq!(request.config_sha256, digest);
+                match request.operation {
+                    Operation::Shutdown => (),
+                    Operation::Call { call } => match *call {
+                        DriverCall::Rpc {
+                            request: AgentRequest::WriteFile { path, data_base64 },
+                            ..
+                        } => {
+                            assert_eq!(path, "frame-boundary");
+                            assert_eq!(
+                                base64::engine::general_purpose::STANDARD
+                                    .decode(data_base64)
+                                    .unwrap()
+                                    .len(),
+                                16 * 1024 * 1024
+                            );
+                        }
+                        _ => panic!("unexpected manager request"),
+                    },
+                }
+                let mut reply = serde_json::to_vec(&Reply {
+                    installation_id,
+                    epoch,
+                    config_sha256: digest,
+                    result: Ok(serde_json::Value::Null),
+                })
+                .unwrap();
+                reply.push(b'\n');
+                server.get_mut().write_all(&reply).await.unwrap();
+                server.get_mut().shutdown().await.unwrap();
+            });
+            let mut client = BufReader::new(client);
+            let mut bytes = serde_json::to_vec(&Request {
+                installation_id,
+                epoch,
+                config_sha256: config_sha256.clone(),
+                operation,
+            })
+            .unwrap();
+            assert!(bytes.len() < FRAME_LIMIT);
+            bytes.push(b'\n');
+            client.get_mut().write_all(&bytes).await.unwrap();
+            let frame = read_frame(&mut client, FRAME_LIMIT).await.unwrap();
+            let reply: Reply = serde_json::from_slice(&frame).unwrap();
+            assert_eq!(reply.installation_id, installation_id);
+            assert_eq!(reply.epoch, epoch);
+            assert_eq!(reply.config_sha256, config_sha256);
+            assert_eq!(reply.result.unwrap(), serde_json::Value::Null);
+            responder.await.unwrap();
+        }
+        assert!(
+            !unavailable().retryable,
+            "an uncertain native transport must not request replay"
+        );
+    }
 }

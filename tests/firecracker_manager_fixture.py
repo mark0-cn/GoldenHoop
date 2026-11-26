@@ -1,6 +1,7 @@
 """Own the real foreground Rust installation service and observe native cleanup."""
 import json
 import os
+import signal
 from pathlib import Path
 import subprocess
 import time
@@ -14,6 +15,7 @@ class Manager:
         self.log = config.with_name(config.stem + '-manager.log')
         self.process = None
         self.owner = None
+        self.stop_error = None
 
     def start(self):
         with self.log.open('ab') as output:
@@ -84,16 +86,28 @@ class Manager:
         if not self.process:
             return
         if self.process.poll() is None:
-            stopped = subprocess.run([str(self.binary), 'manager-stop', '--config', str(self.config)],
-                                     capture_output=True, timeout=15)
-            assert stopped.returncode == 0, stopped.stderr.decode(errors='replace')[-2000:]
-            assert json.loads(stopped.stdout) == {'stop_requested': True, 'cleanup': 'pending'}
-        assert self.process.wait(timeout=160) == 0, 'native manager failed draining'
+            try:
+                stopped = subprocess.run([str(self.binary), 'manager-stop', '--config', str(self.config)],
+                                         capture_output=True, timeout=15)
+                if stopped.returncode != 0:
+                    raise RuntimeError(f'manager-stop exited with {stopped.returncode}: '
+                                       + stopped.stderr.decode(errors='replace')[-2000:])
+                assert json.loads(stopped.stdout) == {'stop_requested': True, 'cleanup': 'pending'}
+            except (subprocess.TimeoutExpired, RuntimeError, ValueError, AssertionError) as error:
+                self.stop_error = str(error) or 'manager-stop returned an invalid drain acknowledgement'
+                # This Popen is the fixture's actual child. Graceful signal
+                # drainage remains available when its IPC endpoint is broken.
+                if self.process.poll() is None:
+                    self.process.send_signal(signal.SIGTERM)
+        status = self.process.wait(timeout=160)
+        if status != 0:
+            self.stop_error = self.stop_error or f'native manager exited with {status}'
         assert not (Path('/proc') / str(self.process.pid)).exists()
         if self.owner:
             assert not Path(self.owner['cgroup']).exists()
         assert not (self.root / 'manager.sock').exists()
         assert not (self.root / 'manager.json').exists()
+        return self.stop_error
 
     def diagnostics(self):
         tail = ''
@@ -101,6 +115,6 @@ class Manager:
             with self.log.open('rb') as source:
                 source.seek(max(0, self.log.stat().st_size - 5000))
                 tail = source.read(5000).decode(errors='replace')
-        return {'owner': self.owner, 'stderr_tail': tail,
+        return {'owner': self.owner, 'stderr_tail': tail, 'stop_error': self.stop_error,
                 'process_collected': bool(self.process and self.process.poll() is not None
                                           and not (Path('/proc') / str(self.process.pid)).exists())}
