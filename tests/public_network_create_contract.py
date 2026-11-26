@@ -215,7 +215,7 @@ class Contract(ApiContract):
             '--label', 'dev.goldenhoop.role=network-provider-audit', '--network', 'host', '--runtime', 'runc',
             '--user', '1000:1000', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges:true', '--read-only',
             '--memory', '64m', '--memory-swap', '64m', '--cpus', '0.25', '--pids-limit', '16',
-            '--entrypoint', 'python3', self.args.image, '-B', '-u', '-c', UPSTREAM)
+            '--entrypoint', 'python3', self.args.image, '-B', '-u', '-c', getattr(self, 'dns_upstream_source', UPSTREAM))
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             rows = [json.loads(line) for line in docker('logs', self.spy).splitlines()]

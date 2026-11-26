@@ -31,6 +31,38 @@ assert r.read(129).decode()==os.environ['GH_EXPECTED_BODY']
 c.close();print('credential_client_accepted',end='')
 '''
 
+DENIED_CLIENT = r'''import http.client,json,os,socket,ssl,urllib.parse
+assert os.geteuid()==1000
+u=urllib.parse.urlsplit(os.environ['GH_URL'])
+context=ssl.create_default_context(cadata=os.environ['GH_PUBLIC_CA'])
+c=(http.client.HTTPSConnection(u.hostname,u.port,context=context,timeout=5) if u.scheme=='https' else http.client.HTTPConnection(u.hostname,u.port,timeout=5))
+try:
+ c.request('GET',u.path,headers=json.loads(os.environ.get('GH_HEADERS','{}')))
+ r=c.getresponse();assert r.status>=400,r.status
+except (OSError,http.client.HTTPException):pass
+finally:c.close()
+print('credential_client_refused',end='')
+'''
+
+STREAM_CLIENT = r'''import http.client,json,os,ssl,urllib.parse
+assert os.geteuid()==1000
+u=urllib.parse.urlsplit(os.environ['GH_URL'])
+c=http.client.HTTPSConnection(u.hostname,u.port,context=ssl.create_default_context(cadata=os.environ['GH_PUBLIC_CA']),timeout=8)
+c.request('GET',u.path,headers=json.loads(os.environ['GH_HEADERS']))
+r=c.getresponse();assert r.status==200,r.status
+ticks=0
+try:
+ while True:
+  line=r.readline(128)
+  if not line:break
+  if line.startswith(b'data: '):
+   ticks+=1;print('credential_tick',ticks,flush=True)
+except (OSError,http.client.HTTPException):pass
+finally:c.close()
+assert ticks>=13,ticks
+print('credential_stream_collected',end='',flush=True)
+'''
+
 
 class Contract(NetworkContract):
     def __init__(self, args):
@@ -67,7 +99,6 @@ class Contract(NetworkContract):
                     os.environ[key] = value
 
     def start_spy(self):
-        super().start_spy()
         fixture = json.loads(docker('image', 'inspect', self.args.fixture_image))[0]
         assert fixture['Config']['Labels']['dev.goldenhoop.fixture'] == 'network-interop'
         network_name = 'goldenhoop-credential-receiver-' + self.attempt[:12]
@@ -106,6 +137,10 @@ class Contract(NetworkContract):
         endpoint = json.loads(docker('inspect', self.receiver))[0]['NetworkSettings']['Networks'][network_name]
         assert endpoint['IPAddress'] == self.control['ipv4']
         assert ipaddress.ip_address(endpoint['GlobalIPv6Address']) == ipaddress.ip_address(self.control['ipv6'])
+        dns_fixture = Path('tests/fixtures/credential_dns.py')
+        self.dns_upstream_source = dns_fixture.read_text(encoding='utf-8').replace('MAPPING = {}',
+            'MAPPING = ' + repr({key: self.control[key] for key in ('ipv4', 'ipv6')}), 1)
+        super().start_spy()
         configuration = json.loads(self.config.read_text())
         configuration['private_exceptions'] = [self.control['ipv4'] + '/32', self.control['ipv6'] + '/128']
         self.config.write_text(json.dumps(configuration), encoding='utf-8')
@@ -121,6 +156,7 @@ class Contract(NetworkContract):
             ipv4=self.control['ipv4'], ipv6=self.control['ipv6'], public_ca_sha256=hashlib.sha256(self.control['public_ca'].encode()).hexdigest())
         self.report['source_files_sha256']['tests/credential_broker_contract.py'] = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
         self.report['source_files_sha256']['tests/fixtures/credential_receiver.py'] = hashlib.sha256(source.encode()).hexdigest()
+        self.report['source_files_sha256']['tests/fixtures/credential_dns.py'] = hashlib.sha256(dns_fixture.read_bytes()).hexdigest()
         self.save()
 
     def url(self, scheme, path, ipv6=False):
@@ -155,25 +191,58 @@ class Contract(NetworkContract):
                 injection=injection or {'kind': 'bearer'}, substitutions=substitutions or []),
             'secret': source or dict(kind='literal', value=self.control['tokens']['alpha'])})
 
-    def command(self, sandbox, url, *, method='GET', headers=None, body=None):
+    def start_client(self, sandbox, url, *, method='GET', headers=None, body=None, script=CLIENT, timeout=20):
         public = self.request('GET', f'/v1/sandboxes/{sandbox}/credential-ca')['certificate_pem']
         environment = dict(GH_URL=url, GH_PUBLIC_CA=public, GH_EXPECTED_BODY=self.control['expected_body'], GH_METHOD=method)
         if headers:
             environment['GH_HEADERS'] = json.dumps(headers)
         if body is not None:
             environment['GH_BODY'] = body
-        execution = self.request('POST', f'/v1/sandboxes/{sandbox}/commands',
-            dict(argv=['python3', '-c', CLIENT], env=environment, timeout_seconds=20, max_output_bytes=4096), key=str(uuid.uuid4()))
-        result = self.wait_execution(execution['id'], limit=35)
+        return self.request('POST', f'/v1/sandboxes/{sandbox}/commands',
+            dict(argv=['python3', '-c', script], env=environment, timeout_seconds=timeout, max_output_bytes=4096), key=str(uuid.uuid4()))
+
+    def command_events(self, execution):
         with closing(sqlite3.connect(self.database.as_uri() + '?mode=ro', uri=True)) as database:
             events = [json.loads(row[0]) for row in database.execute('SELECT payload FROM events WHERE execution_id=? ORDER BY sequence', (execution['id'],))]
+        return events
+
+    def finish_client(self, execution, marker=b'credential_client_accepted', exact=True):
+        result = self.wait_execution(execution['id'], limit=35)
+        events = self.command_events(execution)
         stdout = b''.join(base64.b64decode(event['data']['data']) for event in events if event['kind'] == 'stdout')
         assert result['state'] == 'succeeded' and result['exit_code'] == 0, (result, events)
-        assert stdout == b'credential_client_accepted' and sum(event['kind'] == 'completed' for event in events) == 1
+        assert (stdout == marker if exact else stdout.endswith(marker)) and sum(event['kind'] == 'completed' for event in events) == 1
         self.report.setdefault('credential_command_events', []).append(dict(execution=result, events=events))
 
+    def command(self, sandbox, url, **kwargs):
+        self.finish_client(self.start_client(sandbox, url, **kwargs))
+
+    def receiver_logs(self):
+        return [json.loads(line) for line in docker('logs', self.receiver).splitlines() if line.startswith('{')]
+
+    def wait_receiver(self, predicate, limit=15):
+        deadline = time.monotonic() + limit
+        while time.monotonic() < deadline:
+            selected = [row for row in self.receiver_logs() if predicate(row)]
+            if selected:
+                return selected
+            time.sleep(0.1)
+        raise AssertionError('owned receiver did not observe the required boundary')
+
+    def assert_collected(self, owner):
+        assert not docker('ps', '-aq', '--filter', 'id=' + owner['container_id'])
+        self.report.setdefault('independently_collected_controller_ids', []).append(owner['container_id'])
+
+    def policy(self, root, deny=False):
+        path = f'/v1/sandboxes/{root}/network-policy'
+        current = self.request('GET', path)
+        rules = [] if deny else self.allowed_rules()
+        operation = self.request('PUT', path, dict(expected_revision=current['revision'], policy=dict(default_action='deny', rules=rules)), key=str(uuid.uuid4()))
+        self.wait(operation['operation'])
+        self.ready([root])
+
     def create_source(self):
-        rules = [dict(destination=ip, ports=[18080, 18443], action='allow') for ip in (self.control['ipv4'], self.control['ipv6'])]
+        rules = self.allowed_rules()
         created = self.request('POST', '/v1/sandboxes', dict(profile=self.profile, image=self.args.image, resources=LIMITS,
             ttl_seconds=900, network=dict(default_action='deny', rules=rules), required_capabilities=['network_policy', 'secret_injection']), key=str(uuid.uuid4()))
         identity = created['sandbox']['id']
@@ -182,6 +251,28 @@ class Contract(NetworkContract):
         self.ready([identity])
         self.physical[identity] = self.workload_identity(identity)
         return identity
+
+    def allowed_rules(self):
+        return [dict(destination=host, ports=[18080, 18443], action='allow')
+                for host in (self.control['ipv4'], self.control['ipv6'], 'api.credential.test', 'other.credential.test')]
+
+    def named_origin(self, root):
+        binding = str(uuid.uuid4())
+        self.put(root, binding, scheme='https', host='api.credential.test',
+                 source=dict(kind='literal', value=self.control['tokens']['rotated']))
+        self.wait_credential(root, binding)
+        marker = uuid.uuid4().hex
+        self.command(root, 'https://api.credential.test:18443/v1/named', headers={'X-Fixture-Request': marker})
+        rows = self.wait_receiver(lambda row: row.get('request_id') == marker)
+        assert len(rows) == 1 and rows[0]['secret_sha256'] == hashlib.sha256(self.control['tokens']['rotated'].encode()).hexdigest()
+        marker = uuid.uuid4().hex
+        execution = self.start_client(root, 'https://other.credential.test:18443/v1/named',
+            headers={'X-Fixture-Request': marker}, script=DENIED_CLIENT)
+        self.finish_client(execution, b'credential_client_refused')
+        assert not any(row.get('request_id') == marker for row in self.receiver_logs())
+        queries = [json.loads(line) for line in docker('logs', self.spy).splitlines()]
+        assert {'api.credential.test', 'other.credential.test'} <= {row.get('query') for row in queries}
+        self.check('actual_owned_DNS_and_TLS_name_grants_cannot_select_another_binding_on_the_shared_receiver_IP')
 
     def client_input(self, prefix):
         return dict(expected_revision=0, binding=dict(scheme='http', host=self.control['ipv4'], port=18080,
@@ -253,6 +344,78 @@ class Contract(NetworkContract):
         self.report['rust_sdk_result'] = value
         self.check('actual_Rust_SDK_credential_intent_metadata_and_public_CA_contract')
 
+    def cross_sandbox(self, root):
+        peer = self.create_source()
+        binding = str(uuid.uuid4())
+        self.put(peer, binding, source=dict(kind='literal', value=self.control['tokens']['beta']))
+        self.wait_credential(peer, binding)
+        assert self.request('GET', f'/v1/sandboxes/{peer}/credential-ca')['certificate_pem'] != self.request('GET', f'/v1/sandboxes/{root}/credential-ca')['certificate_pem']
+        for source, target, secret in ((root, peer, 'exchange'), (peer, root, 'beta')):
+            marker = uuid.uuid4().hex
+            self.command(source, self.url('http', '/v1/identity'), headers={
+                'X-Fixture-Request': marker, 'X-GoldenHoop-Sandbox': target, 'X-Sandbox-ID': target})
+            rows = self.wait_receiver(lambda row: row.get('request_id') == marker)
+            assert len(rows) == 1 and rows[0]['event'] == 'accepted'
+            assert rows[0]['secret_sha256'] == hashlib.sha256(self.control['tokens'][secret].encode()).hexdigest()
+        self.check('distinct_owned_network_sources_and_CAs_resist_cross_sandbox_header_selection')
+        return peer
+
+    def stream_revocation(self, root, binding):
+        marker = uuid.uuid4().hex
+        owner = self.controller_owner(root)
+        start = time.monotonic()
+        execution = self.start_client(root, self.url('https', '/v1/stream'),
+            headers={'X-Fixture-Request': marker}, script=STREAM_CLIENT, timeout=60)
+        deadline = start + 30
+        while time.monotonic() < deadline:
+            events = self.command_events(execution)
+            stdout = b''.join(base64.b64decode(event['data']['data']) for event in events if event['kind'] == 'stdout')
+            assert not any(event['kind'] == 'completed' for event in events), events
+            if b'credential_tick 13\n' in stdout:
+                assert time.monotonic() - start >= 12
+                break
+            time.sleep(0.2)
+        else:
+            raise AssertionError('actual TLS stream did not survive more than one native lease')
+        self.request('DELETE', f'/v1/sandboxes/{root}/credentials/{binding}')
+        self.wait_credential(root, binding, 'revoked', 2)
+        self.assert_collected(owner)
+        self.finish_client(execution, b'credential_stream_collected', exact=False)
+        self.wait_receiver(lambda row: row.get('event') == 'stream_collected' and row.get('request_id') == marker)
+        self.check('actual_TLS_stream_survives_native_renewal_then_revocation_collects_the_old_process_and_receiver_socket')
+
+    def deny_and_late_exchange(self, root, binding):
+        self.put(root, binding, revision=5, source=dict(kind='exchange', resolver='delayed'))
+        self.wait_credential(root, binding, revision=6)
+        self.policy(root, deny=True)
+        self.wait_credential(root, binding, revision=6)
+        baseline = len([row for row in self.receiver_logs() if row.get('event') == 'exchange_received'])
+        marker = uuid.uuid4().hex
+        execution = self.start_client(root, self.url('http', '/v1/denied'),
+            headers={'X-Fixture-Request': marker}, script=DENIED_CLIENT)
+        self.finish_client(execution, b'credential_client_refused')
+        rows = self.receiver_logs()
+        assert len([row for row in rows if row.get('event') == 'exchange_received']) == baseline
+        assert not any(row.get('request_id') == marker for row in rows)
+        self.check('applied_packet_deny_prevents_both_private_exchange_and_upstream_arrival')
+        self.policy(root)
+        self.wait_credential(root, binding, revision=6)
+        marker = uuid.uuid4().hex
+        owner = self.controller_owner(root)
+        execution = self.start_client(root, self.url('http', '/v1/delayed'),
+            headers={'X-Fixture-Request': marker}, script=DENIED_CLIENT)
+        self.wait_receiver(lambda row: row.get('event') == 'exchange_received' and row.get('delayed'))
+        self.request('DELETE', f'/v1/sandboxes/{root}/credentials/{binding}')
+        self.wait_credential(root, binding, 'revoked', 7)
+        self.assert_collected(owner)
+        docker('exec', self.receiver, 'python3', '-c', "from pathlib import Path;Path('/tmp/credential-fixture/release-delayed').touch()")
+        self.finish_client(execution, b'credential_client_refused')
+        self.wait_receiver(lambda row: row.get('event') == 'exchange_connection_collected' and row.get('delayed'))
+        assert not any(row.get('request_id') == marker for row in self.receiver_logs())
+        delayed = hashlib.sha256(self.control['tokens']['delayed'].encode()).hexdigest()
+        assert not any(row.get('event') == 'accepted' and row.get('secret_sha256') == delayed for row in self.receiver_logs())
+        self.check('exchange_released_after_applied_revocation_cannot_dispatch_a_late_private_value')
+
     def exercise(self):
         profiles = self.request('GET', '/v1/profiles')
         self.report['profiles'] = profiles
@@ -311,9 +474,22 @@ class Contract(NetworkContract):
         self.command(root, self.url('https', '/v1/restarted-api'))
         self.check('API_restart_preserves_encrypted_CA_identity_and_existing_native_traffic')
         self.sdk_contracts(root)
-        self.request('DELETE', f'/v1/sandboxes/{root}/credentials/{plain}')
-        self.wait_credential(root, plain, state='revoked', revision=6)
+        self.named_origin(root)
+        peer = self.cross_sandbox(root)
+        owners = [self.controller_owner(identity) for identity in (root, peer)]
+        self.stop('worker')
+        self.launch('worker')
+        for binding in (plain, secure, v6):
+            self.wait_credential(root, binding)
+        assert self.request('GET', f'/v1/sandboxes/{root}/credential-ca') == public
+        for owner in owners:
+            self.assert_collected(owner)
+        self.command(root, self.url('https', '/v1/restarted-worker'))
+        self.check('worker_restart_reuses_the_encrypted_CA_and_workload_but_collects_old_controller_epochs')
+        self.stream_revocation(root, secure)
+        self.deny_and_late_exchange(root, plain)
         assert self.workload_identity(root) == self.physical[root]
+        assert self.workload_identity(peer) == self.physical[peer]
         self.check('revocation_requires_native_collection_while_preserving_the_workload_identity')
         with closing(sqlite3.connect(self.database.as_uri() + '?mode=ro', uri=True)) as database:
             material = '\n'.join(str(row) for table in ('credential_bindings', 'credential_cas', 'audit') for row in database.execute('SELECT * FROM ' + table))

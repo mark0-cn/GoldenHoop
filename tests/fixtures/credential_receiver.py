@@ -85,15 +85,30 @@ class Handler(http.server.BaseHTTPRequestHandler):
         else:
             body = self.rfile.read(length)
         path = urllib.parse.urlsplit(self.path)
+        request_id = self.headers.get('X-Fixture-Request', '')
+        if len(request_id) != 32 or any(c not in '0123456789abcdef' for c in request_id):
+            request_id = None
         if path.path in ('/exchange', '/exchange-delayed'):
             if self.command != 'POST' or self.headers.get('X-Exchange-Auth') != tokens['exchange-auth']:
                 return self.reply(401, b'denied')
             delayed = path.path == '/exchange-delayed'
             emit(event='exchange_received', delayed=delayed, authenticated=True)
             if delayed:
-                time.sleep(3)
+                deadline = time.monotonic() + 30
+                while not (root / 'release-delayed').exists():
+                    if time.monotonic() >= deadline:
+                        return self.reply(504, b'bounded')
+                    time.sleep(0.05)
             value = tokens['delayed' if delayed else 'exchange']
             try:
+                if delayed:
+                    self.connection.settimeout(0.2)
+                    try:
+                        if not self.connection.recv(1):
+                            emit(event='exchange_connection_collected', delayed=True)
+                            return
+                    except TimeoutError:
+                        pass
                 self.reply(200, json.dumps(dict(value=value)).encode())
             except (OSError, ssl.SSLError):
                 emit(event='exchange_connection_collected', delayed=delayed)
@@ -116,12 +131,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
                              if name != 'exchange-auth' and token in urllib.parse.unquote(path.path)
                              and token in values and token.encode() in body), None)
         if selected is None:
-            emit(event='uncredentialed_request', tls=isinstance(self.connection, ssl.SSLSocket))
+            emit(event='uncredentialed_request', tls=isinstance(self.connection, ssl.SSLSocket), request_id=request_id)
             return self.reply(401, b'denied')
         token = tokens[selected]
         digest = hashlib.sha256(token.encode()).hexdigest()
         emit(event='accepted', tls=isinstance(self.connection, ssl.SSLSocket), secret_sha256=digest,
-             basic=authorization.startswith('Basic '), substituted=path.path.startswith('/v1/substitute/'))
+             basic=authorization.startswith('Basic '), substituted=path.path.startswith('/v1/substitute/'), request_id=request_id)
         if path.path == '/v1/stream':
             self.send_response(200)
             self.send_header('Content-Type', 'text/event-stream')
@@ -135,7 +150,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             except (OSError, ssl.SSLError):
                 pass
             finally:
-                emit(event='stream_collected', secret_sha256=digest)
+                emit(event='stream_collected', secret_sha256=digest, request_id=request_id)
             self.close_connection = True
             return
         self.reply(200, control['expected_body'].encode(), reflected=token)
