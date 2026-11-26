@@ -9,7 +9,10 @@ pub struct ResolverConfig {
 
 impl ResolverConfig {
     pub fn new(gateway: Ipv4Addr) -> Self {
-        let contents = format!("nameserver {gateway}\noptions timeout:1 attempts:1\n");
+        // A libc dual-stack lookup can queue both A and AAAA while the owner
+        // serializes their native policy transactions. Client patience must
+        // cover both replies; it does not extend either grant or install bound.
+        let contents = format!("nameserver {gateway}\noptions timeout:5 attempts:1\n");
         let file_name = format!("resolver-{:x}.conf", Sha256::digest(contents.as_bytes()));
         Self {
             file_name,

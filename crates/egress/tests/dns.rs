@@ -71,6 +71,99 @@ fn cname(name: &str, ttl: u32, next: &str) -> Record {
 }
 
 #[test]
+fn credential_fixture_compressed_a_and_aaaa_answers_match_the_forwarded_question() {
+    // The owned credential DNS fixture writes these fields directly, rather
+    // than using Hickory's encoder. This checks its wire interoperability only.
+    let policy = Model::new(
+        vec![
+            Policy::compile(&NetworkPolicy {
+                default_action: NetworkAction::Deny,
+                rules: vec![
+                    NetworkRule {
+                        destination: "172.18.0.2".into(),
+                        ports: vec![18080, 18443],
+                        action: NetworkAction::Allow,
+                    },
+                    NetworkRule {
+                        destination: "fd52:f239:c9f4::2".into(),
+                        ports: vec![18080, 18443],
+                        action: NetworkAction::Allow,
+                    },
+                    NetworkRule {
+                        destination: "api.credential.test".into(),
+                        ports: vec![],
+                        action: NetworkAction::Allow,
+                    },
+                    NetworkRule {
+                        destination: "other.credential.test".into(),
+                        ports: vec![],
+                        action: NetworkAction::Allow,
+                    },
+                ],
+            })
+            .unwrap(),
+        ],
+        Overlays::default(),
+    )
+    .unwrap();
+    let floor =
+        goldenhoop_egress::ProtectedDestinations::new(goldenhoop_egress::DestinationScope {
+            host_addresses: vec![
+                "172.18.0.1".parse().unwrap(),
+                "fd52:f239:c9f4::1".parse().unwrap(),
+            ],
+            control_addresses: vec![],
+            private_exceptions: vec!["172.18.0.2/32".into(), "fd52:f239:c9f4::2/128".into()],
+        })
+        .unwrap();
+    for (kind, address) in [
+        (RecordType::A, "172.18.0.2".parse::<IpAddr>().unwrap()),
+        (
+            RecordType::AAAA,
+            "fd52:f239:c9f4::2".parse::<IpAddr>().unwrap(),
+        ),
+    ] {
+        let request = Request::parse(&query("api.credential.test.", kind), &policy, 9).unwrap();
+        let upstream = request.upstream_wire().unwrap();
+        let mut end = 12;
+        while upstream[end] != 0 {
+            end += usize::from(upstream[end]) + 1;
+        }
+        end += 5;
+        let octets = match address {
+            IpAddr::V4(ip) => ip.octets().to_vec(),
+            IpAddr::V6(ip) => ip.octets().to_vec(),
+        };
+        let mut response = upstream[..2].to_vec();
+        for value in [0x8180_u16, 1, 1, 0, 0] {
+            response.extend_from_slice(&value.to_be_bytes());
+        }
+        response.extend_from_slice(&upstream[12..end]);
+        response.extend_from_slice(&[0xc0, 0x0c]);
+        response.extend_from_slice(&u16::from(kind).to_be_bytes());
+        response.extend_from_slice(&1_u16.to_be_bytes());
+        response.extend_from_slice(&30_u32.to_be_bytes());
+        response.extend_from_slice(&(octets.len() as u16).to_be_bytes());
+        response.extend_from_slice(&octets);
+        request.prepare(&response).unwrap();
+        assert!(!floor.classify(address).blocked());
+        let source =
+            policy.dns_candidate(&goldenhoop_policy::Domain::parse("api.credential.test").unwrap());
+        assert_eq!(source.action, NetworkAction::Allow);
+        let packet =
+            goldenhoop_policy::Packet::new(address, goldenhoop_policy::Transport::Other, None)
+                .unwrap();
+        assert_eq!(
+            policy
+                .leased_address_candidate(&packet, source.origin)
+                .unwrap()
+                .action,
+            NetworkAction::Allow
+        );
+    }
+}
+
+#[test]
 fn query_bounds_policy_and_protocol_shape_are_checked_before_forwarding() {
     let good = query("good.example.test.", RecordType::A);
     let mut trailing = good.clone();

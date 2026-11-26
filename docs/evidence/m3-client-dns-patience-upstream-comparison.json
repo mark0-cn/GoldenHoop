@@ -1,0 +1,44 @@
+{
+  "project": "glibc-2.36 primary source mirror",
+  "revision": "c804cd1c00adde061ca51711f63068c103e94eef",
+  "sources": [
+    {
+      "path": "resolv/resolv.h",
+      "blob_sha": "3a79ffea57a6916f887b827c60b9964595bc32a7",
+      "sha256": "7f8f6827467d77fd27e0efb7e34d965a3bca2c79915134d2e24b3eeacc205d45",
+      "url": "https://github.com/bminor/glibc/blob/c804cd1c00adde061ca51711f63068c103e94eef/resolv/resolv.h",
+      "matching_lines": [
+        68
+      ]
+    },
+    {
+      "path": "resolv/res_send.c",
+      "blob_sha": "6a08e729a473f20c46a021a3382f6dd32f574cc0",
+      "sha256": "482cdab88cfca8744ed3f6ca24d3920ae8770a6c873c61a6b719944ba4186bf3",
+      "url": "https://github.com/bminor/glibc/blob/c804cd1c00adde061ca51711f63068c103e94eef/resolv/res_send.c",
+      "matching_lines": [
+        945
+      ]
+    }
+  ],
+  "observations": [
+    "glibc defines a five-second default resolver timeout.",
+    "The resolver uses its configured retransmission timeout while waiting for datagram responses."
+  ],
+  "local_confirmation": "A real ordinary-UID dual-stack lookup against a serialized 800ms-per-answer DNS server fails with timeout:1 attempts:1 and succeeds with timeout:5 attempts:1; full protected native credential acceptance is separate.",
+  "cilium_comparison": {
+    "project": "cilium/cilium",
+    "revision": "f631e869bfb6c9aed8d50d1c8bddd69289128d9d",
+    "path": "pkg/fqdn/dnsproxy/proxy.go",
+    "blob_sha": "9fd9d90c70718253686bed45751233ad0606767a",
+    "sha256": "ba6f780b731448640e81a986777cdb0c012ce5809aa8cb3fb4f7597f0d5803c5",
+    "url": "https://github.com/cilium/cilium/blob/f631e869bfb6c9aed8d50d1c8bddd69289128d9d/pkg/fqdn/dnsproxy/proxy.go#L1119-L1135",
+    "observations": [
+      "The successful upstream response is passed through the DNS notification callback before the response is written to the endpoint.",
+      "A callback error returns an error response rather than publishing the upstream answer.",
+      "Proxy timing and upstream response success are recorded separately."
+    ],
+    "applicability": "Compare phase order and diagnosis only. Cilium datapath, timeout and authority assumptions do not replace GoldenHoop native readback, finite leases or scoped source grants.",
+    "local_status": "Both native runtimes confirm successful DNS installation; actual libc latency experiment confirms the one-second client timeout incompatibility."
+  }
+}

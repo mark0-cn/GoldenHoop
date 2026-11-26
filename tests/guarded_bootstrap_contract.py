@@ -227,7 +227,7 @@ class Contract(RecoveryContract):
                 assert all(mount['Type'] == 'volume' and not mount['RW'] for mount in mounts.values())
                 assert mounts['/opt/goldenhoop']['Name'] == mounts['/etc/resolv.conf']['Name']
                 gateway = recovered['provider']['ipv4_gateway']
-                contents = f'nameserver {gateway}\noptions timeout:1 attempts:1\n'
+                contents = f'nameserver {gateway}\noptions timeout:5 attempts:1\n'
                 filename = 'resolver-' + hashlib.sha256(contents.encode('ascii')).hexdigest() + '.conf'
                 configured = {mount['Target']: mount for mount in host['Mounts']}
                 assert len(host['Mounts']) == len(configured) == 2 and set(configured) == set(mounts)
