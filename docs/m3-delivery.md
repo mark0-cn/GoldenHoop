@@ -119,3 +119,79 @@ probe withholds that capability while independently accepted networking remains
 available. Missing probe configuration leaves SecretInjection unadvertised. The
 implementation and its native gate are present; current supported-host results
 and full M3 stage acceptance are still pending.
+
+## Operator setup and credential requests
+
+The API and worker use the same installation vault key. Generate it once in a
+private service directory, and retain it with the installation database:
+
+```sh
+install -d -m 0700 /srv/goldenhoop/private
+goldenhoopd vault-init /srv/goldenhoop/private/vault.key
+goldenhoopd --database /srv/goldenhoop/state.db \
+  --credential-key-file /srv/goldenhoop/private/vault.key api
+goldenhoopd --database /srv/goldenhoop/state.db \
+  --credential-key-file /srv/goldenhoop/private/vault.key worker \
+  --egress-controller-image goldenhoop-egress:local \
+  --network-config /srv/goldenhoop/private/network.json \
+  --credential-config /srv/goldenhoop/private/credentials.json
+```
+
+The API's bootstrap token is supplied through `GOLDENHOOP_API_TOKEN`. The
+credential configuration is a mode-0600 JSON file. For example, an operator-owned
+receiver whose two addresses/ports already satisfy the network configuration
+can provide the deployment probe below. Replace this documentation-only address
+and canary with an owned receiver and a fresh probe-only value:
+
+```json
+{
+  "exchanges": {},
+  "upstream_ca_pem": [],
+  "probe": {
+    "http_url": "http://192.0.2.25:18080/credential-probe",
+    "https_url": "https://192.0.2.25:18443/credential-probe",
+    "credential": "fresh-probe-canary",
+    "expected_body": "owned_receiver_accepted"
+  }
+}
+```
+
+The receiver must require that canary as bearer authentication and return the
+exact expected body on both endpoints. Its HTTPS certificate must validate
+against the system roots or the explicitly supplied operator roots. An absent
+or failed probe keeps SecretInjection unavailable. This sample does not grant
+reachability to the documentation address or bypass the immutable network floor.
+
+The bootstrap administrator submits a binding with a unique UUID and this PUT
+body. Keep the request file private; the returned object contains metadata only:
+
+```json
+{
+  "expected_revision": 0,
+  "binding": {
+    "scheme": "https",
+    "host": "api.example.com",
+    "port": 443,
+    "methods": ["POST"],
+    "path_prefix": "/v1/",
+    "injection": {"kind": "bearer"},
+    "substitutions": []
+  },
+  "secret": {"kind": "literal", "value": "provider-value"}
+}
+```
+
+Use `goldenhoop credentials put SANDBOX BINDING PRIVATE_FILE`, inspect with
+`credentials get`, and obtain only the public trust certificate with
+`credentials ca`. A literal source can instead be `{ "kind": "exchange",
+"resolver": "operator-provider-name" }` when that name exists in the private
+worker configuration. Update the same binding using its current revision.
+`credentials revoke` returns revocation intent; wait for `revoked` with matching
+`applied_revision` before treating the previous controller as collected.
+
+The workload must explicitly trust its sandbox's public CA for intercepted TLS.
+Its network policy must independently permit the destination and port. A
+credential binding grants no network permission, and workload-supplied sandbox
+headers grant no credential authority. On a captured port, unmatched origins,
+methods and paths are refused. Provider response bodies remain trusted upstream
+application data; they must not echo private provider credentials.

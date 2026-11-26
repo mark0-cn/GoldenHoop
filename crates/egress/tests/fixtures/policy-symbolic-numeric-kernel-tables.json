@@ -1,0 +1,1486 @@
+{
+  "provenance": {
+    "report": "docs/evidence/m3-policy-symbolic-initial-native-regression-windows-docker.json",
+    "sha256": "fbffbcb5855d865851cf6182a3eea7172739af2127d53ee440aba5088d387dfc",
+    "scope": "Actual paired display of one private inet policy; no production floor or readiness claim"
+  },
+  "observations": [
+    {
+      "mode": "static",
+      "input": {
+        "allocation": {
+          "installation_id": "de9dcefa-f55e-47eb-aac6-5e34be9d182e",
+          "sandbox_id": "74fc70a5-6481-4c20-ae5d-07c7f35429bf",
+          "generation": "3b7a20e1-b8e4-4039-82df-461bf1aca210",
+          "bridge": "ghn3b7a20e1b8e4",
+          "ifindex": 2
+        },
+        "revision": 3,
+        "config": {
+          "policies": [
+            {
+              "default_action": "deny",
+              "rules": [
+                {
+                  "destination": "192.0.2.2",
+                  "ports": [
+                    443
+                  ],
+                  "action": "allow"
+                },
+                {
+                  "destination": "198.51.100.0/24",
+                  "ports": [
+                    80,
+                    443
+                  ],
+                  "action": "deny"
+                },
+                {
+                  "destination": "2001:db8::/32",
+                  "ports": [],
+                  "action": "allow"
+                }
+              ]
+            },
+            {
+              "default_action": "allow",
+              "rules": [
+                {
+                  "destination": "*",
+                  "ports": [
+                    25
+                  ],
+                  "action": "deny"
+                }
+              ]
+            }
+          ],
+          "deny_always": [
+            {
+              "destination": "203.0.113.0/24",
+              "ports": [],
+              "action": "deny"
+            }
+          ],
+          "allow_always": [
+            {
+              "destination": "203.0.114.4",
+              "ports": [
+                8443
+              ],
+              "action": "allow"
+            }
+          ],
+          "tcp_cap": [
+            443,
+            8443
+          ]
+        },
+        "dns_enabled": false,
+        "dns": []
+      },
+      "script": "add table inet gh_e_3b7a20e1b8e4403982df461bf1aca210\nadd chain inet gh_e_3b7a20e1b8e4403982df461bf1aca210 goldenhoop_16f233b57e766c967609576d7e7f48f179f0545791ad2f3a836283f3c3fe4457\nadd chain inet gh_e_3b7a20e1b8e4403982df461bf1aca210 revision_3\nadd set inet gh_e_3b7a20e1b8e4403982df461bf1aca210 live { type ifname; flags timeout; timeout 10s; }\nadd chain inet gh_e_3b7a20e1b8e4403982df461bf1aca210 input { type filter hook input priority -190; policy accept; }\nadd rule inet gh_e_3b7a20e1b8e4403982df461bf1aca210 input meta iif 2 ip6 hoplimit 255 icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert } icmpv6 code 0 counter accept\nadd rule inet gh_e_3b7a20e1b8e4403982df461bf1aca210 input meta iif 2 counter drop\nadd chain inet gh_e_3b7a20e1b8e4403982df461bf1aca210 guard\nadd chain inet gh_e_3b7a20e1b8e4403982df461bf1aca210 forward { type filter hook forward priority -190; policy accept; }\nadd rule inet gh_e_3b7a20e1b8e4403982df461bf1aca210 forward meta iif 2 iifname \"ghn3b7a20e1b8e4\" jump guard\nadd chain inet gh_e_3b7a20e1b8e4403982df461bf1aca210 decision\nadd rule inet gh_e_3b7a20e1b8e4403982df461bf1aca210 guard iifname @live jump decision\nadd rule inet gh_e_3b7a20e1b8e4403982df461bf1aca210 guard counter drop\nadd rule inet gh_e_3b7a20e1b8e4403982df461bf1aca210 decision meta l4proto tcp tcp dport != { 443, 8443 } counter drop\nadd rule inet gh_e_3b7a20e1b8e4403982df461bf1aca210 decision ip daddr 203.0.113.0/24 counter drop\nadd rule inet gh_e_3b7a20e1b8e4403982df461bf1aca210 decision ip daddr 203.0.114.4 meta l4proto tcp tcp dport { 8443 } counter accept\nadd chain inet gh_e_3b7a20e1b8e4403982df461bf1aca210 level_0\nadd rule inet gh_e_3b7a20e1b8e4403982df461bf1aca210 decision jump level_0\nadd rule inet gh_e_3b7a20e1b8e4403982df461bf1aca210 level_0 ip daddr 198.51.100.0/24 meta l4proto tcp tcp dport { 80, 443 } counter drop\nadd rule inet gh_e_3b7a20e1b8e4403982df461bf1aca210 level_0 ip daddr 192.0.2.2 meta l4proto tcp tcp dport { 443 } counter return\nadd rule inet gh_e_3b7a20e1b8e4403982df461bf1aca210 level_0 ip6 daddr 2001:db8::/32 counter return\nadd rule inet gh_e_3b7a20e1b8e4403982df461bf1aca210 level_0 counter drop\nadd chain inet gh_e_3b7a20e1b8e4403982df461bf1aca210 level_1\nadd rule inet gh_e_3b7a20e1b8e4403982df461bf1aca210 decision jump level_1\nadd rule inet gh_e_3b7a20e1b8e4403982df461bf1aca210 level_1 meta l4proto tcp tcp dport { 25 } counter drop\nadd rule inet gh_e_3b7a20e1b8e4403982df461bf1aca210 level_1 counter return\nadd rule inet gh_e_3b7a20e1b8e4403982df461bf1aca210 decision counter accept\nadd element inet gh_e_3b7a20e1b8e4403982df461bf1aca210 live { \"ghn3b7a20e1b8e4\" timeout 10s }\n",
+      "native": {
+        "nftables": [
+          {
+            "metainfo": {
+              "version": "1.0.6",
+              "release_name": "Lester Gooch #5",
+              "json_schema_version": 1
+            }
+          },
+          {
+            "table": {
+              "family": "inet",
+              "name": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "handle": 1
+            }
+          },
+          {
+            "set": {
+              "family": "inet",
+              "name": "live",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "type": "ifname",
+              "handle": 3,
+              "flags": [
+                "timeout"
+              ],
+              "timeout": 10,
+              "elem": [
+                {
+                  "elem": {
+                    "val": "ghn3b7a20e1b8e4",
+                    "expires": 9
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "chain": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "name": "goldenhoop_16f233b57e766c967609576d7e7f48f179f0545791ad2f3a836283f3c3fe4457",
+              "handle": 1
+            }
+          },
+          {
+            "chain": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "name": "revision_3",
+              "handle": 2
+            }
+          },
+          {
+            "chain": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "name": "input",
+              "handle": 4,
+              "type": "filter",
+              "hook": "input",
+              "prio": -190,
+              "policy": "accept"
+            }
+          },
+          {
+            "chain": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "name": "guard",
+              "handle": 8
+            }
+          },
+          {
+            "chain": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "name": "forward",
+              "handle": 9,
+              "type": "filter",
+              "hook": "forward",
+              "prio": -190,
+              "policy": "accept"
+            }
+          },
+          {
+            "chain": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "name": "decision",
+              "handle": 11
+            }
+          },
+          {
+            "chain": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "name": "level_0",
+              "handle": 18
+            }
+          },
+          {
+            "chain": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "name": "level_1",
+              "handle": 25
+            }
+          },
+          {
+            "rule": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "chain": "input",
+              "handle": 6,
+              "expr": [
+                {
+                  "match": {
+                    "op": "==",
+                    "left": {
+                      "meta": {
+                        "key": "iif"
+                      }
+                    },
+                    "right": "ghn3b7a20e1b8e4"
+                  }
+                },
+                {
+                  "match": {
+                    "op": "==",
+                    "left": {
+                      "payload": {
+                        "protocol": "ip6",
+                        "field": "hoplimit"
+                      }
+                    },
+                    "right": 255
+                  }
+                },
+                {
+                  "match": {
+                    "op": "==",
+                    "left": {
+                      "payload": {
+                        "protocol": "icmpv6",
+                        "field": "type"
+                      }
+                    },
+                    "right": {
+                      "set": [
+                        135,
+                        136
+                      ]
+                    }
+                  }
+                },
+                {
+                  "match": {
+                    "op": "==",
+                    "left": {
+                      "payload": {
+                        "protocol": "icmpv6",
+                        "field": "code"
+                      }
+                    },
+                    "right": 0
+                  }
+                },
+                {
+                  "counter": {
+                    "packets": 0,
+                    "bytes": 0
+                  }
+                },
+                {
+                  "accept": null
+                }
+              ]
+            }
+          },
+          {
+            "rule": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "chain": "input",
+              "handle": 7,
+              "expr": [
+                {
+                  "match": {
+                    "op": "==",
+                    "left": {
+                      "meta": {
+                        "key": "iif"
+                      }
+                    },
+                    "right": "ghn3b7a20e1b8e4"
+                  }
+                },
+                {
+                  "counter": {
+                    "packets": 0,
+                    "bytes": 0
+                  }
+                },
+                {
+                  "drop": null
+                }
+              ]
+            }
+          },
+          {
+            "rule": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "chain": "guard",
+              "handle": 12,
+              "expr": [
+                {
+                  "match": {
+                    "op": "==",
+                    "left": {
+                      "meta": {
+                        "key": "iifname"
+                      }
+                    },
+                    "right": "@live"
+                  }
+                },
+                {
+                  "jump": {
+                    "target": "decision"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "rule": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "chain": "guard",
+              "handle": 13,
+              "expr": [
+                {
+                  "counter": {
+                    "packets": 0,
+                    "bytes": 0
+                  }
+                },
+                {
+                  "drop": null
+                }
+              ]
+            }
+          },
+          {
+            "rule": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "chain": "forward",
+              "handle": 10,
+              "expr": [
+                {
+                  "match": {
+                    "op": "==",
+                    "left": {
+                      "meta": {
+                        "key": "iif"
+                      }
+                    },
+                    "right": "ghn3b7a20e1b8e4"
+                  }
+                },
+                {
+                  "match": {
+                    "op": "==",
+                    "left": {
+                      "meta": {
+                        "key": "iifname"
+                      }
+                    },
+                    "right": "ghn3b7a20e1b8e4"
+                  }
+                },
+                {
+                  "jump": {
+                    "target": "guard"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "rule": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "chain": "decision",
+              "handle": 15,
+              "expr": [
+                {
+                  "match": {
+                    "op": "!=",
+                    "left": {
+                      "payload": {
+                        "protocol": "tcp",
+                        "field": "dport"
+                      }
+                    },
+                    "right": {
+                      "set": [
+                        443,
+                        8443
+                      ]
+                    }
+                  }
+                },
+                {
+                  "counter": {
+                    "packets": 0,
+                    "bytes": 0
+                  }
+                },
+                {
+                  "drop": null
+                }
+              ]
+            }
+          },
+          {
+            "rule": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "chain": "decision",
+              "handle": 16,
+              "expr": [
+                {
+                  "match": {
+                    "op": "==",
+                    "left": {
+                      "payload": {
+                        "protocol": "ip",
+                        "field": "daddr"
+                      }
+                    },
+                    "right": {
+                      "prefix": {
+                        "addr": "203.0.113.0",
+                        "len": 24
+                      }
+                    }
+                  }
+                },
+                {
+                  "counter": {
+                    "packets": 0,
+                    "bytes": 0
+                  }
+                },
+                {
+                  "drop": null
+                }
+              ]
+            }
+          },
+          {
+            "rule": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "chain": "decision",
+              "handle": 17,
+              "expr": [
+                {
+                  "match": {
+                    "op": "==",
+                    "left": {
+                      "payload": {
+                        "protocol": "ip",
+                        "field": "daddr"
+                      }
+                    },
+                    "right": "203.0.114.4"
+                  }
+                },
+                {
+                  "match": {
+                    "op": "==",
+                    "left": {
+                      "payload": {
+                        "protocol": "tcp",
+                        "field": "dport"
+                      }
+                    },
+                    "right": 8443
+                  }
+                },
+                {
+                  "counter": {
+                    "packets": 0,
+                    "bytes": 0
+                  }
+                },
+                {
+                  "accept": null
+                }
+              ]
+            }
+          },
+          {
+            "rule": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "chain": "decision",
+              "handle": 19,
+              "expr": [
+                {
+                  "jump": {
+                    "target": "level_0"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "rule": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "chain": "decision",
+              "handle": 26,
+              "expr": [
+                {
+                  "jump": {
+                    "target": "level_1"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "rule": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "chain": "decision",
+              "handle": 29,
+              "expr": [
+                {
+                  "counter": {
+                    "packets": 0,
+                    "bytes": 0
+                  }
+                },
+                {
+                  "accept": null
+                }
+              ]
+            }
+          },
+          {
+            "rule": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "chain": "level_0",
+              "handle": 21,
+              "expr": [
+                {
+                  "match": {
+                    "op": "==",
+                    "left": {
+                      "payload": {
+                        "protocol": "ip",
+                        "field": "daddr"
+                      }
+                    },
+                    "right": {
+                      "prefix": {
+                        "addr": "198.51.100.0",
+                        "len": 24
+                      }
+                    }
+                  }
+                },
+                {
+                  "match": {
+                    "op": "==",
+                    "left": {
+                      "payload": {
+                        "protocol": "tcp",
+                        "field": "dport"
+                      }
+                    },
+                    "right": {
+                      "set": [
+                        80,
+                        443
+                      ]
+                    }
+                  }
+                },
+                {
+                  "counter": {
+                    "packets": 0,
+                    "bytes": 0
+                  }
+                },
+                {
+                  "drop": null
+                }
+              ]
+            }
+          },
+          {
+            "rule": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "chain": "level_0",
+              "handle": 22,
+              "expr": [
+                {
+                  "match": {
+                    "op": "==",
+                    "left": {
+                      "payload": {
+                        "protocol": "ip",
+                        "field": "daddr"
+                      }
+                    },
+                    "right": "192.0.2.2"
+                  }
+                },
+                {
+                  "match": {
+                    "op": "==",
+                    "left": {
+                      "payload": {
+                        "protocol": "tcp",
+                        "field": "dport"
+                      }
+                    },
+                    "right": 443
+                  }
+                },
+                {
+                  "counter": {
+                    "packets": 0,
+                    "bytes": 0
+                  }
+                },
+                {
+                  "return": null
+                }
+              ]
+            }
+          },
+          {
+            "rule": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "chain": "level_0",
+              "handle": 23,
+              "expr": [
+                {
+                  "match": {
+                    "op": "==",
+                    "left": {
+                      "payload": {
+                        "protocol": "ip6",
+                        "field": "daddr"
+                      }
+                    },
+                    "right": {
+                      "prefix": {
+                        "addr": "2001:db8::",
+                        "len": 32
+                      }
+                    }
+                  }
+                },
+                {
+                  "counter": {
+                    "packets": 0,
+                    "bytes": 0
+                  }
+                },
+                {
+                  "return": null
+                }
+              ]
+            }
+          },
+          {
+            "rule": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "chain": "level_0",
+              "handle": 24,
+              "expr": [
+                {
+                  "counter": {
+                    "packets": 0,
+                    "bytes": 0
+                  }
+                },
+                {
+                  "drop": null
+                }
+              ]
+            }
+          },
+          {
+            "rule": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "chain": "level_1",
+              "handle": 27,
+              "expr": [
+                {
+                  "match": {
+                    "op": "==",
+                    "left": {
+                      "payload": {
+                        "protocol": "tcp",
+                        "field": "dport"
+                      }
+                    },
+                    "right": 25
+                  }
+                },
+                {
+                  "counter": {
+                    "packets": 0,
+                    "bytes": 0
+                  }
+                },
+                {
+                  "drop": null
+                }
+              ]
+            }
+          },
+          {
+            "rule": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "chain": "level_1",
+              "handle": 28,
+              "expr": [
+                {
+                  "counter": {
+                    "packets": 0,
+                    "bytes": 0
+                  }
+                },
+                {
+                  "return": null
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "native_text": "table inet gh_e_3b7a20e1b8e4403982df461bf1aca210 {\n\tset live {\n\t\ttype ifname\n\t\ttimeout 10s\n\t\telements = { \"ghn3b7a20e1b8e4\" expires 9s472ms }\n\t}\n\n\tchain goldenhoop_16f233b57e766c967609576d7e7f48f179f0545791ad2f3a836283f3c3fe4457 {\n\t}\n\n\tchain revision_3 {\n\t}\n\n\tchain input {\n\t\ttype filter hook input priority -190; policy accept;\n\t\tiif \"ghn3b7a20e1b8e4\" ip6 hoplimit 255 icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert } icmpv6 code no-route counter packets 0 bytes 0 accept\n\t\tiif \"ghn3b7a20e1b8e4\" counter packets 0 bytes 0 drop\n\t}\n\n\tchain guard {\n\t\tiifname @live jump decision\n\t\tcounter packets 0 bytes 0 drop\n\t}\n\n\tchain forward {\n\t\ttype filter hook forward priority -190; policy accept;\n\t\tiif \"ghn3b7a20e1b8e4\" iifname \"ghn3b7a20e1b8e4\" jump guard\n\t}\n\n\tchain decision {\n\t\ttcp dport != { 443, 8443 } counter packets 0 bytes 0 drop\n\t\tip daddr 203.0.113.0/24 counter packets 0 bytes 0 drop\n\t\tip daddr 203.0.114.4 tcp dport 8443 counter packets 0 bytes 0 accept\n\t\tjump level_0\n\t\tjump level_1\n\t\tcounter packets 0 bytes 0 accept\n\t}\n\n\tchain level_0 {\n\t\tip daddr 198.51.100.0/24 tcp dport { 80, 443 } counter packets 0 bytes 0 drop\n\t\tip daddr 192.0.2.2 tcp dport 443 counter packets 0 bytes 0 return\n\t\tip6 daddr 2001:db8::/32 counter packets 0 bytes 0 return\n\t\tcounter packets 0 bytes 0 drop\n\t}\n\n\tchain level_1 {\n\t\ttcp dport 25 counter packets 0 bytes 0 drop\n\t\tcounter packets 0 bytes 0 return\n\t}\n}\n",
+      "readback": {
+        "exit_code": 0,
+        "stdout": "{\"ready\":false,\"verified_structure\":true}\n",
+        "stderr": ""
+      }
+    },
+    {
+      "mode": "static-symbolic",
+      "input": {
+        "allocation": {
+          "installation_id": "de9dcefa-f55e-47eb-aac6-5e34be9d182e",
+          "sandbox_id": "74fc70a5-6481-4c20-ae5d-07c7f35429bf",
+          "generation": "3b7a20e1-b8e4-4039-82df-461bf1aca210",
+          "bridge": "ghn3b7a20e1b8e4",
+          "ifindex": 2
+        },
+        "revision": 3,
+        "config": {
+          "policies": [
+            {
+              "default_action": "deny",
+              "rules": [
+                {
+                  "destination": "192.0.2.2",
+                  "ports": [
+                    443
+                  ],
+                  "action": "allow"
+                },
+                {
+                  "destination": "198.51.100.0/24",
+                  "ports": [
+                    80,
+                    443
+                  ],
+                  "action": "deny"
+                },
+                {
+                  "destination": "2001:db8::/32",
+                  "ports": [],
+                  "action": "allow"
+                }
+              ]
+            },
+            {
+              "default_action": "allow",
+              "rules": [
+                {
+                  "destination": "*",
+                  "ports": [
+                    25
+                  ],
+                  "action": "deny"
+                }
+              ]
+            }
+          ],
+          "deny_always": [
+            {
+              "destination": "203.0.113.0/24",
+              "ports": [],
+              "action": "deny"
+            }
+          ],
+          "allow_always": [
+            {
+              "destination": "203.0.114.4",
+              "ports": [
+                8443
+              ],
+              "action": "allow"
+            }
+          ],
+          "tcp_cap": [
+            443,
+            8443
+          ]
+        },
+        "dns_enabled": false,
+        "dns": []
+      },
+      "native": {
+        "nftables": [
+          {
+            "metainfo": {
+              "version": "1.0.6",
+              "release_name": "Lester Gooch #5",
+              "json_schema_version": 1
+            }
+          },
+          {
+            "table": {
+              "family": "inet",
+              "name": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "handle": 1
+            }
+          },
+          {
+            "set": {
+              "family": "inet",
+              "name": "live",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "type": "ifname",
+              "handle": 3,
+              "flags": [
+                "timeout"
+              ],
+              "timeout": 10,
+              "elem": [
+                {
+                  "elem": {
+                    "val": "ghn3b7a20e1b8e4",
+                    "expires": 9
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "chain": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "name": "goldenhoop_16f233b57e766c967609576d7e7f48f179f0545791ad2f3a836283f3c3fe4457",
+              "handle": 1
+            }
+          },
+          {
+            "chain": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "name": "revision_3",
+              "handle": 2
+            }
+          },
+          {
+            "chain": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "name": "input",
+              "handle": 4,
+              "type": "filter",
+              "hook": "input",
+              "prio": -190,
+              "policy": "accept"
+            }
+          },
+          {
+            "chain": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "name": "guard",
+              "handle": 8
+            }
+          },
+          {
+            "chain": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "name": "forward",
+              "handle": 9,
+              "type": "filter",
+              "hook": "forward",
+              "prio": -190,
+              "policy": "accept"
+            }
+          },
+          {
+            "chain": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "name": "decision",
+              "handle": 11
+            }
+          },
+          {
+            "chain": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "name": "level_0",
+              "handle": 18
+            }
+          },
+          {
+            "chain": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "name": "level_1",
+              "handle": 25
+            }
+          },
+          {
+            "rule": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "chain": "input",
+              "handle": 6,
+              "expr": [
+                {
+                  "match": {
+                    "op": "==",
+                    "left": {
+                      "meta": {
+                        "key": "iif"
+                      }
+                    },
+                    "right": "ghn3b7a20e1b8e4"
+                  }
+                },
+                {
+                  "match": {
+                    "op": "==",
+                    "left": {
+                      "payload": {
+                        "protocol": "ip6",
+                        "field": "hoplimit"
+                      }
+                    },
+                    "right": 255
+                  }
+                },
+                {
+                  "match": {
+                    "op": "==",
+                    "left": {
+                      "payload": {
+                        "protocol": "icmpv6",
+                        "field": "type"
+                      }
+                    },
+                    "right": {
+                      "set": [
+                        "nd-neighbor-solicit",
+                        "nd-neighbor-advert"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "match": {
+                    "op": "==",
+                    "left": {
+                      "payload": {
+                        "protocol": "icmpv6",
+                        "field": "code"
+                      }
+                    },
+                    "right": "no-route"
+                  }
+                },
+                {
+                  "counter": {
+                    "packets": 0,
+                    "bytes": 0
+                  }
+                },
+                {
+                  "accept": null
+                }
+              ]
+            }
+          },
+          {
+            "rule": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "chain": "input",
+              "handle": 7,
+              "expr": [
+                {
+                  "match": {
+                    "op": "==",
+                    "left": {
+                      "meta": {
+                        "key": "iif"
+                      }
+                    },
+                    "right": "ghn3b7a20e1b8e4"
+                  }
+                },
+                {
+                  "counter": {
+                    "packets": 0,
+                    "bytes": 0
+                  }
+                },
+                {
+                  "drop": null
+                }
+              ]
+            }
+          },
+          {
+            "rule": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "chain": "guard",
+              "handle": 12,
+              "expr": [
+                {
+                  "match": {
+                    "op": "==",
+                    "left": {
+                      "meta": {
+                        "key": "iifname"
+                      }
+                    },
+                    "right": "@live"
+                  }
+                },
+                {
+                  "jump": {
+                    "target": "decision"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "rule": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "chain": "guard",
+              "handle": 13,
+              "expr": [
+                {
+                  "counter": {
+                    "packets": 0,
+                    "bytes": 0
+                  }
+                },
+                {
+                  "drop": null
+                }
+              ]
+            }
+          },
+          {
+            "rule": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "chain": "forward",
+              "handle": 10,
+              "expr": [
+                {
+                  "match": {
+                    "op": "==",
+                    "left": {
+                      "meta": {
+                        "key": "iif"
+                      }
+                    },
+                    "right": "ghn3b7a20e1b8e4"
+                  }
+                },
+                {
+                  "match": {
+                    "op": "==",
+                    "left": {
+                      "meta": {
+                        "key": "iifname"
+                      }
+                    },
+                    "right": "ghn3b7a20e1b8e4"
+                  }
+                },
+                {
+                  "jump": {
+                    "target": "guard"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "rule": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "chain": "decision",
+              "handle": 15,
+              "expr": [
+                {
+                  "match": {
+                    "op": "!=",
+                    "left": {
+                      "payload": {
+                        "protocol": "tcp",
+                        "field": "dport"
+                      }
+                    },
+                    "right": {
+                      "set": [
+                        443,
+                        8443
+                      ]
+                    }
+                  }
+                },
+                {
+                  "counter": {
+                    "packets": 0,
+                    "bytes": 0
+                  }
+                },
+                {
+                  "drop": null
+                }
+              ]
+            }
+          },
+          {
+            "rule": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "chain": "decision",
+              "handle": 16,
+              "expr": [
+                {
+                  "match": {
+                    "op": "==",
+                    "left": {
+                      "payload": {
+                        "protocol": "ip",
+                        "field": "daddr"
+                      }
+                    },
+                    "right": {
+                      "prefix": {
+                        "addr": "203.0.113.0",
+                        "len": 24
+                      }
+                    }
+                  }
+                },
+                {
+                  "counter": {
+                    "packets": 0,
+                    "bytes": 0
+                  }
+                },
+                {
+                  "drop": null
+                }
+              ]
+            }
+          },
+          {
+            "rule": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "chain": "decision",
+              "handle": 17,
+              "expr": [
+                {
+                  "match": {
+                    "op": "==",
+                    "left": {
+                      "payload": {
+                        "protocol": "ip",
+                        "field": "daddr"
+                      }
+                    },
+                    "right": "203.0.114.4"
+                  }
+                },
+                {
+                  "match": {
+                    "op": "==",
+                    "left": {
+                      "payload": {
+                        "protocol": "tcp",
+                        "field": "dport"
+                      }
+                    },
+                    "right": 8443
+                  }
+                },
+                {
+                  "counter": {
+                    "packets": 0,
+                    "bytes": 0
+                  }
+                },
+                {
+                  "accept": null
+                }
+              ]
+            }
+          },
+          {
+            "rule": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "chain": "decision",
+              "handle": 19,
+              "expr": [
+                {
+                  "jump": {
+                    "target": "level_0"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "rule": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "chain": "decision",
+              "handle": 26,
+              "expr": [
+                {
+                  "jump": {
+                    "target": "level_1"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "rule": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "chain": "decision",
+              "handle": 29,
+              "expr": [
+                {
+                  "counter": {
+                    "packets": 0,
+                    "bytes": 0
+                  }
+                },
+                {
+                  "accept": null
+                }
+              ]
+            }
+          },
+          {
+            "rule": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "chain": "level_0",
+              "handle": 21,
+              "expr": [
+                {
+                  "match": {
+                    "op": "==",
+                    "left": {
+                      "payload": {
+                        "protocol": "ip",
+                        "field": "daddr"
+                      }
+                    },
+                    "right": {
+                      "prefix": {
+                        "addr": "198.51.100.0",
+                        "len": 24
+                      }
+                    }
+                  }
+                },
+                {
+                  "match": {
+                    "op": "==",
+                    "left": {
+                      "payload": {
+                        "protocol": "tcp",
+                        "field": "dport"
+                      }
+                    },
+                    "right": {
+                      "set": [
+                        80,
+                        443
+                      ]
+                    }
+                  }
+                },
+                {
+                  "counter": {
+                    "packets": 0,
+                    "bytes": 0
+                  }
+                },
+                {
+                  "drop": null
+                }
+              ]
+            }
+          },
+          {
+            "rule": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "chain": "level_0",
+              "handle": 22,
+              "expr": [
+                {
+                  "match": {
+                    "op": "==",
+                    "left": {
+                      "payload": {
+                        "protocol": "ip",
+                        "field": "daddr"
+                      }
+                    },
+                    "right": "192.0.2.2"
+                  }
+                },
+                {
+                  "match": {
+                    "op": "==",
+                    "left": {
+                      "payload": {
+                        "protocol": "tcp",
+                        "field": "dport"
+                      }
+                    },
+                    "right": 443
+                  }
+                },
+                {
+                  "counter": {
+                    "packets": 0,
+                    "bytes": 0
+                  }
+                },
+                {
+                  "return": null
+                }
+              ]
+            }
+          },
+          {
+            "rule": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "chain": "level_0",
+              "handle": 23,
+              "expr": [
+                {
+                  "match": {
+                    "op": "==",
+                    "left": {
+                      "payload": {
+                        "protocol": "ip6",
+                        "field": "daddr"
+                      }
+                    },
+                    "right": {
+                      "prefix": {
+                        "addr": "2001:db8::",
+                        "len": 32
+                      }
+                    }
+                  }
+                },
+                {
+                  "counter": {
+                    "packets": 0,
+                    "bytes": 0
+                  }
+                },
+                {
+                  "return": null
+                }
+              ]
+            }
+          },
+          {
+            "rule": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "chain": "level_0",
+              "handle": 24,
+              "expr": [
+                {
+                  "counter": {
+                    "packets": 0,
+                    "bytes": 0
+                  }
+                },
+                {
+                  "drop": null
+                }
+              ]
+            }
+          },
+          {
+            "rule": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "chain": "level_1",
+              "handle": 27,
+              "expr": [
+                {
+                  "match": {
+                    "op": "==",
+                    "left": {
+                      "payload": {
+                        "protocol": "tcp",
+                        "field": "dport"
+                      }
+                    },
+                    "right": 25
+                  }
+                },
+                {
+                  "counter": {
+                    "packets": 0,
+                    "bytes": 0
+                  }
+                },
+                {
+                  "drop": null
+                }
+              ]
+            }
+          },
+          {
+            "rule": {
+              "family": "inet",
+              "table": "gh_e_3b7a20e1b8e4403982df461bf1aca210",
+              "chain": "level_1",
+              "handle": 28,
+              "expr": [
+                {
+                  "counter": {
+                    "packets": 0,
+                    "bytes": 0
+                  }
+                },
+                {
+                  "return": null
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

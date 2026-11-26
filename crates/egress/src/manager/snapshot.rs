@@ -15,7 +15,9 @@ struct Floors {
 impl Manager {
     async fn kernel_snapshot(&self) -> Result<ScopedKernelSnapshot, ApiError> {
         let bytes = nft_bounded(
-            &["--json", "--numeric", "list", "ruleset"],
+            // Preserve the immutable floors' native symbolic representation.
+            // The policy verifier canonicalizes only verified equivalents.
+            &["--json", "list", "ruleset"],
             None,
             MAX_SNAPSHOT_BYTES as u64,
         )

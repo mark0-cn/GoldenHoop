@@ -74,6 +74,10 @@ with socket.socket(socket.AF_INET6,socket.SOCK_STREAM) as tcp, socket.socket(soc
                 self.report['observations'].append({'mode':mode,'input':value,'script':script,'native':native,'native_text':text});self.save()
                 accepted=self.verify(value,native);self.report['observations'][-1]['readback']=accepted
                 self.report['cases'].append(mode+'_actual_full_structure_readback');print('passed',self.report['cases'][-1],flush=True)
+                symbolic=json.loads(self.native('nft','--json','list','table','inet','gh_e_'+uuid.UUID(allocation['generation']).hex).stdout)
+                self.report['observations'].append({'mode':mode+'-symbolic','input':value,'native':symbolic});self.save()
+                self.report['observations'][-1]['readback']=self.verify(value,symbolic)
+                self.report['cases'].append(mode+'_actual_symbolic_structure_matches_the_same_policy');print('passed',self.report['cases'][-1],flush=True)
                 if mode=='dns':
                     token=uuid.uuid4();staged={**value,'dns_token':str(token)};script=self.compile(staged)['script'];self.native('nft','--file','-',input=script)
                     table='gh_e_'+uuid.UUID(allocation['generation']).hex
@@ -87,10 +91,12 @@ with socket.socket(socket.AF_INET6,socket.SOCK_STREAM) as tcp, socket.socket(soc
                     self.report['actual_weakened_native_policy']={'native':weakened,'readback':self.verify(staged,weakened,refused=True)}
                     self.report['cases'].append('actual_weakened_policy_is_refused_despite_unchanged_owner_revision_and_live_lease');print('passed',self.report['cases'][-1],flush=True)
                 self.native('nft','delete','table','inet','gh_e_'+uuid.UUID(allocation['generation']).hex)
-            native={'allocation':allocation,'identity':{k:allocation[k] for k in ['installation_id','sandbox_id','generation']},'provisioning_token':str(uuid.uuid4()),'expires_at':datetime.now(timezone.utc).isoformat()};native['identity']['profile']='local-runc-dev'
-            produced=self.native('python3','-B','-c',MANAGER,json.dumps({'allocation':allocation,'native_plan':native,'config':basic}),timeout=60)
-            self.report['actual_production_manager']=json.loads(produced.stdout);assert self.report['actual_production_manager']['controller_exit_code']==0 and not self.report['actual_production_manager']['ready']
-            self.report['cases'].extend(['actual_production_apply_renew_tamper_and_expired_lease_fences','actual_original_lifetime_clips_kernel_timeout_and_refuses_later_dispatch']);print('passed actual production manager policy and lease readbacks',flush=True)
+            if not self.args.display_only:
+                native={'allocation':allocation,'identity':{k:allocation[k] for k in ['installation_id','sandbox_id','generation']},'provisioning_token':str(uuid.uuid4()),'expires_at':datetime.now(timezone.utc).isoformat()};native['identity']['profile']='local-runc-dev'
+                produced=self.native('python3','-B','-c',MANAGER,json.dumps({'allocation':allocation,'native_plan':native,'config':basic}),timeout=60)
+                self.report['actual_production_manager']=json.loads(produced.stdout);assert self.report['actual_production_manager']['controller_exit_code']==0 and not self.report['actual_production_manager']['ready']
+                self.report['cases'].extend(['actual_production_apply_renew_tamper_and_expired_lease_fences','actual_original_lifetime_clips_kernel_timeout_and_refuses_later_dispatch']);print('passed actual production manager policy and lease readbacks',flush=True)
+            self.report['display_only']=self.args.display_only
             self.report['result']='passed'
         except BaseException as error:failure=error;self.report['error']=repr(error)
         finally:
@@ -109,4 +115,4 @@ with socket.socket(socket.AF_INET6,socket.SOCK_STREAM) as tcp, socket.socket(soc
 
 
 if __name__=='__main__':
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('--binary',required=True);p.add_argument('--image',default='goldenhoop-network-fixture:test');p.add_argument('--output',required=True);Contract(p.parse_args()).run()
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('--binary',required=True);p.add_argument('--image',default='goldenhoop-network-fixture:test');p.add_argument('--output',required=True);p.add_argument('--display-only',action='store_true',help='Run native display/readback cases without the separate production Linux manager suite');Contract(p.parse_args()).run()

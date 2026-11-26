@@ -240,6 +240,14 @@ pub(crate) fn normalize(
         if let Some(number) = number {
             expression["match"]["right"] = json!(number);
         }
+        if expression["match"]["left"] == json!({"payload":{"protocol":"icmpv6","field":"code"}})
+            && expression["match"]["right"] == "no-route"
+        {
+            // nft's symbolic JSON names code zero even for neighbor discovery.
+            // Paired actual symbolic/numeric captures establish this exact
+            // equivalence; other codes, fields and expression shapes still fail.
+            expression["match"]["right"] = json!(0);
+        }
         if expression["match"]["left"] == json!({"payload":{"protocol":"icmpv6","field":"type"}})
             && let Some(values) = expression
                 .pointer_mut("/match/right/set")

@@ -16,6 +16,7 @@ struct Sample {
     mode: String,
     input: Input,
     native: Value,
+    #[serde(default)] // JSON-display captures do not establish a textual lease.
     native_text: String,
 }
 #[derive(Deserialize)]
@@ -78,6 +79,34 @@ fn actual_static_bootstrap_staged_dns_and_deny_only_kernel_tables_match() {
     assert_eq!(samples.len(), 4);
     for sample in samples {
         assert!(verify(&sample, &sample.native), "{}", sample.mode);
+    }
+}
+#[test]
+fn paired_native_symbolic_and_numeric_code_zero_preserve_the_same_strict_policy() {
+    let capture: Fixture = serde_json::from_str(include_str!(
+        "fixtures/policy-symbolic-numeric-kernel-tables.json"
+    ))
+    .unwrap();
+    assert_eq!(capture.observations.len(), 2);
+    for sample in capture.observations {
+        assert!(verify(&sample, &sample.native), "{}", sample.mode);
+        for code in [json!(1), json!("addr-unreachable"), json!({"set":[0,1]})] {
+            let mut changed = sample.native.clone();
+            let expression = changed["nftables"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .filter_map(|row| row.get_mut("rule"))
+                .filter_map(|rule| rule["expr"].as_array_mut())
+                .flatten()
+                .find(|expression| {
+                    expression["match"]["left"]
+                        == json!({"payload":{"protocol":"icmpv6","field":"code"}})
+                })
+                .unwrap();
+            expression["match"]["right"] = code;
+            assert!(!verify(&sample, &changed));
+        }
     }
 }
 #[test]
