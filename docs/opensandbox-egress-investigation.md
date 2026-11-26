@@ -1,5 +1,39 @@
 # OpenSandbox egress comparison for M3
 
+## Follow-up: compare the Linux socket ABI with other transparent proxies
+
+The ordinary-UID client eventually reached TCP but immediately received a
+reset before an HTTP response. Comparing other implementations exposed a
+concrete adapter defect. Linux's original-destination handlers copy the
+family-specific sockaddr without updating the supplied optlen. GoldenHoop
+supplied 128 bytes and then required optlen to be exactly 16 or 28, so even
+successful native calls failed its format check and entered the bounded DNS
+parser, which closed the HTTP stream.
+
+[Mitmproxy](https://github.com/mitmproxy/mitmproxy/blob/046618526875cad96d23043bef78b3ffd422b033/mitmproxy/platform/linux.py#L9-L33)
+supplies the exact family-specific buffer size.
+[Envoy](https://github.com/envoyproxy/envoy/blob/baf651b810d1056c9d4b637ea1afe44d71de7094/source/common/network/utility.cc#L339-L390)
+uses sockaddr_storage without the incompatible exact-small-return-length
+requirement. The
+[Linux handlers](https://github.com/torvalds/linux/blob/v6.12/net/netfilter/nf_conntrack_proto.c#L267-L367)
+confirm that optlen is checked for capacity but not reduced after the copy.
+The [source-inspection record](evidence/m3-original-destination-upstream-comparison.json)
+retains exact revisions, blob and content hashes; these are source findings,
+not claims of deploying the upstream projects.
+
+The [actual private inet observations](evidence/m3-original-destination-optlen-native-windows-docker.json)
+capture six ordinary-UID IPv4/IPv6 connections across redirect, policy and
+immutable-destination-floor phases. All retain length 128 while containing
+the correct native original destination. A
+[second native check](evidence/m3-original-destination-exact-optlen-native-windows-docker.json)
+also confirms exact 16/28-byte reads match those same valid address bytes.
+Both collect all task-created resources. This is an adapter ABI component
+proof; the unchanged production HTTP/TLS credential and durable-audit gate
+must still accept the Rust correction before SecretInjection is advertised.
+GoldenHoop now supplies the family size and retains the existing exact
+family/length, source, original-target, policy and lifetime checks. It does
+not substitute a local socket address for a failed original-target read.
+
 Inspected upstream commit
 [`067a138cdaacce3f829fffb411acfc4001feefca`](https://github.com/opensandbox-group/OpenSandbox/commit/067a138cdaacce3f829fffb411acfc4001feefca),
 dated 2026-11-26. This investigation supplements the older pinned coverage

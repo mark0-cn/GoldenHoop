@@ -27,11 +27,14 @@ def serve(family,port):
   with c:
    c.settimeout(3)
    raw=c.getsockopt(socket.SOL_IP if family==socket.AF_INET else socket.IPPROTO_IPV6,80,128)
+   sockaddr_bytes=16 if family==socket.AF_INET else 28
+   exact=c.getsockopt(socket.SOL_IP if family==socket.AF_INET else socket.IPPROTO_IPV6,80,sockaddr_bytes)
+   assert len(exact)==sockaddr_bytes and exact==raw[:sockaddr_bytes]
    original=str(ipaddress.ip_address(raw[4:8] if family==socket.AF_INET else raw[8:24]))
    original_port=struct.unpack('!H',raw[2:4])[0]
    marker=c.recv(128).decode()
    with lock:
-    with output.open('a') as f:f.write(json.dumps(dict(peer=peer,original=original,original_port=original_port,marker=marker))+'\n')
+    with output.open('a') as f:f.write(json.dumps(dict(peer=peer,original=original,original_port=original_port,returned_buffer_length=len(raw),sockaddr_bytes=sockaddr_bytes,exact_buffer_length=len(exact),exact_family_read_matches=True,marker=marker))+'\n')
    c.sendall(b'credential_packet_observed')
 for family,port in ((socket.AF_INET,44000),(socket.AF_INET6,44001)):
  threading.Thread(target=serve,args=(family,port),daemon=True).start()

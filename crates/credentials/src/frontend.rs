@@ -302,7 +302,14 @@ pub fn original_destination(stream: &tokio::net::TcpStream) -> Result<SocketAddr
         .local_addr()
         .map_err(|_| error(ErrorCode::Forbidden, "cannot inspect credential socket"))?;
     let mut storage: libc::sockaddr_storage = unsafe { zeroed() };
-    let mut length = size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+    // Linux's original-destination handlers copy the family sockaddr without
+    // updating optlen. Supply that exact size, as mitmproxy does, so a valid
+    // address does not retain a storage-sized length and fail the checks below.
+    let mut length = if local.is_ipv4() {
+        size_of::<libc::sockaddr_in>()
+    } else {
+        size_of::<libc::sockaddr_in6>()
+    } as libc::socklen_t;
     let level = if local.is_ipv4() {
         libc::SOL_IP
     } else {
