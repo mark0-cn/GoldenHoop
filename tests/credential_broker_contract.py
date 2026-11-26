@@ -384,7 +384,9 @@ class Contract(NetworkContract):
 
     def allowed_rules(self):
         return [dict(destination=host, ports=[18080, 18443], action='allow')
-                for host in (self.control['ipv4'], self.control['ipv6'], 'api.credential.test', 'other.credential.test')]
+                for host in (self.control['ipv4'], self.control['ipv6'])] + [
+                    dict(destination=host, action='allow')
+                    for host in ('api.credential.test', 'other.credential.test')]
 
     def named_origin(self, root):
         binding = str(uuid.uuid4())

@@ -133,11 +133,33 @@ jobs:
           sudo /usr/local/bin/runsc install
           sudo systemctl reload docker
           runsc --version
+      - name: Restore exact focused credential prerequisite images
+        if: inputs.credential_only
+        id: credential-images
+        uses: actions/cache/restore@v4
+        with:
+          path: .test-work/credential-prerequisites.tar
+          key: ${{ runner.os }}-${{ runner.arch }}-credential-prerequisites-v1-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'crates/**', 'images/agent/Dockerfile', 'tests/fixtures/network.Dockerfile') }}
+      - name: Load the exact cached prerequisite images
+        if: inputs.credential_only && steps.credential-images.outputs.cache-hit == 'true'
+        run: docker load --input .test-work/credential-prerequisites.tar
       - name: Build the actual agent base and public network fixture
+        if: ${{ !inputs.credential_only || steps.credential-images.outputs.cache-hit != 'true' }}
         run: |
           docker build --label dev.goldenhoop.build=network-prototype -f images/agent/Dockerfile -t goldenhoop-agent:test .
           docker build --target host-egress -f images/agent/Dockerfile -t goldenhoop-egress:test .
           docker build -f tests/fixtures/network.Dockerfile -t goldenhoop-network-fixture:test .
+      - name: Export verified focused prerequisites before functional tests
+        if: inputs.credential_only && steps.credential-images.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p .test-work
+          docker save --output .test-work/credential-prerequisites.tar goldenhoop-agent:test goldenhoop-egress:test goldenhoop-network-fixture:test
+      - name: Save exact focused prerequisites independently of functional results
+        if: inputs.credential_only && steps.credential-images.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .test-work/credential-prerequisites.tar
+          key: ${{ steps.credential-images.outputs.cache-primary-key }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Build the production driver bootstrap and recovery contract
