@@ -61,6 +61,12 @@ pub struct DriverConfig {
     pub max_ttl_seconds: u64,
 }
 impl DriverConfig {
+    pub fn read(path: &Path) -> Result<Self> {
+        let cfg: Self = read_json(path)?;
+        cfg.validate()?;
+        Ok(cfg)
+    }
+
     pub fn validate(&self) -> Result<()> {
         if self.installation_id.is_nil()
             || !self.data_root.is_absolute()
@@ -164,6 +170,10 @@ pub(crate) struct VmJournal {
     pub error: Option<String>,
     #[serde(default)]
     pub console_tail: String,
+    #[serde(default)]
+    pub supervisor_stderr_tail: String,
+    #[serde(default)]
+    pub supervisor_cgroup_events: std::collections::BTreeMap<String, String>,
 }
 
 impl VmJournal {

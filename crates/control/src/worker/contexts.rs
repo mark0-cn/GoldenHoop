@@ -25,7 +25,7 @@ impl Worker {
     pub(super) async fn sync_contexts(
         &self,
         handle: &RuntimeHandle,
-        driver: &DockerDriver,
+        driver: &dyn WorkerDriver,
     ) -> Result<bool, ApiError> {
         for stored in self.store.code_context_work(handle.sandbox_id).await? {
             if self.store.effective_desired(handle.sandbox_id).await? != DesiredState::Running {
@@ -40,7 +40,7 @@ impl Worker {
     async fn context_stop(
         &self,
         handle: &RuntimeHandle,
-        driver: &DockerDriver,
+        driver: &dyn WorkerDriver,
         reason: &str,
         state: ExecutionState,
     ) -> Result<bool, ApiError> {
@@ -56,7 +56,7 @@ impl Worker {
     async fn sync_context(
         &self,
         handle: &RuntimeHandle,
-        driver: &DockerDriver,
+        driver: &dyn WorkerDriver,
         mut stored: StoredCodeContext,
     ) -> Result<bool, ApiError> {
         let id = stored.context.id;

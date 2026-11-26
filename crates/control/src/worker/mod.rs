@@ -2,11 +2,14 @@ mod artifacts;
 mod contexts;
 mod credential_probe;
 mod credentials;
+mod driver;
 mod executions;
 mod lifecycle;
 mod network_bootstrap;
 mod network_probe;
 pub use credentials::{CredentialOptions, CredentialProbe, CredentialSetup};
+pub use driver::RuntimeSetup;
+use driver::WorkerDriver;
 pub use network_bootstrap::{NetworkOptions, NetworkSetup};
 mod network_policy;
 mod networks;
@@ -41,7 +44,7 @@ use crate::{InternalFileCall, InternalSandboxCall, http::*};
 
 pub struct Worker {
     store: Store,
-    drivers: HashMap<String, Arc<DockerDriver>>,
+    drivers: HashMap<String, Arc<dyn WorkerDriver>>,
     registration: WorkerRegistration,
     locks: Mutex<HashMap<Uuid, Weak<Mutex<()>>>>,
     concurrency: Arc<Semaphore>,
@@ -58,18 +61,45 @@ pub struct Worker {
 impl Worker {
     pub async fn new(
         store: Store,
-        agent_image: String,
-        kernel_probe_image: Option<String>,
-        allow_runc_development: bool,
+        runtime: RuntimeSetup,
         endpoint: String,
         artifacts: goldenhoop_artifacts::BlobStore,
         network: NetworkSetup,
     ) -> Result<Arc<Self>, ApiError> {
+        let RuntimeSetup {
+            agent_image,
+            kernel_probe_image,
+            allow_runc_development,
+            firecracker_config,
+        } = runtime;
+        if agent_image.is_none() && firecracker_config.is_none() {
+            return Err(ApiError::new(
+                ErrorCode::InvalidRequest,
+                "worker requires an explicitly configured runtime",
+            ));
+        }
+        #[cfg(not(target_os = "linux"))]
+        if firecracker_config.is_some() {
+            return Err(ApiError::new(
+                ErrorCode::UnsupportedCapability,
+                "Firecracker requires Linux root with actual KVM",
+            ));
+        }
         let NetworkSetup {
             controller_image: network_controller_image,
             options: network_options,
             credentials,
         } = network;
+        if agent_image.is_none()
+            && (network_options.is_some()
+                || network_controller_image.is_some()
+                || credentials.is_some())
+        {
+            return Err(ApiError::new(
+                ErrorCode::UnsupportedCapability,
+                "protected networking requires a configured container runtime",
+            ));
+        }
         let credentials = credentials.map(Arc::new);
         if let Some(credentials) = &credentials {
             if network_options.is_none() || network_controller_image.is_none() {
@@ -100,40 +130,63 @@ impl Worker {
             options.validate()?;
             store.bind_network_operator(&options.operator).await?;
         }
-        let mut drivers = HashMap::new();
+        let mut drivers: HashMap<String, Arc<dyn WorkerDriver>> = HashMap::new();
         let mut profiles = Vec::new();
-        for profile in [DockerProfile::Gvisor, DockerProfile::RuncDevelopment] {
-            let driver = Arc::new(
-                DockerDriver::connect(DockerConfig {
-                    installation_id: store.installation_id(),
-                    agent_image: agent_image.clone(),
-                    profile,
-                    allow_runc_development,
-                })
-                .await?,
-            );
-            let mut observed = driver.probe().await;
-            if observed.availability == Availability::Available
-                && let Some(image) = &kernel_probe_image
-            {
-                observed = match driver.probe_code_contexts(image).await {
-                    Ok(profile) => profile,
-                    Err(error) => {
-                        report("kernel_probe_failed", &error);
-                        driver.profile_snapshot().await
-                    }
-                };
-            }
-            if observed.availability == Availability::Available {
-                match driver.probe_isolated_sandboxes().await {
-                    Ok(()) => {
-                        observed.capabilities.insert(Capability::IsolatedSessions);
-                    }
-                    Err(error) => report("isolated_runtime_probe_failed", &error),
+        if let Some(agent_image) = &agent_image {
+            for profile in [DockerProfile::Gvisor, DockerProfile::RuncDevelopment] {
+                let driver = Arc::new(
+                    DockerDriver::connect(DockerConfig {
+                        installation_id: store.installation_id(),
+                        agent_image: agent_image.clone(),
+                        profile,
+                        allow_runc_development,
+                    })
+                    .await?,
+                );
+                let mut observed = driver.probe().await;
+                if observed.availability == Availability::Available
+                    && let Some(image) = &kernel_probe_image
+                {
+                    observed = match driver.probe_code_contexts(image).await {
+                        Ok(profile) => profile,
+                        Err(error) => {
+                            report("kernel_probe_failed", &error);
+                            driver.profile_snapshot().await
+                        }
+                    };
                 }
+                if observed.availability == Availability::Available {
+                    match driver.probe_isolated_sandboxes().await {
+                        Ok(()) => {
+                            observed.capabilities.insert(Capability::IsolatedSessions);
+                        }
+                        Err(error) => report("isolated_runtime_probe_failed", &error),
+                    }
+                }
+                profiles.push(observed);
+                drivers.insert(profile.id().into(), driver);
             }
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(path) = firecracker_config {
+            use goldenhoop_firecracker::lifecycle::{DriverConfig, FirecrackerDriver};
+            let unavailable = || {
+                ApiError::new(
+                    ErrorCode::BackendUnavailable,
+                    "native configuration, artifact or installation ownership is unconfirmed",
+                )
+            };
+            let cfg = DriverConfig::read(&path).map_err(|_| unavailable())?;
+            if cfg.installation_id != store.installation_id() {
+                return Err(ApiError::new(
+                    ErrorCode::InvalidRequest,
+                    "native runtime installation identity must match the worker store",
+                ));
+            }
+            let driver = Arc::new(FirecrackerDriver::connect(cfg).map_err(|_| unavailable())?);
+            let observed = driver.probe().await;
+            drivers.insert(observed.id.clone(), driver);
             profiles.push(observed);
-            drivers.insert(profile.id().into(), driver);
         }
         let artifact_support = match artifacts.probe().await {
             Ok(()) => true,
@@ -153,7 +206,11 @@ impl Worker {
         }
         if network_options.is_some() {
             for profile in &mut profiles {
-                if profile.availability == Availability::Available {
+                if profile.availability == Availability::Available
+                    && drivers
+                        .get(&profile.id)
+                        .is_some_and(|driver| driver.protected_docker().is_ok())
+                {
                     // Internal candidate only. The public registration remains
                     // unavailable until real application and cleanup succeed.
                     profile.capabilities.insert(Capability::NetworkPolicy);
@@ -176,6 +233,9 @@ impl Worker {
         let mut pending = registration.clone();
         if network_options.is_some() {
             for profile in &mut pending.profiles {
+                if !profile.capabilities.contains(&Capability::NetworkPolicy) {
+                    continue;
+                }
                 profile.availability = Availability::Unavailable;
                 profile.capabilities.remove(&Capability::NetworkPolicy);
                 profile.capabilities.remove(&Capability::SecretInjection);
@@ -199,6 +259,12 @@ impl Worker {
             network_tasks: Mutex::new(HashMap::new()),
         });
         if worker.network_options.is_some() {
+            let agent_image = agent_image.ok_or_else(|| {
+                ApiError::new(
+                    ErrorCode::InvalidRequest,
+                    "protected network probe requires the configured container image",
+                )
+            })?;
             let (stop, receive) = watch::channel(false);
             let store = worker.store.clone();
             let heartbeat = tokio::spawn(network_probe::pending_heartbeat(store, pending, receive));
@@ -453,12 +519,16 @@ async fn diagnostics(
             )
         })?;
     require_capability(profile, Capability::Diagnostics)?;
-    let driver = worker.drivers.get(&stored.sandbox.profile).ok_or_else(|| {
-        ApiError::new(
-            ErrorCode::BackendUnavailable,
-            "worker has no driver for this profile",
-        )
-    })?;
+    let driver = worker
+        .drivers
+        .get(&stored.sandbox.profile)
+        .map(Arc::as_ref)
+        .ok_or_else(|| {
+            ApiError::new(
+                ErrorCode::BackendUnavailable,
+                "worker has no driver for this profile",
+            )
+        })?;
     let runtime = if let Some(handle) = worker.recovered_handle(&stored, driver).await? {
         worker.require_network_dispatch(call.sandbox_id).await?;
         match driver.diagnostics(&handle).await {
@@ -510,12 +580,16 @@ async fn files(
             )
         })?;
     require_capability(profile, Capability::Files)?;
-    let driver = worker.drivers.get(&stored.sandbox.profile).ok_or_else(|| {
-        ApiError::new(
-            ErrorCode::BackendUnavailable,
-            "worker has no driver for this profile",
-        )
-    })?;
+    let driver = worker
+        .drivers
+        .get(&stored.sandbox.profile)
+        .map(Arc::as_ref)
+        .ok_or_else(|| {
+            ApiError::new(
+                ErrorCode::BackendUnavailable,
+                "worker has no driver for this profile",
+            )
+        })?;
     let handle = stored.handle.ok_or_else(|| {
         ApiError::new(
             ErrorCode::BackendUnavailable,

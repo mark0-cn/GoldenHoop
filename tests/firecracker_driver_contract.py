@@ -220,6 +220,8 @@ def suite(binary, boot, fixture):
         remove(d)
         report['cases'].append('independent_absolute_expiry_collects_paused_VM_after_callers_and_original_service_group_disappear')
         remove(a)
+        call({'operation': 'remove', 'handle': a})
+        assert record(a['sandbox_id'])['phase'] == 'collected'
         assert call({'operation': 'discover'}) == []
         report['cases'].append('idempotent_generation_collection_and_empty_owned_discovery')
         report['result'] = 'passed'

@@ -209,3 +209,41 @@ original caller service group disappears. These new hardware paths are pending
 at this implementation commit. No public Worker, API, SDK or CLI runtime profile
 is registered. Production image preparation, public integration, snapshots,
 restore identity, templates, combined M4 Stage and all M5-M6 work remain required.
+
+## First lifecycle failure and public integration candidate
+
+[Native run 45884238891](https://github.com/mark0-cn/GoldenHoop/actions/runs/45884238891)
+at 899ed39 retains six passing bootstrap controls but fails the new native
+lifecycle probe. Its [archive](evidence/m4-native-45884238891-archive.json) verifies
+all 57 source fingerprints and preserves Failed with Complete collection. The
+supervisor recorded its authenticated identity, but no accepted VMM or guest
+readiness was recorded. Original stderr, exit status and resource event counters
+were not retained, so the cause is unconfirmed. Subsequent code preserves bounded
+private stderr, actual child exit status and cgroup resource events before
+collection. Linux file-cache accounting is a diagnostic consideration, not a
+proven explanation of this original failure.
+
+The next candidate introduces the shared Worker backend interface and explicit
+`worker --runtime docker|firecracker|both` selection. Docker remains the default.
+Native modes require a root-owned `--firecracker-config` whose installation ID
+matches the store; native-only startup does not connect to Docker. The public
+registration uses the actual native lifecycle probe. Protected-network entry
+points require an explicit Docker implementation; global Docker network settings
+cannot grant those capabilities to the native no-NIC profile.
+
+A separate manual public gate exercises the real Rust API/Worker, Python SDK and
+Rust CLI, including command/file work, actual feature refusals, worker SIGKILL
+recovery without command replay, pause/resume, retained artifacts and independent
+paused expiry. Its private prerequisites must pass first. Both new native gates
+remain unaccepted. Workspace checks remain mandatory in portable CI and phase
+acceptance; hardware workflows now build only their required guest binaries
+instead of rerunning all workspace checks inside every image build. The Docker
+build default still runs all checks, and invalid validation flags are refused.
+
+The [combined candidate review](evidence/m4-public-native-candidate-review.json)
+verifies 264 inputs per platform against current format/strict workspace checks:
+[Windows](evidence/m4-public-native-diagnostics-validation-windows.json) passes
+270 tests and [Linux](evidence/m4-public-native-diagnostics-validation-linux.json)
+passes 313 plus static musl guest/rootfs construction. These results establish
+portable component validation only. The [first native failure diagnosis](evidence/m4-native-supervisor-failure-diagnosis.json)
+preserves the missing telemetry and the requirement for a new hardware result.

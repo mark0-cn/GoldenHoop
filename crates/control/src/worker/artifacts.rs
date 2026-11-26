@@ -196,12 +196,16 @@ impl Worker {
                 "artifact source is not currently accepting file reads",
             ));
         }
-        let driver = self.drivers.get(&sandbox.sandbox.profile).ok_or_else(|| {
-            ApiError::new(
-                ErrorCode::BackendUnavailable,
-                "source runtime profile is unavailable",
-            )
-        })?;
+        let driver = self
+            .drivers
+            .get(&sandbox.sandbox.profile)
+            .map(Arc::as_ref)
+            .ok_or_else(|| {
+                ApiError::new(
+                    ErrorCode::BackendUnavailable,
+                    "source runtime profile is unavailable",
+                )
+            })?;
         let handle = self
             .recovered_handle(&sandbox, driver)
             .await?

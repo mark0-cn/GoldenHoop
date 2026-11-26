@@ -21,7 +21,7 @@ impl Worker {
     pub(super) async fn recovered_handle(
         &self,
         stored: &StoredSandbox,
-        driver: &DockerDriver,
+        driver: &dyn WorkerDriver,
     ) -> Result<Option<RuntimeHandle>, ApiError> {
         if let Some(handle) = &stored.handle {
             return Ok(Some(handle.clone()));
@@ -78,6 +78,7 @@ impl Worker {
             Ok(_) => {}
             Err(error) if error.code == ErrorCode::NotFound => {
                 if self.network_options.is_some()
+                    && driver.protected_docker().is_ok()
                     && !stored.ever_running
                     && stored.sandbox.desired_state == DesiredState::Running
                     && !matches!(
@@ -86,7 +87,7 @@ impl Worker {
                     )
                 {
                     if stored.sandbox.state != SandboxState::Pending {
-                        return self.stop(stored, &driver, "uncertain protected bootstrap has no allocation; refusing none-network creation", ExecutionState::Failed).await;
+                        return self.stop(stored, driver.as_ref(), "uncertain protected bootstrap has no allocation; refusing none-network creation", ExecutionState::Failed).await;
                     }
                     let profile = self
                         .registration
@@ -100,7 +101,7 @@ impl Worker {
                             )
                         })?;
                     require_capability(profile, Capability::NetworkPolicy)?;
-                    Box::pin(self.bootstrap_network(stored, &driver)).await?;
+                    Box::pin(self.bootstrap_network(stored, driver.as_ref())).await?;
                     return self
                         .reconcile_network(self.store.sandbox(id).await?, driver)
                         .await;
@@ -108,12 +109,16 @@ impl Worker {
             }
             Err(error) => return Err(error),
         }
-        let driver = self.drivers.get(&stored.sandbox.profile).ok_or_else(|| {
-            ApiError::new(
-                ErrorCode::UnsupportedCapability,
-                "worker has no matching runtime driver",
-            )
-        })?;
+        let driver = self
+            .drivers
+            .get(&stored.sandbox.profile)
+            .map(Arc::as_ref)
+            .ok_or_else(|| {
+                ApiError::new(
+                    ErrorCode::UnsupportedCapability,
+                    "worker has no matching runtime driver",
+                )
+            })?;
         if self.store.effective_desired(id).await? == DesiredState::Terminated
             && stored.sandbox.desired_state != DesiredState::Terminated
         {
@@ -275,7 +280,7 @@ impl Worker {
     pub(super) async fn stop(
         &self,
         mut stored: StoredSandbox,
-        driver: &DockerDriver,
+        driver: &dyn WorkerDriver,
         reason: &str,
         execution_state: ExecutionState,
     ) -> Result<(), ApiError> {
@@ -409,6 +414,7 @@ impl Worker {
                     let driver = self
                         .drivers
                         .get(&stored.sandbox.profile)
+                        .map(Arc::as_ref)
                         .ok_or_else(|| error.clone())?;
                     // An interrupted create is already being collected when
                     // termination is effective. A temporary absence-check
@@ -439,6 +445,7 @@ impl Worker {
             let driver = self
                 .drivers
                 .get(&stored.sandbox.profile)
+                .map(Arc::as_ref)
                 .ok_or_else(|| error.clone())?;
             stored.handle = self.recovered_handle(&stored, driver).await?;
             if let Some(handle) = &stored.handle {

@@ -153,7 +153,7 @@ impl Worker {
     }
     pub(super) async fn rpc(
         &self,
-        driver: &DockerDriver,
+        driver: &dyn WorkerDriver,
         handle: &RuntimeHandle,
         request: &AgentRequest,
     ) -> Result<AgentResponse, ApiError> {
@@ -162,7 +162,7 @@ impl Worker {
     }
     pub(super) async fn rpc_reply(
         &self,
-        driver: &DockerDriver,
+        driver: &dyn WorkerDriver,
         handle: &RuntimeHandle,
         request: &AgentRequest,
     ) -> Result<AgentReply, ApiError> {
@@ -187,8 +187,9 @@ impl Worker {
     pub(super) async fn ensure_network_task(
         &self,
         id: Uuid,
-        driver: Arc<DockerDriver>,
+        driver: Arc<dyn WorkerDriver>,
     ) -> Result<(), ApiError> {
+        driver.protected_docker()?;
         let mut tasks = self.network_tasks.lock().await;
         if tasks.get(&id).is_some_and(|task| !task.task.is_finished()) {
             return Ok(());
@@ -227,8 +228,9 @@ impl Worker {
     pub(super) async fn reconcile_network(
         &self,
         mut stored: StoredSandbox,
-        driver: Arc<DockerDriver>,
+        driver: Arc<dyn WorkerDriver>,
     ) -> Result<(), ApiError> {
+        driver.protected_docker()?;
         let id = stored.sandbox.id;
         let desired = self.store.effective_desired(id).await?;
         if desired == DesiredState::Terminated
@@ -248,7 +250,7 @@ impl Worker {
             return self
                 .stop(
                     stored,
-                    &driver,
+                    driver.as_ref(),
                     "owned network termination requested",
                     ExecutionState::Cancelled,
                 )
@@ -267,7 +269,7 @@ impl Worker {
                 return self
                     .stop(
                         stored,
-                        &driver,
+                        driver.as_ref(),
                         "owned runtime disappeared; it cannot be recreated",
                         ExecutionState::Failed,
                     )
@@ -341,12 +343,15 @@ impl Worker {
                 .finish_operations(id, "resume", OperationState::Succeeded, None)
                 .await?;
         }
-        if !self.sync_contexts(&handle, &driver).await? {
+        if !self.sync_contexts(&handle, driver.as_ref()).await? {
             return Ok(());
         }
         for execution in self.store.execution_work(id).await?.into_iter().take(16) {
             self.require_network_dispatch(id).await?;
-            if !self.sync_execution(&handle, &driver, execution).await? {
+            if !self
+                .sync_execution(&handle, driver.as_ref(), execution)
+                .await?
+            {
                 break;
             }
         }
@@ -369,7 +374,7 @@ pub(super) async fn call(
 #[allow(clippy::too_many_arguments)]
 async fn hold(
     store: Store,
-    driver: Arc<DockerDriver>,
+    driver: Arc<dyn WorkerDriver>,
     worker: Uuid,
     image: String,
     id: Uuid,
@@ -433,6 +438,7 @@ async fn hold(
                 .clone(),
         };
         let frozen = driver
+            .protected_docker()?
             .recover_quarantined_network(
                 handle,
                 &network,
@@ -496,6 +502,7 @@ async fn hold(
                     .await?;
                 let next = if let Some(previous) = &lease {
                     driver
+                        .protected_docker()?
                         .replace_protected_policy(
                             handle,
                             &network,
@@ -506,6 +513,7 @@ async fn hold(
                         .await?
                 } else {
                     driver
+                        .protected_docker()?
                         .apply_protected_policy(
                             handle,
                             &network,
@@ -557,6 +565,7 @@ async fn hold(
                 let previous_published_until = live.borrow().as_ref().map(|value| value.until);
                 let since_last_exchange = last.elapsed();
                 let result = driver
+                    .protected_docker()?
                     .renew_protected_policy(
                         handle,
                         &network,

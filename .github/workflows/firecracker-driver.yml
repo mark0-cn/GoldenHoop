@@ -18,7 +18,8 @@ jobs:
       - name: Build the actual Rust driver and supervisor
         run: cargo build --locked -p goldenhoop-firecracker
       - name: Build the actual Rust guest init and shared agent
-        run: docker build --target microvm-rootfs --label dev.goldenhoop.task=m4-guest --label dev.goldenhoop.run="$M4_OWNER" --tag "$M4_IMAGE" --file images/agent/Dockerfile .
+        # Full workspace checks run in CI; this gate builds and exercises guests.
+        run: docker build --build-arg VALIDATE_WORKSPACE=0 --target microvm-rootfs --label dev.goldenhoop.task=m4-guest --label dev.goldenhoop.run="$M4_OWNER" --tag "$M4_IMAGE" --file images/agent/Dockerfile .
       - name: Require actual jailed bootstrap and native lifecycle recovery
         run: sudo -n python3 -B tests/firecracker_guest_contract.py --driver-contract --source-commit "$GITHUB_SHA" --binary "$PWD/target/debug/goldenhoop-firecracker" --image "$M4_IMAGE" --owner "$M4_OWNER" --output "$PWD/evidence/firecracker-driver.json"
       - name: Collect the exact owned test image and positively observe absence

@@ -7,15 +7,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends musl-tools \
     && rustup target add x86_64-unknown-linux-musl
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
+ARG VALIDATE_WORKSPACE=1
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,id=goldenhoop-rust-target,target=/src/target \
     # Source contexts can restore mtimes older than shared target artifacts.
     # Refresh all workspace inputs before Cargo decides what can be reused.
     find crates -type f -exec touch {} + \
-    && cargo fmt --all --check \
-    && cargo clippy --locked --workspace --all-targets -- -D warnings \
-    && cargo test --locked --workspace \
+    && if [ "$VALIDATE_WORKSPACE" = "1" ]; then \
+         cargo fmt --all --check \
+         && cargo clippy --locked --workspace --all-targets -- -D warnings \
+         && cargo test --locked --workspace; \
+       elif [ "$VALIDATE_WORKSPACE" != "0" ]; then exit 64; fi \
     && cargo build --locked --release --target x86_64-unknown-linux-musl -p goldenhoop-agent \
     && cargo build --locked --release --target x86_64-unknown-linux-musl -p goldenhoop-egress \
     && cargo build --locked --release --target x86_64-unknown-linux-musl -p goldenhoop-init \

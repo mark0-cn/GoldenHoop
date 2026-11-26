@@ -60,7 +60,12 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--source-commit', required=True)
     parser.add_argument('--driver-contract', action='store_true')
+    parser.add_argument('--public-contract', action='store_true')
+    parser.add_argument('--control', type=Path)
+    parser.add_argument('--cli', type=Path)
     args = parser.parse_args()
+    if args.public_contract and (not args.driver_contract or not args.control or not args.cli):
+        parser.error('public contract requires --driver-contract, --control and --cli')
     assert re.fullmatch(r'[0-9a-f]{40}', args.source_commit)
     assert re.fullmatch(r'[0-9]+-[0-9]+', args.owner)
     root = Path(__file__).resolve().parent.parent
@@ -71,6 +76,10 @@ def main():
     for crate in ['firecracker', 'guest-init', 'agent', 'protocol', 'runtime']:
         sources += sorted((root / f'crates/{crate}').rglob('*.rs'))
         sources.append(root / f'crates/{crate}/Cargo.toml')
+    if args.public_contract:
+        sources += [root / 'tests/firecracker_public_contract.py', root / '.github/workflows/firecracker-public.yml']
+        sources += sorted((root / 'crates').rglob('*.rs')) + sorted((root / 'crates').rglob('Cargo.toml'))
+        sources += sorted((root / 'sdk/python').rglob('*.py')) + [root / 'sdk/python/pyproject.toml']
     sources += sorted((root / 'images/microvm').glob('*.json'))
     report = {
         'suite': 'actual jailed Firecracker guest bootstrap',
@@ -193,6 +202,22 @@ def main():
             guest_collected = driver['cleanup'] == 'complete'
             report['cases'] += ['driver:' + case for case in driver['cases']]
             assert driver['result'] == 'passed' and guest_collected, driver.get('error', 'native driver collection unconfirmed')
+        if args.public_contract:
+            from firecracker_public_contract import suite as public_suite
+            tools = []
+            for source, name in [(args.control, 'goldenhoopd'), (args.cli, 'goldenhoop')]:
+                target = fixture / name
+                shutil.copyfile(source.resolve(strict=True), target); target.chmod(0o500)
+                tools.append(target)
+            report['public_binaries_sha256'] = {tool.name: digest(tool) for tool in tools}
+            guest_collected = False
+            public = public_suite(*tools, binary, boot, fixture)
+            report['public'] = public
+            guest_collected = public['cleanup'] == 'complete'
+            report['cases'] += ['public:' + case for case in public['cases']]
+            report['scope'] = 'actual basic native public API/SDK/CLI lifecycle; snapshots/templates and full M4 remain unaccepted'
+            assert public['result'] == 'passed' and guest_collected, public.get('error', 'native public collection unconfirmed')
+            report['runtime_capabilities_verified'] = True
     except Exception as error:
         report['result'] = 'failed'
         report['error'] = str(error)

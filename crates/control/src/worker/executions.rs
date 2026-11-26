@@ -25,7 +25,7 @@ impl Worker {
     pub(super) async fn sync_execution(
         &self,
         handle: &RuntimeHandle,
-        driver: &DockerDriver,
+        driver: &dyn WorkerDriver,
         stored: StoredExecution,
     ) -> Result<bool, ApiError> {
         let id = stored.execution.id;
@@ -235,7 +235,7 @@ impl Worker {
     async fn execution_unknown(
         &self,
         handle: &RuntimeHandle,
-        driver: &DockerDriver,
+        driver: &dyn WorkerDriver,
         stored: StoredExecution,
         error: &ApiError,
     ) -> Result<bool, ApiError> {
@@ -267,7 +267,7 @@ impl Worker {
     async fn escalate_cancel(
         &self,
         handle: &RuntimeHandle,
-        driver: &DockerDriver,
+        driver: &dyn WorkerDriver,
         id: Uuid,
     ) -> Result<bool, ApiError> {
         self.store

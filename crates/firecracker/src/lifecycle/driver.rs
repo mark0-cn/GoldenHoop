@@ -229,6 +229,22 @@ impl FirecrackerDriver {
             .open(group.join("cgroup.procs"))?;
         let descriptor = tasks.as_raw_fd();
         let lock = self.inner._installation_lock.as_raw_fd();
+        let stderr = OpenOptions::new()
+            .append(true)
+            .create(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(
+                self.inner
+                    .cfg
+                    .data_root
+                    .join("records")
+                    .join(format!("{}.supervisor.log", record.owner.sandbox_id)),
+            )?;
+        let metadata = stderr.metadata()?;
+        if !metadata.is_file() || metadata.uid() != 0 || metadata.mode() & 0o077 != 0 {
+            return Err(invalid("native supervisor diagnostic file ownership mismatch").into());
+        }
         let mut command = tokio::process::Command::new(&record.supervisor_artifact.path);
         command
             .arg("supervise")
@@ -243,7 +259,7 @@ impl FirecrackerDriver {
             .env("LANG", "C.UTF-8")
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
+            .stderr(stderr);
         // SAFETY: only async-signal-safe Linux syscalls execute after fork. The
         // inherited CLOEXEC installation lease fences restart until cgroup join.
         unsafe {
@@ -344,9 +360,12 @@ impl FirecrackerDriver {
                 return Ok(self.handle(&record));
             }
             if let Some(child) = child.as_mut()
-                && child.try_wait()?.is_some()
+                && let Some(status) = child.try_wait()?
             {
-                return Err(invalid("native supervisor exited during creation").into());
+                return Err(invalid(format!(
+                    "native supervisor exited during creation: {status}"
+                ))
+                .into());
             }
             if tokio::time::Instant::now() >= deadline {
                 return Err(invalid(
@@ -486,6 +505,8 @@ impl FirecrackerDriver {
             ever_ready: false,
             error: None,
             console_tail: String::new(),
+            supervisor_stderr_tail: String::new(),
+            supervisor_cgroup_events: Default::default(),
         };
         atomic_json(&path, &record)?;
         let launch = (|| -> Result<_> {
@@ -523,6 +544,65 @@ impl FirecrackerDriver {
         }
         let fd = track_process(expected)?;
         Ok(!pidfd_exited(&fd)?)
+    }
+
+    fn retain_dead_supervisor_diagnostics(
+        &self,
+        record: &mut VmJournal,
+        error: &str,
+    ) -> Result<()> {
+        if self.supervisor_alive(record)? {
+            return Err(invalid("live supervisor retains exclusive journal writes").into());
+        }
+        let group = self
+            .inner
+            .cfg
+            .paths(record.owner.generation)?
+            .supervisor_cgroup;
+        for name in [
+            "memory.current",
+            "memory.peak",
+            "memory.events.local",
+            "pids.events",
+            "cpu.stat",
+        ] {
+            match File::open(group.join(name)) {
+                Ok(file) => {
+                    let mut text = String::new();
+                    file.take(8193).read_to_string(&mut text)?;
+                    if text.len() > 8192 {
+                        return Err(
+                            invalid("supervisor resource event observation exceeds limit").into(),
+                        );
+                    }
+                    record.supervisor_cgroup_events.insert(name.into(), text);
+                }
+                Err(e) if e.kind() == io::ErrorKind::NotFound && !group.try_exists()? => (),
+                Err(e) => return Err(e.into()),
+            }
+        }
+        let path = self
+            .inner
+            .cfg
+            .data_root
+            .join("records")
+            .join(format!("{}.supervisor.log", record.owner.sandbox_id));
+        match trusted_file(&path) {
+            Ok(mut file) => {
+                use std::io::{Seek, SeekFrom};
+                let length = file.metadata()?.len();
+                file.seek(SeekFrom::Start(length.saturating_sub(16384)))?;
+                let mut bytes = Vec::new();
+                file.take(16384).read_to_end(&mut bytes)?;
+                record.supervisor_stderr_tail = String::from_utf8_lossy(&bytes).into();
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => (),
+            Err(e) => return Err(e.into()),
+        }
+        if record.error.is_none() {
+            record.error = Some(error.chars().take(2048).collect());
+        }
+        atomic_json(&self.inner.cfg.record_path(record.owner.sandbox_id), record)
     }
 
     fn physical_absence(&self, record: &VmJournal) -> Result<bool> {
@@ -804,10 +884,15 @@ impl RuntimeDriver for FirecrackerDriver {
         let _guard = lock.lock().await;
         let result = self.create_owned(sandbox, request).await;
         if result.is_err()
-            && let Ok(record) = self.load(sandbox.id)
+            && let Ok(mut record) = self.load(sandbox.id)
             && !record.ever_ready
             && request_digest(request).is_ok_and(|digest| digest == record.owner.request_sha256)
         {
+            if let Err(error) = &result
+                && !self.supervisor_alive(&record).unwrap_or(true)
+            {
+                let _ = self.retain_dead_supervisor_diagnostics(&mut record, &error.to_string());
+            }
             if record.phase == "vm_collected" {
                 let _ = self.settle_collected(&record).await;
             } else if self.supervisor_alive(&record).unwrap_or(false) {

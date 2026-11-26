@@ -5,7 +5,7 @@ impl Worker {
     pub(super) async fn sync_session_controls(
         &self,
         handle: &RuntimeHandle,
-        driver: &DockerDriver,
+        driver: &dyn WorkerDriver,
         stored: &StoredExecution,
         actual: &Execution,
     ) -> Result<(), ApiError> {

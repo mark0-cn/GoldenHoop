@@ -107,9 +107,10 @@ impl Worker {
     pub(super) async fn bootstrap_network(
         &self,
         mut stored: StoredSandbox,
-        driver: &DockerDriver,
+        driver: &dyn WorkerDriver,
     ) -> Result<(), ApiError> {
         let id = stored.sandbox.id;
+        driver.protected_docker()?;
         let options = self.network_options.as_ref().ok_or_else(unavailable)?;
         let image = self
             .network_controller_image
@@ -230,6 +231,7 @@ impl Worker {
                 attempt: Mutex::new(None),
             };
             let handle = driver
+                .protected_docker()?
                 .prepare_quarantined_observed(
                     &stored.sandbox,
                     &native_request,
@@ -243,9 +245,11 @@ impl Worker {
             self.store.observe(stored.clone()).await?;
             self.admit_bootstrap(id).await?;
             driver
+                .protected_docker()?
                 .start_quarantined(&handle, &runtime_network, &mut session)
                 .await?;
             let source = driver
+                .protected_docker()?
                 .bind_quarantined_source(&handle, &runtime_network, &mut session)
                 .await?;
             let protection = QuarantineProtection {
@@ -254,6 +258,7 @@ impl Worker {
                 control_addresses: options.control_addresses.clone(),
             };
             let protected = driver
+                .protected_docker()?
                 .protect_quarantined_network(
                     &handle,
                     &runtime_network,
@@ -295,7 +300,7 @@ impl Worker {
     pub(super) async fn settle_create_dispatches(
         &self,
         stored: &StoredSandbox,
-        driver: &DockerDriver,
+        driver: &dyn WorkerDriver,
     ) -> Result<(), ApiError> {
         let id = stored.sandbox.id;
         let bridge = self
@@ -311,6 +316,7 @@ impl Worker {
         {
             return Ok(());
         }
+        driver.protected_docker()?;
         let network = self.store.network_allocation(id).await?;
         let token = self
             .store
@@ -360,6 +366,7 @@ impl Worker {
             network_id: native.network_id,
         };
         driver
+            .protected_docker()?
             .validate_recovered_network_create(handle, &plan, &dispatch.request_sha256)
             .await?;
         self.store

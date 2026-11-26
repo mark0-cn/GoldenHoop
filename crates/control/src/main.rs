@@ -5,10 +5,17 @@ use goldenhoop_artifacts::{BlobStore, S3Config};
 use goldenhoop_control::{
     api,
     http::BearerAuth,
-    worker::{CredentialSetup, NetworkOptions, NetworkSetup, Worker},
+    worker::{CredentialSetup, NetworkOptions, NetworkSetup, RuntimeSetup, Worker},
 };
 use goldenhoop_store::Store;
 use std::io::Read;
+
+#[derive(Clone, clap::ValueEnum)]
+enum RuntimeSelection {
+    Docker,
+    Firecracker,
+    Both,
+}
 
 #[derive(Clone, clap::ValueEnum)]
 enum ArtifactBackend {
@@ -109,6 +116,10 @@ enum Role {
         token: String,
     },
     Worker {
+        #[arg(long, value_enum, default_value = "docker")]
+        runtime: RuntimeSelection,
+        #[arg(long, env = "GOLDENHOOP_FIRECRACKER_CONFIG")]
+        firecracker_config: Option<PathBuf>,
         #[arg(
             long,
             env = "GOLDENHOOP_AGENT_IMAGE",
@@ -130,7 +141,7 @@ enum Role {
         #[arg(long)]
         allow_runc_development: bool,
         #[command(flatten)]
-        artifacts: ArtifactOptions,
+        artifacts: Box<ArtifactOptions>,
     },
 }
 
@@ -171,6 +182,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             result?;
         }
         Role::Worker {
+            runtime,
+            firecracker_config,
             agent_image,
             kernel_probe_image,
             egress_controller_image,
@@ -179,6 +192,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             allow_runc_development,
             artifacts,
         } => {
+            let native = matches!(
+                runtime,
+                RuntimeSelection::Firecracker | RuntimeSelection::Both
+            );
+            if native != firecracker_config.is_some() {
+                return Err("--runtime firecracker/both requires --firecracker-config; Docker mode does not use a native configuration".into());
+            }
             let store = Store::open(&args.database).await?;
             let mut options = std::fs::OpenOptions::new();
             options.read(true).write(true).create(true).truncate(false);
@@ -191,7 +211,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let lock = options.open(args.database.with_extension("worker.lock"))?;
             fs2::FileExt::try_lock_exclusive(&lock)
                 .map_err(|_| "another worker already owns this local database")?;
-            let artifacts = artifacts.connect(&args.database, store.installation_id())?;
+            let artifacts = (*artifacts).connect(&args.database, store.installation_id())?;
             let network_options = network_config
                 .map(
                     |path| -> Result<NetworkOptions, Box<dyn std::error::Error>> {
@@ -222,9 +242,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
             let worker = Worker::new(
                 store.clone(),
-                agent_image,
-                kernel_probe_image,
-                allow_runc_development,
+                RuntimeSetup {
+                    agent_image: (!matches!(runtime, RuntimeSelection::Firecracker))
+                        .then_some(agent_image),
+                    kernel_probe_image,
+                    allow_runc_development,
+                    firecracker_config,
+                },
                 format!("http://{}", listener.local_addr()?),
                 artifacts,
                 NetworkSetup {

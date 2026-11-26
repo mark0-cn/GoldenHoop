@@ -55,7 +55,9 @@ impl Worker {
         }
         let mut profiles = self.registration.profiles.clone();
         for profile in &mut profiles {
-            if profile.availability != Availability::Available {
+            if profile.availability != Availability::Available
+                || !profile.capabilities.contains(&Capability::NetworkPolicy)
+            {
                 continue;
             }
             let limits = ResourceLimits {
