@@ -59,19 +59,80 @@ fn mount(
         )
     } != 0
     {
-        return Err(io::Error::last_os_error());
+        let error = io::Error::last_os_error();
+        return Err(io::Error::new(
+            error.kind(),
+            format!(
+                "mount {} on {}: {error}",
+                kind.to_string_lossy(),
+                target.to_string_lossy()
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn dev_mount_options(information: &str) -> io::Result<Option<&str>> {
+    let mut found = None;
+    for line in information.lines() {
+        let (mount, filesystem) = line
+            .split_once(" - ")
+            .ok_or_else(|| invalid("invalid guest mount observation"))?;
+        let fields: Vec<_> = mount.split_whitespace().collect();
+        if fields.len() < 6 {
+            return Err(invalid("incomplete guest mount observation"));
+        }
+        if fields[4] != "/dev" {
+            continue;
+        }
+        if filesystem.split_whitespace().next() != Some("devtmpfs") || found.is_some() {
+            return Err(invalid("guest /dev is not one unambiguous devtmpfs mount"));
+        }
+        found = Some(fields[5]);
+    }
+    Ok(found)
+}
+
+fn mount_information() -> io::Result<String> {
+    let file = File::open("/proc/self/mountinfo")?;
+    let mut information = String::new();
+    file.take(65537).read_to_string(&mut information)?;
+    if information.len() > 65536 {
+        return Err(invalid("guest mount observation exceeds limit"));
+    }
+    Ok(information)
+}
+
+fn prepare_devices() -> io::Result<()> {
+    // The pinned kernel has CONFIG_DEVTMPFS_MOUNT=y. Like OpenRC's devfs,
+    // inspect an existing kernel mount and remount it with required flags.
+    // An arbitrary EBUSY never substitutes for an observed, constrained mount.
+    let information = mount_information()?;
+    let remount = if dev_mount_options(&information)?.is_some() {
+        libc::MS_REMOUNT
+    } else {
+        0
+    };
+    mount(
+        "devtmpfs",
+        "/dev",
+        "devtmpfs",
+        remount | libc::MS_NOSUID | libc::MS_NOEXEC,
+        "mode=0755",
+    )?;
+    let information = mount_information()?;
+    let options = dev_mount_options(&information)?
+        .ok_or_else(|| invalid("guest /dev mount was not observed"))?;
+    if !["rw", "nosuid", "noexec"]
+        .iter()
+        .all(|required| options.split(',').any(|option| option == *required))
+    {
+        return Err(invalid("guest /dev mount constraints were not applied"));
     }
     Ok(())
 }
 
 fn configure_filesystems() -> io::Result<()> {
-    mount(
-        "devtmpfs",
-        "/dev",
-        "devtmpfs",
-        libc::MS_NOSUID | libc::MS_NOEXEC,
-        "mode=0755",
-    )?;
     mount(
         "proc",
         "/proc",
@@ -79,6 +140,7 @@ fn configure_filesystems() -> io::Result<()> {
         libc::MS_NOSUID | libc::MS_NOEXEC | libc::MS_NODEV,
         "hidepid=2",
     )?;
+    prepare_devices()?;
     mount(
         "sysfs",
         "/sys",
@@ -293,17 +355,24 @@ pub async fn run() -> io::Result<()> {
             "guest boot requires root PID1",
         ));
     }
-    configure_filesystems()?;
-    configure_loopback()?;
-    let config = read_config()?;
+    configure_filesystems()
+        .map_err(|error| io::Error::new(error.kind(), format!("guest filesystems: {error}")))?;
+    configure_loopback()
+        .map_err(|error| io::Error::new(error.kind(), format!("guest loopback: {error}")))?;
+    let config = read_config()
+        .map_err(|error| io::Error::new(error.kind(), format!("guest configuration: {error}")))?;
     // SAFETY: the requested process-local setting has integer arguments only.
     if unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) } != 0 {
         return Err(io::Error::last_os_error());
     }
     std::fs::create_dir_all(WORKSPACE)?;
-    let tasks = prepare_tasks(&config)?;
-    let mut child = spawn_agent(&tasks)?;
-    wait_agent(&mut child).await?;
+    let tasks = prepare_tasks(&config)
+        .map_err(|error| io::Error::new(error.kind(), format!("guest task accounting: {error}")))?;
+    let mut child = spawn_agent(&tasks)
+        .map_err(|error| io::Error::new(error.kind(), format!("guest agent spawn: {error}")))?;
+    wait_agent(&mut child)
+        .await
+        .map_err(|error| io::Error::new(error.kind(), format!("guest agent readiness: {error}")))?;
     let pid = child.id();
     let listener = GuestControlListener::bind(config.control_port)?;
     let permits = Arc::new(Semaphore::new(8));
@@ -332,6 +401,45 @@ pub async fn run() -> io::Result<()> {
                     return Err(error);
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn existing_kernel_devtmpfs_is_identified_before_remount() {
+        let information = "1 0 254:0 / / rw,relatime - ext4 /dev/vda rw\n2 1 0:2 / /dev rw,relatime - devtmpfs devtmpfs rw,size=1000k\n";
+        assert_eq!(dev_mount_options(information).unwrap(), Some("rw,relatime"));
+        let constrained = information.replace(
+            "rw,relatime - devtmpfs",
+            "rw,nosuid,noexec,relatime - devtmpfs",
+        );
+        assert_eq!(
+            dev_mount_options(&constrained).unwrap(),
+            Some("rw,nosuid,noexec,relatime")
+        );
+    }
+
+    #[test]
+    fn absence_is_distinct_from_foreign_or_ambiguous_mounts() {
+        assert!(
+            dev_mount_options("1 0 254:0 / / rw - ext4 /dev/vda rw\n")
+                .unwrap()
+                .is_none()
+        );
+        let foreign = "2 1 0:2 / /dev rw - tmpfs tmpfs rw\n";
+        assert!(dev_mount_options(foreign).is_err());
+        let valid = foreign.replace("tmpfs tmpfs", "devtmpfs devtmpfs");
+        assert!(dev_mount_options(&format!("{valid}{valid}")).is_err());
+    }
+
+    #[test]
+    fn malformed_observations_cannot_be_treated_as_missing_mounts() {
+        for information in ["invalid", "1 0 /dev - devtmpfs devtmpfs rw"] {
+            assert!(dev_mount_options(information).is_err());
         }
     }
 }

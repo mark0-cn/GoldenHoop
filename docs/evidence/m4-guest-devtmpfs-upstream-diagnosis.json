@@ -1,0 +1,41 @@
+{
+  "timestamp": "2026-11-26T18:13:57.141350+00:00",
+  "first_native_run": 45871959877,
+  "source_commit": "1e02c6753bb96beca2c56bcc530b2de2a2703e3e",
+  "observed": {
+    "kernel_started": true,
+    "kernel_auto_mounted_devtmpfs": true,
+    "rust_init_entered": true,
+    "init_error": "Resource busy (os error16)",
+    "agent_ready": false,
+    "failed_operation_localized": false,
+    "cleanup": "complete",
+    "source_fingerprints_verified": 47,
+    "corrupt_kernel_refusal_and_collection": "passed as expected"
+  },
+  "diagnosis": "Existing kernel /dev mount makes the unconditional second devtmpfs mount a likely EBUSY source. The first error lacks operation context, so exact attribution remains unproven until the corrected hardware run.",
+  "references": [
+    {
+      "project": "OpenRC/openrc",
+      "revision": "5b8227fd3c58636a232127bf1acc148202684fce",
+      "path": "init.d/devfs.in",
+      "url": "https://github.com/OpenRC/openrc/blob/5b8227fd3c58636a232127bf1acc148202684fce/init.d/devfs.in",
+      "sha256": "2eac0eaa116b19417929e86302c6db1b74514a3f30916f606358f93955c2c8bc"
+    },
+    {
+      "project": "torvalds/linux",
+      "revision": "v6.18",
+      "path": "drivers/base/devtmpfs.c",
+      "url": "https://github.com/torvalds/linux/blob/v6.18/drivers/base/devtmpfs.c",
+      "sha256": "58d0e418e1744900c272c467a905f4ca4cf0ba2c29341eca4695674a8c13acfa"
+    }
+  ],
+  "change": [
+    "Mount proc first and inspect bounded actual mountinfo.",
+    "For one observed devtmpfs /dev mount, remount with required nosuid/noexec; mount fresh only if absent.",
+    "Refuse foreign or ambiguous mounts and verify required mount flags afterward; never accept arbitrary EBUSY.",
+    "Annotate initialization and mount errors with the failed operation.",
+    "Handle transient empty jailer PID files inside the same original readiness deadline; no signaling authority from a PID file."
+  ],
+  "remaining_gate": "Fresh immutable-candidate actual jailed boot/guest command/file/collection required; full M4 remains incomplete."
+}

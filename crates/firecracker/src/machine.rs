@@ -376,6 +376,9 @@ impl Machine {
         self.launcher = Some(child);
         let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
         loop {
+            if tokio::time::Instant::now() >= deadline {
+                return Err(invalid("jailed VMM identity/readiness deadline").into());
+            }
             if let Some(child) = self.launcher.as_mut()
                 && let Some(status) = child.try_wait()?
                 && !status.success()
@@ -393,6 +396,12 @@ impl Machine {
                 }
                 let mut text = String::new();
                 file.take(17).read_to_string(&mut text)?;
+                if text.is_empty() {
+                    // create_new precedes the jailer's write of its child PID.
+                    // An empty observation grants no authority and no new budget.
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                    continue;
+                }
                 let pid: u32 = text.parse()?;
                 if pid <= 1 || pid > i32::MAX as u32 {
                     return Err(invalid("invalid VMM PID").into());

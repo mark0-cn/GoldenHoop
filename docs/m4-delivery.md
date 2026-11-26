@@ -129,3 +129,23 @@ pass 302 tests and the static musl guest/rootfs build. The
 [input review](evidence/m4-guest-bootstrap-local-input-review.json) verifies all
 257 inputs on each platform and isolates the later build-only concurrency bound.
 These portable/build results cannot accept the hardware gate.
+
+## Actual guest boot failure and next correction
+
+[Native run 45871959877](evidence/m4-native-45871959877-archive.json) verifies 47
+source fingerprints at 1e02c67 and preserves the failed readiness result. The
+console records kernel boot, mounted ext4/devtmpfs and Rust init entry, followed
+by EBUSY. Its false guest_started flag means that the accepted agent-readiness
+marker was never reached. Both the corrupt-digest refusal and failed boot confirm
+owned collection. Portable CI 45871909422 succeeds on both platforms.
+
+The [OpenRC/Linux diagnosis](evidence/m4-guest-devtmpfs-upstream-diagnosis.json)
+retains uncertainty about the original generic error's exact operation. The
+correction observes the existing kernel /dev mount, remounts it with verified
+nosuid/noexec constraints, refuses foreign/ambiguous mounts and annotates every
+initialization failure. An empty jailer PID-file observation now consumes only
+the original readiness budget and cannot authorize signaling. Updated
+[Windows](evidence/m4-guest-devtmpfs-validation-windows.json) and
+[Linux](evidence/m4-guest-devtmpfs-validation-linux.json) format/strict full
+workspace checks pass 269 and 309 tests respectively. A fresh actual guest run
+is still required; none of the remaining M4 scope is removed.
