@@ -647,6 +647,42 @@ class Contract(NetworkContract):
         try:
             if self.receiver:
                 self.report['receiver_logs'] = [json.loads(line) for line in docker('logs', self.receiver).splitlines() if line.startswith('{')]
+            # run() has already persisted the original failure journal. Give the
+            # live owner its normal termination path before the base fallback
+            # replaces it with a maintenance worker. Only this attempt's public
+            # sandbox identities are submitted; diagnostics are not acceptance.
+            if self.members and all(role in self.processes and self.processes[role].poll() is None
+                                    for role in ('api', 'worker')):
+                observed = self.report['live_owner_cleanup_observation'] = {'diagnostic_only': True, 'sandboxes': []}
+                try:
+                    for identity in self.members:
+                        state = self.request('GET', '/v1/sandboxes/' + identity)
+                        if state['cleanup'] != 'complete':
+                            self.wait(self.request('DELETE', '/v1/sandboxes/' + identity, key=str(uuid.uuid4())))
+                        assert self.request('GET', '/v1/sandboxes/' + identity)['cleanup'] == 'complete'
+                        observed['sandboxes'].append(identity)
+                    observed['result'] = 'complete'
+                except BaseException as error:
+                    # Preserve the original test outcome and run all existing
+                    # independent collection/absence checks even on failure.
+                    observed.update(result='incomplete', error_type=type(error).__name__)
+                finally:
+                    self.report['credential_retirement_observations'] = []
+                    try:
+                        for path in self.logs:
+                            for line in path.read_text(encoding='utf-8', errors='replace').splitlines():
+                                if not line.startswith('{'):
+                                    continue
+                                try:
+                                    event = json.loads(line)
+                                except ValueError:
+                                    continue
+                                if event.get('event') == 'credential_ingress_retirement_observation':
+                                    self.report['credential_retirement_observations'].append(event)
+                                    del self.report['credential_retirement_observations'][:-64]
+                    except BaseException as error:
+                        observed['retirement_observation_error_type'] = type(error).__name__
+                    self.save()
             super().cleanup()
         except BaseException as error:
             failure = error
