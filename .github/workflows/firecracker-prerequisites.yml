@@ -1,0 +1,23 @@
+name: Firecracker prerequisites
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  kvm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the actual Rust KVM probe
+        run: cargo build --locked -p goldenhoop-firecracker
+      - name: Require actual KVM access without a software fallback
+        run: sudo -n python3 -B tests/firecracker_prerequisite_contract.py --source-commit "$GITHUB_SHA" --binary "$PWD/target/debug/goldenhoop-firecracker" --output "$PWD/evidence/firecracker-prerequisites.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: firecracker-prerequisites
+          path: evidence/*.json
+          if-no-files-found: error

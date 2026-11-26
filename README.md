@@ -16,6 +16,8 @@ The full target includes local containers, Firecracker microVMs, and Kubernetes;
 
 Runtime support is declared per profile and checked against the host. Missing isolation must fail closed. A successful unit test is not evidence of a working isolation boundary.
 
+M4 implementation has started with [Rust KVM observations and private Firecracker control](docs/m4-delivery.md). Jailed guest/runtime, snapshots and template acceptance remain required; no Firecracker profile is advertised.
+
 ## Development
 
     cargo fmt --all --check
