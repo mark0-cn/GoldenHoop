@@ -696,12 +696,31 @@ class Contract(ContextCases, IsolatedCases):
         assert receipt["state"] == "pending", receipt
         docker("kill", container)
         self.launch("worker")
-        execution = self.wait_execution(identity)
+        # Execution completion and whole-runtime collection are separate
+        # observations. Share the original 25-second execution-wait budget;
+        # Pending cleanup is not a failed assertion or positive absence proof.
+        started = time.monotonic()
+        deadline = started + 25
+        execution = self.wait_execution(identity, limit=deadline-time.monotonic())
         assert execution["state"] == "failed" and execution["cleanup"] == "complete", execution
         receipt = self.request("GET", f"/v1/sessions/{identity}/controls/1")
         assert receipt["state"] == "unknown", receipt
         assert self.request("POST", f"/v1/sessions/{identity}/controls", control) == receipt
         sandbox = self.request("GET", f"/v1/sandboxes/{source}")
+        observation = {"sandbox_id": source, "shared_wait_budget_seconds": 25, "samples": []}
+        self.runtime_loss_cleanup_observations = observation
+        while True:
+            assert sandbox["state"] == "failed", sandbox
+            sample = {"state": sandbox["state"], "cleanup": sandbox["cleanup"]}
+            if not observation["samples"] or sample != observation["samples"][-1]["observation"]:
+                assert len(observation["samples"]) < 64
+                observation["samples"].append({"elapsed_seconds": time.monotonic()-started, "observation": sample})
+            assert time.monotonic() <= deadline, sandbox
+            if sandbox["cleanup"] == "complete":
+                break
+            assert time.monotonic() < deadline, sandbox
+            time.sleep(min(.1, max(0, deadline-time.monotonic())))
+            sandbox = self.request("GET", f"/v1/sandboxes/{source}")
         assert sandbox["state"] == "failed" and sandbox["cleanup"] == "complete", sandbox
         assert not docker("ps", "-a", "--filter", f"id={container}", "--format", "{{.ID}}")
         assert not docker("ps", "-a", "--filter", f"label=dev.goldenhoop.sandbox={source}", "--format", "{{.ID}}")
@@ -959,6 +978,7 @@ assert not alive,alive
             evidence["artifact_backend"] = self.args.artifact_backend
             evidence["code_contexts"] = getattr(self, "context_observations", [])
             evidence["context_startup_observations"] = getattr(self, "context_startup_observations", [])
+            evidence["runtime_loss_cleanup_observations"] = getattr(self, "runtime_loss_cleanup_observations", None)
             evidence["operation_wait_failures"] = getattr(self, "operation_wait_failures", [])
             evidence["contexts_only"] = self.args.contexts_only
             evidence["expected_code_languages"] = self.args.code_languages
