@@ -27,6 +27,7 @@ use zeroize::Zeroizing;
 struct Authority {
     binding: CredentialBinding,
     current: AtomicBool,
+    completed: AtomicU64,
 }
 #[async_trait]
 impl CredentialAuthority for Authority {
@@ -51,7 +52,14 @@ impl CredentialAuthority for Authority {
             "fixture-tls-provider-private-value".into(),
         )))
     }
-    async fn record(&self, _: &CredentialGrant, _: CredentialOutcome) -> Result<(), ApiError> {
+    async fn record(
+        &self,
+        _: &CredentialGrant,
+        outcome: CredentialOutcome,
+    ) -> Result<(), ApiError> {
+        if outcome == CredentialOutcome::BodyCompleted {
+            self.completed.fetch_add(1, Ordering::SeqCst);
+        }
         Ok(())
     }
 }
@@ -86,7 +94,9 @@ async fn upstream() -> (
                             let calls=calls.clone();async move {
                                 calls.fetch_add(1,Ordering::SeqCst);
                                 assert_eq!(request.headers()["authorization"],"Bearer fixture-tls-provider-private-value");
-                                Ok::<_,std::convert::Infallible>(hyper::Response::new(Full::new(Bytes::from_static(b"approved-upstream-nonce"))))
+                                let mut response=hyper::Response::new(Full::new(if request.uri().path()=="/v1/empty" || request.uri().path()=="/v1/no-content" {Bytes::new()} else {Bytes::from_static(b"approved-upstream-nonce")}));
+                                if request.uri().path()=="/v1/no-content" {*response.status_mut()=hyper::StatusCode::NO_CONTENT;}
+                                Ok::<_,std::convert::Infallible>(response)
                             }
                         });
                         let _=Builder::new(TokioExecutor::new()).serve_connection(TokioIo::new(stream),service).await;
@@ -106,6 +116,8 @@ async fn guest(
     ca: &CertificateAuthority,
     h2: bool,
     host: &str,
+    method: &str,
+    path: &str,
 ) -> Result<(u16, Vec<u8>), TestError> {
     let mut roots = rustls::RootCertStore::empty();
     for cert in rustls::pki_types::CertificateDer::pem_slice_iter(ca.public_pem().as_bytes()) {
@@ -131,11 +143,11 @@ async fn guest(
         .await?;
     let io = TokioIo::new(stream);
     let request = hyper::Request::builder()
-        .method("POST")
+        .method(method)
         .uri(if h2 {
-            format!("https://{host}:{original_port}/v1/tls")
+            format!("https://{host}:{original_port}{path}")
         } else {
-            "/v1/tls".into()
+            path.into()
         })
         .header("host", format!("{host}:{original_port}"))
         .body(Full::new(Bytes::new()))?;
@@ -187,13 +199,14 @@ async fn real_tls_h1_h2_upstream_verification_and_host_sni_mismatch() {
                 scheme: Scheme::Https,
                 host: "service.example.test".into(),
                 port: original.port(),
-                methods: ["POST".into()].into(),
+                methods: ["POST".into(), "HEAD".into()].into(),
                 path_prefix: "/v1/".into(),
                 injection: Injection::Bearer,
                 substitutions: Vec::new(),
             },
         },
         current: AtomicBool::new(true),
+        completed: AtomicU64::new(0),
     });
     let untrusted_broker = Broker::new(authority.clone());
     let broker = Broker::new(authority.clone()).with_extra_trust(
@@ -247,20 +260,59 @@ async fn real_tls_h1_h2_upstream_verification_and_host_sni_mismatch() {
                 })
             ));
             assert_eq!(calls.load(Ordering::SeqCst), 0);
-            for h2 in [false, true] {
-                let (status, body) =
-                    guest(address, original.port(), &ca, h2, "service.example.test")
-                        .await
-                        .unwrap();
-                assert_eq!(status, 200);
-                assert_eq!(body, b"approved-upstream-nonce");
-            }
-            assert_eq!(calls.load(Ordering::SeqCst), 2);
-            let (status, _) = guest(address, original.port(), &ca, true, "attacker.example.test")
+            let cases = [false, true].into_iter().flat_map(|h2| {
+                [
+                    (
+                        "POST",
+                        "/v1/tls",
+                        200,
+                        b"approved-upstream-nonce".as_slice(),
+                    ),
+                    ("POST", "/v1/empty", 200, b"".as_slice()),
+                    ("POST", "/v1/no-content", 204, b"".as_slice()),
+                    ("HEAD", "/v1/tls", 200, b"".as_slice()),
+                ]
+                .into_iter()
+                .map(move |case| (h2, case))
+            });
+            for (index, (h2, (method, path, expected_status, expected_body))) in cases.enumerate() {
+                let (status, body) = guest(
+                    address,
+                    original.port(),
+                    &ca,
+                    h2,
+                    "service.example.test",
+                    method,
+                    path,
+                )
                 .await
                 .unwrap();
+                assert_eq!(status, expected_status);
+                assert_eq!(body, expected_body);
+                tokio::time::timeout(Duration::from_secs(1), async {
+                    while authority.completed.load(Ordering::SeqCst) != index as u64 + 1 {
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                })
+                .await
+                .unwrap_or_else(|_| {
+                    panic!("a fully consumed {method} {path} (h2={h2}) needs its completion audit")
+                });
+            }
+            assert_eq!(calls.load(Ordering::SeqCst), 8);
+            let (status, _) = guest(
+                address,
+                original.port(),
+                &ca,
+                true,
+                "attacker.example.test",
+                "POST",
+                "/v1/tls",
+            )
+            .await
+            .unwrap();
             assert_eq!(status, 403);
-            assert_eq!(calls.load(Ordering::SeqCst), 2);
+            assert_eq!(calls.load(Ordering::SeqCst), 8);
             let wrong_ca =
                 CertificateAuthority::open(CertificateAuthority::generate().unwrap()).unwrap();
             assert!(
@@ -269,12 +321,14 @@ async fn real_tls_h1_h2_upstream_verification_and_host_sni_mismatch() {
                     original.port(),
                     &wrong_ca,
                     false,
-                    "service.example.test"
+                    "service.example.test",
+                    "POST",
+                    "/v1/tls"
                 )
                 .await
                 .is_err()
             );
-            assert_eq!(calls.load(Ordering::SeqCst), 2);
+            assert_eq!(calls.load(Ordering::SeqCst), 8);
         })
         .await
         .unwrap();

@@ -1,0 +1,62 @@
+{
+  "timestamp": "2026-11-26T09:27:02.892535+00:00",
+  "subject": "audited response stream completion and protocol framing",
+  "sources": [
+    {
+      "package": "hyper-1.13.0",
+      "revision": "55247767429fb29753f724b467869aa6203db532",
+      "path": "src/proto/h1/dispatch.rs",
+      "url": "https://github.com/hyperium/hyper/blob/55247767429fb29753f724b467869aa6203db532/src/proto/h1/dispatch.rs#L383-L416",
+      "lines": [
+        383,
+        416
+      ],
+      "sha256": "8ff74bbb164869c4e5997df35f4a47ed5c88d9deb5df5208be097bfc54dffc4f"
+    },
+    {
+      "package": "hyper-1.13.0",
+      "revision": "55247767429fb29753f724b467869aa6203db532",
+      "path": "src/proto/h1/role.rs",
+      "url": "https://github.com/hyperium/hyper/blob/55247767429fb29753f724b467869aa6203db532/src/proto/h1/role.rs#L527-L551",
+      "lines": [
+        527,
+        551
+      ],
+      "sha256": "0749d56f62d5cf6e28609de525187d3a8dea17dbced742097a679fa1e4221ede"
+    },
+    {
+      "package": "hyper-1.13.0",
+      "revision": "55247767429fb29753f724b467869aa6203db532",
+      "path": "src/proto/h1/encode.rs",
+      "url": "https://github.com/hyperium/hyper/blob/55247767429fb29753f724b467869aa6203db532/src/proto/h1/encode.rs#L90-L92",
+      "lines": [
+        90,
+        92
+      ],
+      "sha256": "a1a624275ecd3141a6e8198e99901decb98fe323827dfa6203503404e3567eea"
+    },
+    {
+      "package": "reqwest-0.13.5",
+      "revision": "de55373434f07f42926599dbb5a88550d8e55112",
+      "path": "src/async_impl/response.rs",
+      "url": "https://github.com/seanmonstar/reqwest/blob/de55373434f07f42926599dbb5a88550d8e55112/src/async_impl/response.rs#L78-L94",
+      "lines": [
+        78,
+        94
+      ],
+      "sha256": "ab12ec2046e4037e0ba370279362c9a8bbc7bcd5f8b08cfff43c86c28e40eaee"
+    }
+  ],
+  "findings": [
+    "Hyper H1 drops the user body when its encoder no longer allows more bytes; fixed-length framing can reach that state before an async wrapper is polled for upstream EOF and terminal audit.",
+    "HEAD, 204 and 304 are protocol-bodyless; their outgoing body may never be polled.",
+    "reqwest content_length is the actual body size hint rather than the raw Content-Length header. A known zero body is positively polled for EOF before its terminal audit is acknowledged."
+  ],
+  "local_validation": [
+    "m3-fixed-body-audit-before-fix-windows.json",
+    "m3-fixed-body-audit-after-framing-fix-windows.json",
+    "m3-empty-body-audit-before-fix-windows.json",
+    "m3-empty-body-audit-after-fix-windows.json"
+  ],
+  "scope": "Actual TLS regression confirms nonempty fixed-length, zero-length, HEAD and 204 under H1 and H2. Synthetic packet authority is not native capability evidence."
+}

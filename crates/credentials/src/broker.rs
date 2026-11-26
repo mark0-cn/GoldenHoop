@@ -435,6 +435,7 @@ impl Broker {
         }
         headers.insert("cache-control", HeaderValue::from_static("no-store"));
         let status = response.status();
+        let empty_body = response.content_length() == Some(0);
         self.authority
             .record(
                 &grant,
@@ -444,19 +445,41 @@ impl Broker {
             )
             .await?;
         current(self.authority.as_ref(), &grant).await?;
+        let mut source = response.bytes_stream();
+        if empty_body {
+            // HEAD and protocol-bodyless statuses may never be polled by the
+            // downstream encoder. Confirm upstream EOF and persist its audit
+            // before returning those headers, rather than inferring success
+            // from a status or Content-Length header alone.
+            if source.next().await.is_some() {
+                let _ = self
+                    .authority
+                    .record(&grant, CredentialOutcome::DeliveryUnknown)
+                    .await;
+                return Err(unknown());
+            }
+            self.authority
+                .record(&grant, CredentialOutcome::BodyCompleted)
+                .await?;
+            current(self.authority.as_ref(), &grant).await?;
+        } else {
+            // Let Hyper frame this audited stream. A fixed-length H1 encoder
+            // can stop polling after the last data byte, before upstream EOF
+            // and the asynchronous terminal audit have been observed.
+            headers.remove("content-length");
+        }
         let authority = self.authority.clone();
         let body = async_stream::stream! {
             // Plaintext is bounded to this request. Response bodies are an
             // approved upstream's application data and are not rewritten.
             let _secret=secret;let _value=value;let _client=client;let _permit=permit;let _redactions=redactions;
-            let mut source=response.bytes_stream();
             loop {
                 if let Err(error)=current(authority.as_ref(),&grant).await {let _=authority.record(&grant,CredentialOutcome::Revoked).await;yield Err(error);break;}
                 tokio::select! {
                     chunk=source.next()=>match chunk {
                         Some(Ok(chunk))=>yield Ok(chunk),
                         Some(Err(_))=>{let _=authority.record(&grant,CredentialOutcome::DeliveryUnknown).await;yield Err(unknown());break;},
-                        None=>{if authority.record(&grant,CredentialOutcome::BodyCompleted).await.is_err(){yield Err(unknown());}break;},
+                        None=>{if !empty_body && (authority.record(&grant,CredentialOutcome::BodyCompleted).await.is_err() || current(authority.as_ref(),&grant).await.is_err()){yield Err(unknown());}break;},
                     },
                     _=tokio::time::sleep(Duration::from_millis(200))=>{},
                 }

@@ -165,3 +165,11 @@ exceptions, and requires native HTTP/TLS verification.
 - Resolve focused five-level and credential gates before the single full
   stage-acceptance run. M3 remains pending until actual supported-host gates
   pass; no successful upstream source pattern changes that status.
+
+## Response completion follow-up: Hyper and reqwest
+
+Both native credential probes at 18231e5 now deliver the expected HTTP and TLS responses to their ordinary-UID clients and receiver. They still fail the independent completion-audit predicate, so SecretInjection remains unavailable. The transport and audit results are separate.
+
+The pinned [Hyper H1 dispatcher](https://github.com/hyperium/hyper/blob/55247767429fb29753f724b467869aa6203db532/src/proto/h1/dispatch.rs#L383-L416) drops a body when its encoder no longer permits data. A Content-Length encoder can reach that point after the last byte, before our asynchronous wrapper observes upstream EOF and records BodyCompleted. Its [protocol rules](https://github.com/hyperium/hyper/blob/55247767429fb29753f724b467869aa6203db532/src/proto/h1/role.rs#L527-L551) also suppress body polling for HEAD and bodyless statuses. The local real-TLS regression reproduces both missing-audit cases.
+
+The broker removes fixed-length framing for responses with pending asynchronous completion work, allowing Hyper to frame the stream through its terminal audit. For an upstream body whose [actual size hint is zero](https://github.com/seanmonstar/reqwest/blob/de55373434f07f42926599dbb5a88550d8e55112/src/async_impl/response.rs#L78-L94), it positively consumes EOF and acknowledges completion before returning headers; it retains metadata such as the HEAD representation length. Both paths recheck authority after the completion audit. This preserves streaming without a one-chunk delay and does not treat status or a header as delivery proof. [Pinned source record and before/after evidence](evidence/m3-response-stream-upstream-comparison.json).
