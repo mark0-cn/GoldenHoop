@@ -155,7 +155,7 @@ def run(args):
     evidence = {"suite":"agent-six-language-contract", "timestamp":datetime.now(timezone.utc).isoformat(),
         "runtime":args.runtime,"result":"failed","cleanup":"unknown","cases":[],"observations":[],
         "source_files_sha256":source_fingerprint()}
-    for path in [Path(__file__).resolve(), root/'tests/language_samples.py', root/'tests/context_contract.py', *sorted((root/'images/languages').rglob('*'))]:
+    for path in [Path(__file__).resolve(), root/'tests/language_samples.py', root/'tests/context_contract.py', root/'tests/tslab_bind_contract.cjs', *sorted((root/'images/languages').rglob('*'))]:
         if path.is_file(): evidence["source_files_sha256"][path.relative_to(root).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
     failure = None
     clean = True

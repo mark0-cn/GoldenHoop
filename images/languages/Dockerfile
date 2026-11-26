@@ -50,11 +50,16 @@ FROM toolchain AS node
 ADD --checksum=sha256:4f2b175a6d53a5c617a80dba2676238a0688cef28c6da4eba35c7d844e66fcfb https://nodejs.org/dist/v24.22.3/node-v24.22.3-linux-x64.tar.xz /tmp/node.tar.xz
 RUN tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1
 RUN npm install --global --omit=dev --no-audit --no-fund tslab@1.0.19
+COPY images/languages/patches/ /opt/goldenhoop-tslab-patch/
+COPY tests/tslab_bind_contract.cjs /opt/goldenhoop-tslab-bind-contract.cjs
+RUN node /opt/goldenhoop-tslab-patch/tslab-bind-ready.cjs /usr/local/lib/node_modules/tslab \
+    && node /opt/goldenhoop-tslab-bind-contract.cjs /usr/local/lib/node_modules/tslab/dist/jupyter.js
 
 FROM goldenhoop-agent:test AS agent
 
 FROM debian:bookworm-slim
 LABEL dev.goldenhoop.fixture="languages-interop"
+LABEL dev.goldenhoop.tslab.bind_ready_sha256="93cecbc505a5411dc815b5e2f8852fb8fd3c25dc63b4cc97545dcced90990cbd"
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
     && sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
     && apt-get -o Acquire::Retries=3 update && apt-get -o Acquire::Retries=3 install -y --no-install-recommends \

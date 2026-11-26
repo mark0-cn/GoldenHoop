@@ -14,6 +14,36 @@ struct Live {
     desired_revision: u64,
     until: LeaseInstant,
 }
+struct RenewalTiming {
+    sandbox_id: Uuid,
+    controller_generation: Uuid,
+    started: LeaseInstant,
+    finished: LeaseInstant,
+    previous_verified: Duration,
+    previous_published_until: Option<LeaseInstant>,
+    since_last_exchange: Duration,
+}
+impl RenewalTiming {
+    fn report(self, outcome: &str, remaining: Option<Duration>, error: Option<&ApiError>) {
+        eprintln!(
+            "{}",
+            serde_json::json!({
+                "event":"network_policy_renewal_window",
+                "sandbox_id":self.sandbox_id,
+                "controller_generation":self.controller_generation,
+                "outcome":outcome,
+                "exchange_milliseconds":self.finished.duration_since(self.started).as_millis(),
+                "since_last_exchange_milliseconds":self.since_last_exchange.as_millis(),
+                "previous_verified_milliseconds":self.previous_verified.as_millis(),
+                "previous_published_milliseconds":self.previous_published_until.map(|end|end.saturating_duration_since(self.started).as_millis()),
+                "publication_expired_at_start":self.previous_published_until.map(|end|end<=self.started),
+                "publication_expired_at_finish":self.previous_published_until.map(|end|end<=self.finished),
+                "next_verified_milliseconds":remaining.map(|value|value.as_millis()),
+                "error_code":error.map(|value|&value.code),
+            })
+        );
+    }
+}
 pub(super) struct NetworkTask {
     live: watch::Receiver<Option<Live>>,
     stop: watch::Sender<bool>,
@@ -390,6 +420,7 @@ async fn hold(
         let mut lease: Option<VerifiedPolicyLease> = None;
         let mut applied_revision = None;
         let mut last = LeaseInstant::now();
+        let mut timing_records_left = 8;
         loop {
             if *shutdown.borrow() || store.effective_desired(id).await? != DesiredState::Running {
                 break;
@@ -401,6 +432,7 @@ async fn hold(
             if intent.owner.as_ref() != Some(&owner) || intent.phase == NetworkPolicyPhase::Fenced {
                 return Err(unavailable());
             }
+            let mut renewal_timing = None;
             if applied_revision != Some(intent.desired_revision) {
                 live.send_replace(None);
                 intent = store
@@ -452,27 +484,63 @@ async fn hold(
                 if intent.phase != NetworkPolicyPhase::Active {
                     return Err(unavailable());
                 }
-                let next = driver
+                let started = LeaseInstant::now();
+                let previous_verified = lease.as_ref().ok_or_else(unavailable)?.remaining();
+                let previous_published_until = live.borrow().as_ref().map(|value| value.until);
+                let since_last_exchange = last.elapsed();
+                let result = driver
                     .renew_protected_policy(
                         handle,
                         &network,
                         &mut session,
                         lease.as_ref().ok_or_else(unavailable)?,
                     )
-                    .await?;
+                    .await;
+                if timing_records_left > 0 {
+                    timing_records_left -= 1;
+                    renewal_timing = Some(RenewalTiming {
+                        sandbox_id: id,
+                        controller_generation: record.controller_generation,
+                        started,
+                        finished: LeaseInstant::now(),
+                        previous_verified,
+                        previous_published_until,
+                        since_last_exchange,
+                    });
+                }
+                let next = match result {
+                    Ok(next) => next,
+                    Err(error) => {
+                        if let Some(timing) = renewal_timing {
+                            timing.report("exchange_failed", None, Some(&error));
+                        }
+                        return Err(error);
+                    }
+                };
                 lease = Some(next);
                 last = LeaseInstant::now();
             }
             let remaining = lease.as_ref().ok_or_else(unavailable)?.remaining();
             let usable = remaining
                 .checked_sub(Duration::from_secs(1))
-                .filter(|d| !d.is_zero())
-                .ok_or_else(unavailable)?;
+                .filter(|d| !d.is_zero());
+            let Some(usable) = usable else {
+                let error = unavailable();
+                if let Some(timing) = renewal_timing {
+                    timing.report("insufficient_margin", Some(remaining), Some(&error));
+                }
+                return Err(error);
+            };
             live.send_replace(Some(Live {
                 owner: owner.clone(),
                 desired_revision: intent.desired_revision,
                 until: LeaseInstant::now() + usable,
             }));
+            // Diagnostics follow successful publication and never grant a lease.
+            // Each epoch emits at most eight records without policy payloads.
+            if let Some(timing) = renewal_timing {
+                timing.report("published", Some(remaining), None);
+            }
             tokio::select! {
                 result=shutdown.changed()=>{if result.is_err() || *shutdown.borrow(){break;}},
                 _=tokio::time::sleep(Duration::from_millis(300))=>{},

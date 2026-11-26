@@ -43,6 +43,16 @@ Receipt budgets follow the [sampling-start finite-lease contract](effective-poli
 The actor retains all existing private deadline, owner, source and publication
 checks. Renewals do not turn old persisted receipts into fresh proof.
 
+Each controller epoch emits at most eight `network_policy_renewal_window` JSON
+diagnostics. They record exchange duration, elapsed time since the last exchange,
+the previous verified and published time budgets, whether publication had expired
+at exchange start or finish, the next verified budget, outcome and error code.
+Only sandbox/controller identifiers and these timing/status fields are included;
+policy contents, ownership tokens and credentials are excluded. Successful
+diagnostics follow publication. Failures keep the same refusal behavior. These
+measurements neither extend a lease nor supply durable audit or readiness proof.
+The full five-level public creation gate remains required.
+
 Running publication requires a current local actor, matching desired version and
 owner, current worker registration and a positive local lease. All worker agent
 RPC paths, file transfer, artifact capture and runtime diagnostics check this

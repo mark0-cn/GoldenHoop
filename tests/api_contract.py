@@ -846,6 +846,7 @@ assert not alive,alive
             sources.append(root / "tests" / "api_context_contract.py")
             sources.append(root / "tests" / "api_isolated_contract.py")
             sources.append(root / "tests" / "language_samples.py")
+            sources.append(root / "tests" / "tslab_bind_contract.cjs")
             sources.extend(p for p in (root / "images" / "languages").rglob('*') if p.is_file())
             if self.args.rust_client:
                 sources.extend((root / "sdk").rglob("*.py"))

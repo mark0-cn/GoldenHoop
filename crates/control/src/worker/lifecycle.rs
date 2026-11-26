@@ -331,27 +331,6 @@ impl Worker {
             driver.remove(handle).await?;
         }
         stored.handle = None;
-        for context in self.store.code_context_work(id).await? {
-            if expired || !failed {
-                self.store
-                    .close_code_context(context.context.id, &format!("source-stop-{id}"))
-                    .await?;
-            }
-            let outcome = if expired {
-                CodeRunState::TimedOut
-            } else if failed {
-                CodeRunState::Unknown
-            } else {
-                CodeRunState::Cancelled
-            };
-            self.store
-                .finish_code_context_absent_with_state(context.context.id, reason, outcome)
-                .await?;
-            self.context_closures
-                .lock()
-                .await
-                .remove(&context.context.id);
-        }
         for execution in self.store.execution_work(id).await? {
             self.store
                 .finish_execution(
@@ -395,6 +374,30 @@ impl Worker {
             Some(reason.into()),
         )
         .await?;
+        // Whole-runtime context completion must follow the durable source
+        // cleanup observation. A crash here remains in Store::work while any
+        // context is unsettled, even though the source is already collected.
+        for context in self.store.code_context_work(id).await? {
+            if expired || !failed {
+                self.store
+                    .close_code_context(context.context.id, &format!("source-stop-{id}"))
+                    .await?;
+            }
+            let outcome = if expired {
+                CodeRunState::TimedOut
+            } else if failed {
+                CodeRunState::Unknown
+            } else {
+                CodeRunState::Cancelled
+            };
+            self.store
+                .finish_code_context_absent_with_state(context.context.id, reason, outcome)
+                .await?;
+            self.context_closures
+                .lock()
+                .await
+                .remove(&context.context.id);
+        }
         let error = Some(ApiError::new(ErrorCode::InvalidState, reason));
         for kind in ["create", "pause", "resume"] {
             self.store
