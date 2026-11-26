@@ -149,3 +149,31 @@ the original readiness budget and cannot authorize signaling. Updated
 [Linux](evidence/m4-guest-devtmpfs-validation-linux.json) format/strict full
 workspace checks pass 269 and 309 tests respectively. A fresh actual guest run
 is still required; none of the remaining M4 scope is removed.
+
+## Actual private bootstrap accepted
+
+The corrected [native run 45874469518](https://github.com/mark0-cn/GoldenHoop/actions/runs/45874469518)
+at 36474ead1ff1a998c785cf4a9fa342e21e213179 passes six actual KVM bootstrap
+groups. Its [archive](evidence/m4-native-45874469518-archive.json) verifies all
+48 source inputs; the [summary](evidence/m4-guest-bootstrap-acceptance-summary.json)
+records the original failed run, successful result, cleanup and remaining scope.
+Portable CI 45874415952 passes Ubuntu and Windows.
+
+The actual guest answers through authenticated private vsock, roundtrips a nonce
+file and completes a UID1000 command with a verified stdout nonce and descendant
+collection. The command confirms no-new-privileges, zero effective capabilities,
+the 256-task group, only loopback, reserved-vsock binding refusal and absence of
+the tested host/provider environment keys and Docker socket. Host observations
+confirm VMM UID10000, private PID1/network namespaces, no-new-privileges, zero
+effective capabilities and seccomp mode2. Both the negative artifact control and
+positive execution confirm process/jail/cgroup/disk/fixture collection.
+
+This is a private, fixed 1-vCPU/256-MiB bootstrap with an offline test-image
+fixture. It does not register a public runtime capability or accept production
+image preparation, configurable public lifecycle, expiry/recovery, snapshots or
+templates. The full remaining-increments table and combined Stage gate still
+apply. Snapshot work must keep its controller outside the frozen workload groups;
+the current bootstrap groups agent and workload together. The
+[pinned E2B freezer](https://github.com/e2b-dev/runtime/blob/86cb50338fe3bd73c10b13270aaa576b48f5d582/packages/envd/internal/services/cgroups/freeze.go)
+provides a relevant separation pattern, while GoldenHoop's private vsock authority
+and restore identity requirements still need their own implementation and gates.
