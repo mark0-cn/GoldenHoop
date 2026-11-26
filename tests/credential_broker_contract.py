@@ -16,6 +16,7 @@ from contextlib import closing
 from pathlib import Path
 
 from api_contract import ApiFailure, Contract as ApiContract, docker
+from api_contract import ApiFailure
 from public_network_create_contract import Contract as NetworkContract, LIMITS
 
 CLIENT = r'''import http.client,json,os,ssl,urllib.parse
@@ -310,9 +311,22 @@ class Contract(NetworkContract):
         while time.monotonic() < deadline:
             record = self.request('GET', f'/v1/sandboxes/{sandbox}/credentials/{binding}')
             if record['state'] == state and record['applied_revision'] == record['revision'] and (revision is None or record['revision'] == revision):
-                return record
+                if state != 'active':
+                    return record
+                try:
+                    diagnostics = self.request('GET', f'/v1/sandboxes/{sandbox}/diagnostics')
+                    sample = diagnostics['runtime']
+                    observed = diagnostics['sandbox']
+                    if (observed['state'] == 'running' and observed['desired_state'] == 'running'
+                            and sample is not None and sample['running'] and not sample['paused']):
+                        assert observed['id'] == sample['sandbox_id'] == sandbox
+                        self.report.setdefault('live_diagnostics', []).append([diagnostics])
+                        self.save()
+                        return record
+                except ApiFailure as error:
+                    assert error.error['code'] in ('backend_unavailable', 'invalid_state'), error
             time.sleep(0.1)
-        raise RuntimeError('credential intent did not converge through native ownership')
+        raise RuntimeError('credential intent and actual lease-gated readiness did not converge')
 
     def put(self, sandbox, binding, *, scheme='http', host=None, revision=0, injection=None, substitutions=None, source=None, prefix='/v1/'):
         return self.request('PUT', f'/v1/sandboxes/{sandbox}/credentials/{binding}', {
