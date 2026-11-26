@@ -74,3 +74,9 @@ The [first actual KVM gate](evidence/m4-native-45859682866-archive.json) failed 
 The [pinned Rust VMM/Linux comparison](evidence/m4-kvm-ioctl-zero-argument-upstream-diagnosis.json) identifies an interface error: the original variadic libc ioctl call omitted its third argument. Linux requires a zero argument for GET_API_VERSION; the Rust VMM helper supplies it explicitly. The corrected call supplies zero, records errno for failed queries/creation and distinguishes a failed syscall from a numeric unsupported API. An actual /dev/null control verifies ENOTTY and no claimed API version. The original native errno is unknown; the correction still requires a new actual KVM gate.
 
 [Windows checks](evidence/m4-kvm-ioctl-zero-argument-validation-windows.json) pass all 267 tests plus format/strict workspace-all-target lint. [Linux checks](evidence/m4-kvm-ioctl-zero-argument-validation-linux.json) pass all 296 tests and the same checks. No device, permission, module or capability requirement is relaxed. Jailed guest acceptance remains required.
+
+## Actual KVM prerequisite accepted
+
+The corrected [native run 45862682399](https://github.com/mark0-cn/GoldenHoop/actions/runs/45862682399) at 0e026e0d3ca39dddbd7436f4ba827f0fc9731cde passes both prerequisite groups. Its [archive](evidence/m4-native-45862682399-archive.json) verifies all 21 source inputs against that immutable commit, records actual API 12 with no errno and confirms collection of the empty VM descriptor/child. The [summary](evidence/m4-control-kvm-prerequisite-summary.json) retains the first failed run, all current source-bound results and the explicit guest/runtime limitations. [Portable CI 45862561992](https://github.com/mark0-cn/GoldenHoop/actions/runs/45862561992) passes both platforms.
+
+This is a positive hardware prerequisite on the tested hosted Linux machine. No guest started, no jailed driver/profile was published, and M4 remains incomplete under the remaining increments above.
