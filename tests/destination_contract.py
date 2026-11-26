@@ -268,12 +268,15 @@ class DestinationCases:
             assert renewed['maximum_lease_seconds']==10 and 'binding' not in renewed and 'lease_remaining_milliseconds' not in renewed,renewed
             self.check('relative_DNS_lifetime_basic_renewal_preserves_every_native_guard_without_minting_a_binding_receipt')
             refused=self.rpc('renew_policy',expected_revision=self.revision,error=True)
-            assert refused['error']['code']=='invalid_state' and refused['error']['message']=='original DNS lifetime is absent',refused
-            assert self.rpc('inspect')['result']['uncertain']
-            assert self.rpc('renew',expected_revision=self.revision,error=True)['error']['code']=='invalid_state'
-            self.check('relative_DNS_lifetime_cannot_mint_a_public_policy_receipt_and_failed_projection_fences_renewal')
-            self.rpc('quarantine',expected_revision=self.revision)
-            self.apply_config({'policies':[{'default_action':'allow','rules':[]}],'allow_always':[{'destination':'*','ports':[],'action':'allow'}]})
+            assert (refused['error']['code'],refused['error']['message'])==('invalid_state','bind original native lifetime before policy inspection'),refused
+            after=self.rpc('renew',expected_revision=self.revision)['result']
+            assert not after['uncertain'] and after['revision']==renewed['revision'] and after['maximum_lease_seconds']==10,after
+            for key in ('ethernet_guarded','source_guarded','destinations_guarded'):
+                assert after[key],after
+            for key in ('ethernet_sha256','source_binding_sha256','destination_binding_sha256'):
+                assert after[key]==renewed[key],(key,renewed,after)
+            assert 'binding' not in after and 'lease_remaining_milliseconds' not in after,after
+            self.check('relative_DNS_lifetime_cannot_mint_a_public_policy_receipt_or_mutate_the_verified_basic_lease')
         for address in (self.target_ip,self.target6):
             assert self.probe(self.guest,'tcp',address,19001);assert self.probe(self.guest,'udp',address,19002);self.rpc('renew',expected_revision=self.revision)
         self.check('administrator_private_exception_keeps_real_dualstack_tcp_udp_admission')
