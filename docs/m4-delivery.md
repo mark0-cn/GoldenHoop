@@ -177,3 +177,35 @@ the current bootstrap groups agent and workload together. The
 [pinned E2B freezer](https://github.com/e2b-dev/runtime/blob/86cb50338fe3bd73c10b13270aaa576b48f5d582/packages/envd/internal/services/cgroups/freeze.go)
 provides a relevant separation pattern, while GoldenHoop's private vsock authority
 and restore identity requirements still need their own implementation and gates.
+
+## Durable native lifecycle implementation
+
+The Rust `FirecrackerDriver` now implements `RuntimeDriver` and `AgentTransport`
+behind a private root-only test interface. Durable installation/sandbox/generation
+intent binds the original image, request, resources, host boot and absolute
+expiry. A separate Rust supervisor retains the actual VMM handles and console
+drain after the caller exits. It owns authenticated pause/resume and bounded
+collection; the driver confirms process, jail, disk and cgroup absence before
+releasing a reservation. Neither process launch nor an EOF accepts an operation.
+
+CPU/memory reservations include explicit VMM/supervisor overhead. Guest PID
+limits and generation identity come from validated boot arguments and actual
+private guest control observations. This increment permits only the existing
+offline/no-NIC policy and four implemented capabilities: commands, files, pause
+and network isolation. A probe advertises them only after real guest work,
+pause/resume and physical collection all succeed.
+
+[Windows checks](evidence/m4-native-lifecycle-validation-windows.json) pass format,
+strict full-workspace lint and 270 tests. [Linux checks](evidence/m4-native-lifecycle-validation-linux.json)
+pass the same checks and 313 tests, then build the actual static musl guest
+components and rootfs target. The [upstream comparison](evidence/m4-native-lifecycle-upstream-comparison.json)
+records OpenSandbox's persisted expiry and per-sandbox lifecycle serialization,
+and the Linux process/cgroup rules used by the independent helper.
+
+The manual `Firecracker native lifecycle` workflow retains the accepted bootstrap
+controls and adds same-intent reconnect, per-sandbox limits/disks, foreign-owner
+refusal, caller SIGKILL recovery and paused absolute-expiry collection after the
+original caller service group disappears. These new hardware paths are pending
+at this implementation commit. No public Worker, API, SDK or CLI runtime profile
+is registered. Production image preparation, public integration, snapshots,
+restore identity, templates, combined M4 Stage and all M5-M6 work remain required.

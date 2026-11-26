@@ -3,11 +3,13 @@
 use std::{path::PathBuf, time::Duration};
 
 use goldenhoop_protocol::{AgentReply, AgentRequest, ErrorCode};
+use serde::{Serialize, de::DeserializeOwned};
 use tokio::io::{AsyncWriteExt, BufReader};
 
 use crate::{
     CallError, DispatchState,
     api::{ApiClient, authenticated_socket},
+    control::{GUEST_CONTROL_VERSION, GuestControlInfo, GuestControlRequest},
     models::InstanceState,
     vsock::{MAX_AGENT_FRAME, parse_connect_ack, read_frame},
 };
@@ -49,6 +51,32 @@ impl AgentClient {
     }
 
     pub async fn rpc_reply(&self, request: &AgentRequest) -> Result<AgentReply, CallError> {
+        self.exchange(request).await
+    }
+
+    pub async fn control_info(&self) -> Result<GuestControlInfo, CallError> {
+        let info: GuestControlInfo = self.exchange(&GuestControlRequest::Info).await?;
+        if info.protocol != GUEST_CONTROL_VERSION
+            || info.generation != Some(self.api.peer_identity().instance)
+            || info.host_cid != 2
+            || !info.no_new_privileges
+            || info.agent_pid <= 1
+            || !(16..=65535).contains(&info.pids)
+            || info.version != env!("CARGO_PKG_VERSION")
+        {
+            return Err(CallError::new(
+                DispatchState::Uncertain,
+                ErrorCode::BackendUnavailable,
+                "guest init identity or constraints mismatch",
+            ));
+        }
+        Ok(info)
+    }
+
+    async fn exchange<T: Serialize, R: DeserializeOwned>(
+        &self,
+        request: &T,
+    ) -> Result<R, CallError> {
         let mut bytes = serde_json::to_vec(request).map_err(|_| {
             CallError::new(
                 DispatchState::NotSent,

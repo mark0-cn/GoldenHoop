@@ -15,6 +15,9 @@ use std::{
     time::Duration,
 };
 
+use goldenhoop_firecracker::control::{
+    GUEST_CONTROL_VERSION, GuestBootIdentity, GuestControlInfo, GuestControlRequest,
+};
 use goldenhoop_firecracker::vsock::{
     GuestControlListener, MAX_AGENT_FRAME, SocketStream, read_frame,
 };
@@ -338,10 +341,36 @@ async fn wait_agent(child: &mut Child) -> io::Result<()> {
     }
 }
 
-async fn proxy(stream: SocketStream, pid: u32) -> io::Result<()> {
+async fn proxy(stream: SocketStream, pid: u32, identity: GuestBootIdentity) -> io::Result<()> {
     let mut host = BufReader::new(stream);
-    let mut agent = BufReader::new(agent_connection(pid).await?);
     let request = read_frame(&mut host, MAX_AGENT_FRAME).await?;
+    if serde_json::from_slice::<serde_json::Value>(&request)?
+        .get("guest_control")
+        .is_some()
+    {
+        let GuestControlRequest::Info = serde_json::from_slice(&request)?;
+        let observed: u32 = std::fs::read_to_string(format!("{CGROUP}/pids.max"))?
+            .trim()
+            .parse()
+            .map_err(|_| invalid("invalid observed guest task limit"))?;
+        if observed != identity.pids {
+            return Err(invalid("guest task budget drifted"));
+        }
+        let info = GuestControlInfo {
+            protocol: GUEST_CONTROL_VERSION,
+            generation: identity.generation,
+            pids: observed,
+            agent_pid: pid,
+            host_cid: 2,
+            no_new_privileges: unsafe { libc::prctl(libc::PR_GET_NO_NEW_PRIVS, 0, 0, 0, 0) } == 1,
+            version: env!("CARGO_PKG_VERSION").into(),
+        };
+        let mut reply = serde_json::to_vec(&info)?;
+        reply.push(b'\n');
+        host.get_mut().write_all(&reply).await?;
+        return host.get_mut().shutdown().await;
+    }
+    let mut agent = BufReader::new(agent_connection(pid).await?);
     agent.get_mut().write_all(&request).await?;
     let reply = read_frame(&mut agent, MAX_AGENT_FRAME).await?;
     host.get_mut().write_all(&reply).await?;
@@ -359,8 +388,14 @@ pub async fn run() -> io::Result<()> {
         .map_err(|error| io::Error::new(error.kind(), format!("guest filesystems: {error}")))?;
     configure_loopback()
         .map_err(|error| io::Error::new(error.kind(), format!("guest loopback: {error}")))?;
-    let config = read_config()
+    let mut config = read_config()
         .map_err(|error| io::Error::new(error.kind(), format!("guest configuration: {error}")))?;
+    let mut cmdline = String::new();
+    File::open("/proc/cmdline")?
+        .take(4097)
+        .read_to_string(&mut cmdline)?;
+    let identity = GuestBootIdentity::from_cmdline(&cmdline, config.pids).map_err(invalid)?;
+    config.pids = identity.pids;
     // SAFETY: the requested process-local setting has integer arguments only.
     if unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) } != 0 {
         return Err(io::Error::last_os_error());
@@ -386,7 +421,8 @@ pub async fn run() -> io::Result<()> {
             stream=listener.accept_host()=> {
                 let stream=stream?;
                 if let Ok(permit)=permits.clone().try_acquire_owned() {
-                    tokio::spawn(async move { let _permit=permit;let _=tokio::time::timeout(Duration::from_secs(120),proxy(stream,pid)).await; });
+                    let identity=identity.clone();
+                    tokio::spawn(async move { let _permit=permit;let _=tokio::time::timeout(Duration::from_secs(120),proxy(stream,pid,identity)).await; });
                 }
             },
             _=reap.tick()=>loop {

@@ -26,6 +26,7 @@ use crate::{
     agent::AgentClient,
     api::{ApiClient, PeerIdentity},
     kvm::{KvmState, probe_kvm},
+    lifecycle::{DriverConfig, MIB, VmJournal, atomic_json},
     models::*,
 };
 
@@ -34,7 +35,7 @@ const MAX_LOG: usize = 64 * 1024;
 const BOOT_ARGS: &str =
     "console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda rw init=/sbin/goldenhoop-init";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Artifact {
     pub path: PathBuf,
@@ -42,7 +43,7 @@ pub struct Artifact {
     pub size: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BootInput {
     pub firecracker: Artifact,
@@ -51,7 +52,7 @@ pub struct BootInput {
     pub rootfs: Artifact,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessObservation {
     pub pid: u32,
     pub start_ticks: u64,
@@ -83,6 +84,26 @@ pub struct GuestReport {
     pub runtime_profile_published: bool,
 }
 
+impl GuestReport {
+    pub(crate) fn empty(generation: Uuid) -> Self {
+        Self {
+            generation,
+            passed: false,
+            guest_started: false,
+            checks: Vec::new(),
+            process: None,
+            cleanup: CleanupState::Unknown,
+            root_absent: false,
+            cgroup_absent: false,
+            vmm_reaped: false,
+            error: None,
+            console: String::new(),
+            console_truncated: false,
+            runtime_profile_published: false,
+        }
+    }
+}
+
 fn invalid(message: impl Into<String>) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message.into())
 }
@@ -90,7 +111,7 @@ fn invalid(message: impl Into<String>) -> io::Error {
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 type ConsoleTask = JoinHandle<io::Result<(Vec<u8>, bool)>>;
 
-fn trusted_file(path: &Path) -> io::Result<File> {
+pub(crate) fn trusted_file(path: &Path) -> io::Result<File> {
     if !path.is_absolute() {
         return Err(invalid("artifact path is not absolute"));
     }
@@ -117,7 +138,7 @@ fn trusted_file(path: &Path) -> io::Result<File> {
     Ok(file)
 }
 
-fn digest(mut input: impl Read) -> io::Result<(String, u64)> {
+pub(crate) fn digest(mut input: impl Read) -> io::Result<(String, u64)> {
     let mut hash = Sha256::new();
     let mut count = 0;
     let mut buffer = [0; 65536];
@@ -177,10 +198,10 @@ fn copy_artifact(artifact: &Artifact, destination: &Path, mode: u32) -> io::Resu
     Ok(())
 }
 
-struct Machine {
-    generation: Uuid,
-    root: PathBuf,
-    jail: PathBuf,
+pub(crate) struct Machine {
+    pub(crate) generation: Uuid,
+    pub(crate) root: PathBuf,
+    pub(crate) jail: PathBuf,
     cgroup: PathBuf,
     owned_root: bool,
     owned_cgroup: bool,
@@ -188,8 +209,11 @@ struct Machine {
     launcher_pid: Option<u32>,
     pidfd: Option<OwnedFd>,
     candidate_pid: Option<u32>,
-    process: Option<ProcessObservation>,
+    pub(crate) process: Option<ProcessObservation>,
     console: Option<ConsoleTask>,
+    persistent: Option<(PathBuf, VmJournal)>,
+    resources: goldenhoop_protocol::ResourceLimits,
+    recovered: bool,
 }
 
 impl Machine {
@@ -215,10 +239,170 @@ impl Machine {
             candidate_pid: None,
             process: None,
             console: None,
+            persistent: None,
+            resources: goldenhoop_protocol::ResourceLimits {
+                cpu_millis: 1000,
+                memory_bytes: 256 * MIB,
+                pids: 256,
+            },
+            recovered: false,
         }
     }
 
-    fn journal(&self, input: &BootInput, phase: &str) -> io::Result<()> {
+    pub(crate) fn persistent(cfg: &DriverConfig, journal: VmJournal) -> Result<Self> {
+        let paths = cfg.paths(journal.owner.generation)?;
+        let mut machine = Self::new();
+        machine.generation = journal.owner.generation;
+        machine.root = paths.root;
+        machine.jail = paths.jail;
+        machine.cgroup = paths.vm_cgroup;
+        machine.resources = journal.resources.clone();
+        machine.persistent = Some((cfg.record_path(journal.owner.sandbox_id), journal));
+        Ok(machine)
+    }
+
+    pub(crate) fn record(&self) -> &VmJournal {
+        &self.persistent.as_ref().expect("persistent machine").1
+    }
+    pub(crate) fn record_error(&mut self, message: String) -> Result<()> {
+        let (_, record) = self.persistent.as_mut().expect("persistent machine");
+        record.error = Some(message);
+        self.set_phase("unknown")
+    }
+
+    pub(crate) fn record_console(&mut self, text: &str) -> Result<()> {
+        let (_, record) = self.persistent.as_mut().expect("persistent machine");
+        let mut start = text.len().saturating_sub(16 * 1024);
+        while !text.is_char_boundary(start) {
+            start += 1;
+        }
+        record.console_tail = text[start..].into();
+        let phase = record.phase.clone();
+        self.set_phase(&phase)
+    }
+
+    pub(crate) fn recover(cfg: &DriverConfig, journal: VmJournal) -> Result<Self> {
+        let mut machine = Self::persistent(cfg, journal)?;
+        machine.recovered = true;
+        if machine.root.try_exists()? {
+            let metadata = std::fs::symlink_metadata(&machine.root)?;
+            if !metadata.is_dir() || metadata.uid() != 0 || metadata.mode() & 0o077 != 0 {
+                return Err(invalid("recovered VM root ownership mismatch").into());
+            }
+            let marker: serde_json::Value =
+                crate::lifecycle::read_json(&machine.root.join("intent.json"))?;
+            if marker["generation"] != machine.generation.to_string()
+                || marker["owner"] != serde_json::to_value(&machine.record().owner)?
+            {
+                return Err(invalid("recovered VM marker mismatch").into());
+            }
+            machine.owned_root = true;
+        }
+        if machine.cgroup.try_exists()? {
+            if machine.record().owner.host_boot_id != crate::lifecycle::boot_id()? {
+                return Err(invalid("stale host boot cannot authorize cgroup collection").into());
+            }
+            let metadata = std::fs::symlink_metadata(&machine.cgroup)?;
+            if !metadata.is_dir() || metadata.uid() != 0 || metadata.mode() & 0o022 != 0 {
+                return Err(invalid("recovered cgroup ownership mismatch").into());
+            }
+            machine.owned_cgroup = true;
+        }
+        let pid = if let Some(process) = &machine.record().process {
+            Some(process.pid)
+        } else if machine.owned_root && machine.jail.join("firecracker.pid").try_exists()? {
+            let file = OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+                .open(machine.jail.join("firecracker.pid"))?;
+            if !file.metadata()?.is_file() || file.metadata()?.len() > 16 {
+                return Err(invalid("invalid recovered VMM PID file").into());
+            }
+            let mut text = String::new();
+            file.take(17).read_to_string(&mut text)?;
+            if text.is_empty() {
+                None
+            } else {
+                Some(text.parse::<u32>()?)
+            }
+        } else {
+            None
+        };
+        if let Some(pid) = pid {
+            if Path::new("/proc").join(pid.to_string()).try_exists()?
+                && machine.record().owner.host_boot_id == crate::lifecycle::boot_id()?
+            {
+                let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
+                if fd < 0 {
+                    return Err(io::Error::last_os_error().into());
+                }
+                let descriptor = unsafe { OwnedFd::from_raw_fd(fd as i32) };
+                let observed =
+                    machine.observe(pid, &machine.record().artifacts.firecracker.sha256)?;
+                machine.process = Some(observed);
+                machine.pidfd = Some(descriptor);
+                machine.candidate_pid = Some(pid);
+            } else if machine.owned_cgroup
+                && !std::fs::read_to_string(machine.cgroup.join("cgroup.events"))?
+                    .lines()
+                    .any(|line| line == "populated 0")
+            {
+                return Err(invalid("missing recorded VMM with populated cgroup").into());
+            }
+        }
+        Ok(machine)
+    }
+
+    pub(crate) fn api(&self) -> Result<ApiClient> {
+        let process = self
+            .process
+            .as_ref()
+            .ok_or_else(|| invalid("VMM process not tracked"))?;
+        if self.exited()? {
+            return Err(invalid("VMM has exited").into());
+        }
+        self.observe(process.pid, &self.record().artifacts.firecracker.sha256)?;
+        Ok(ApiClient::new(
+            self.jail.join("api.sock"),
+            PeerIdentity {
+                pid: process.pid,
+                uid: VMM_UID,
+                instance: self.generation,
+            },
+            Duration::from_secs(3),
+        )?)
+    }
+
+    pub(crate) fn agent(&self) -> Result<AgentClient> {
+        Ok(AgentClient::new(
+            self.api()?,
+            self.jail.join("vsock.sock"),
+            52,
+            Duration::from_secs(3),
+        )?)
+    }
+
+    pub(crate) fn set_phase(&mut self, phase: &str) -> Result<()> {
+        let input = self.record().artifacts.clone();
+        self.journal(&input, phase)
+    }
+
+    pub(crate) fn check_expiry(&self) -> Result<()> {
+        if let Some((_, record)) = &self.persistent
+            && record.expired()?
+        {
+            return Err(invalid("native sandbox absolute deadline elapsed").into());
+        }
+        Ok(())
+    }
+
+    fn journal(&mut self, input: &BootInput, phase: &str) -> Result<()> {
+        if let Some((path, record)) = &mut self.persistent {
+            record.phase = phase.into();
+            record.process = self.process.clone();
+            record.ever_ready |= phase == "running";
+            return atomic_json(path, record);
+        }
         let bytes = serde_json::to_vec(
             &serde_json::json!({"format":1,"generation":self.generation,"phase":phase,"artifacts":input,"process":self.process,"cgroup":self.cgroup}),
         )?;
@@ -231,10 +415,11 @@ impl Machine {
         file.write_all(&bytes)?;
         file.sync_all()?;
         std::fs::rename(pending, self.root.join("intent.json"))?;
-        File::open(&self.root)?.sync_all()
+        Ok(File::open(&self.root)?.sync_all()?)
     }
 
     fn prepare(&mut self, input: &BootInput) -> Result<()> {
+        self.check_expiry()?;
         if unsafe { libc::geteuid() } != 0 || !cfg!(target_arch = "x86_64") {
             return Err(invalid("jailed hardware boot requires Linux x86_64 root").into());
         }
@@ -252,6 +437,12 @@ impl Machine {
         std::fs::DirBuilder::new().mode(0o700).create(&self.root)?;
         self.owned_root = true;
         self.journal(input, "preparing")?;
+        if let Some((_, record)) = &self.persistent {
+            atomic_json(
+                &self.root.join("intent.json"),
+                &serde_json::json!({"generation":self.generation,"owner":record.owner}),
+            )?;
+        }
         std::fs::create_dir_all(&self.jail)?;
         std::fs::create_dir(self.root.join("bin"))?;
         copy_artifact(
@@ -262,6 +453,7 @@ impl Machine {
         copy_artifact(&input.jailer, &self.root.join("bin/jailer"), 0o500)?;
         copy_artifact(&input.kernel, &self.jail.join("kernel"), 0o444)?;
         copy_artifact(&input.rootfs, &self.jail.join("rootfs.ext4"), 0o600)?;
+        self.check_expiry()?;
         let rootfs = File::open(self.jail.join("rootfs.ext4"))?;
         if unsafe { libc::fchown(rootfs.as_raw_fd(), VMM_UID, VMM_UID) } != 0 {
             return Err(io::Error::last_os_error().into());
@@ -278,12 +470,22 @@ impl Machine {
             }
         }
         for (file, value) in [
-            ("cpu.max", "100000 100000"),
-            ("memory.max", "402653184"),
-            ("memory.swap.max", "0"),
-            ("pids.max", "64"),
+            (
+                "cpu.max",
+                format!("{} 100000", u64::from(self.resources.cpu_millis) * 100),
+            ),
+            (
+                "memory.max",
+                self.resources
+                    .memory_bytes
+                    .checked_add(128 * MIB)
+                    .ok_or_else(|| invalid("VMM memory envelope overflow"))?
+                    .to_string(),
+            ),
+            ("memory.swap.max", "0".into()),
+            ("pids.max", "64".into()),
         ] {
-            std::fs::write(self.cgroup.join(file), value)?;
+            std::fs::write(self.cgroup.join(file), &value)?;
             if std::fs::read_to_string(self.cgroup.join(file))?.trim() != value {
                 return Err(invalid("VMM resource limit readback mismatch").into());
             }
@@ -293,6 +495,12 @@ impl Machine {
     }
 
     async fn launch(&mut self, input: &BootInput) -> Result<ApiClient> {
+        self.check_expiry()?;
+        let tasks = OpenOptions::new()
+            .write(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(self.cgroup.join("cgroup.procs"))?;
+        let tasks_fd = tasks.as_raw_fd();
         let mut command = tokio::process::Command::new(self.root.join("bin/jailer"));
         command
             .args(["--id", &self.generation.to_string(), "--exec-file"])
@@ -333,7 +541,10 @@ impl Machine {
         // SAFETY: this Linux syscall changes only the pre-exec child and does
         // not allocate or mutate the multithreaded parent's namespaces.
         unsafe {
-            command.pre_exec(|| {
+            command.pre_exec(move || {
+                if libc::write(tasks_fd, b"0".as_ptr().cast(), 1) != 1 {
+                    return Err(io::Error::last_os_error());
+                }
                 if libc::unshare(libc::CLONE_NEWNET) != 0 {
                     return Err(io::Error::last_os_error());
                 }
@@ -376,6 +587,7 @@ impl Machine {
         self.launcher = Some(child);
         let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
         loop {
+            self.check_expiry()?;
             if tokio::time::Instant::now() >= deadline {
                 return Err(invalid("jailed VMM identity/readiness deadline").into());
             }
@@ -459,7 +671,7 @@ impl Machine {
             .get(1)
             .ok_or_else(|| invalid("missing process parent"))?
             .parse()?;
-        if parent != std::process::id() && Some(parent) != self.launcher_pid {
+        if !self.recovered && parent != std::process::id() && Some(parent) != self.launcher_pid {
             return Err(invalid("foreign VMM parent").into());
         }
         let executable_sha256 = digest(File::open(prefix.join("exe"))?)?.0;
@@ -528,6 +740,18 @@ impl Machine {
             effective_capabilities: field("CapEff:")?.to_owned(),
             seccomp_mode: field("Seccomp:")?.parse()?,
         };
+        if let Some((_, journal)) = &self.persistent {
+            if result.boot_id != journal.owner.host_boot_id {
+                return Err(invalid("VMM host boot identity mismatch").into());
+            }
+            if let Some(expected) = &journal.process
+                && (expected.pid != result.pid
+                    || expected.start_ticks != result.start_ticks
+                    || expected.executable_sha256 != result.executable_sha256)
+            {
+                return Err(invalid("VMM durable process identity mismatch").into());
+            }
+        }
         let after = std::fs::read_to_string(prefix.join("stat"))?;
         if after
             .rsplit_once(')')
@@ -540,15 +764,23 @@ impl Machine {
         Ok(result)
     }
 
-    async fn run(&mut self, input: &BootInput, report: &mut GuestReport) -> Result<()> {
+    pub(crate) async fn start(&mut self, input: &BootInput) -> Result<AgentClient> {
         self.prepare(input)?;
-        report
-            .checks
-            .push("bounded_digest_verified_artifact_copies".into());
         let api = self.launch(input).await?;
-        api.configure_machine(&MachineConfiguration::new(1, 256)?)
-            .await?;
-        api.configure_boot(&BootSource::new("/kernel".into(), BOOT_ARGS.into())?)
+        api.configure_machine(&MachineConfiguration::new(
+            self.resources.cpu_millis.div_ceil(1000) as u8,
+            self.resources.memory_bytes / MIB,
+        )?)
+        .await?;
+        let args = if self.persistent.is_some() {
+            format!(
+                "{BOOT_ARGS} goldenhoop.pids={} goldenhoop.generation={}",
+                self.resources.pids, self.generation
+            )
+        } else {
+            BOOT_ARGS.into()
+        };
+        api.configure_boot(&BootSource::new("/kernel".into(), args)?)
             .await?;
         api.configure_root(&RootDrive::new("/rootfs.ext4".into(), false)?)
             .await?;
@@ -563,8 +795,14 @@ impl Machine {
         )?;
         let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
         loop {
+            self.check_expiry()?;
             if let Ok(reply) = agent.rpc_reply(&AgentRequest::Ping).await {
                 if matches!(reply.into_result()?, AgentResponse::Pong{version} if version==env!("CARGO_PKG_VERSION"))
+                    && (self.persistent.is_none()
+                        || agent
+                            .control_info()
+                            .await
+                            .is_ok_and(|info| info.pids == self.resources.pids))
                 {
                     break;
                 }
@@ -578,10 +816,6 @@ impl Machine {
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
-        report.guest_started = true;
-        report
-            .checks
-            .push("actual_guest_ping_over_authenticated_vsock".into());
         let pid = self
             .process
             .as_ref()
@@ -595,7 +829,24 @@ impl Machine {
             return Err(invalid("VMM host privilege/seccomp constraints are absent").into());
         }
         self.process = Some(observation);
-        self.journal(input, "guest_ready")?;
+        self.journal(
+            input,
+            if self.persistent.is_some() {
+                "running"
+            } else {
+                "guest_ready"
+            },
+        )?;
+        Ok(agent)
+    }
+
+    async fn run(&mut self, input: &BootInput, report: &mut GuestReport) -> Result<()> {
+        let agent = self.start(input).await?;
+        report.guest_started = true;
+        report.checks.extend([
+            "bounded_digest_verified_artifact_copies".into(),
+            "actual_guest_ping_over_authenticated_vsock".into(),
+        ]);
         report
             .checks
             .push("jailed_uid_pid_namespace_cgroup_seccomp_observed".into());
@@ -690,7 +941,7 @@ impl Machine {
         Ok(())
     }
 
-    fn exited(&self) -> io::Result<bool> {
+    pub(crate) fn exited(&self) -> io::Result<bool> {
         let Some(fd) = &self.pidfd else {
             return Ok(false);
         };
@@ -706,7 +957,7 @@ impl Machine {
         Ok(result > 0 && descriptor.revents & libc::POLLIN != 0)
     }
 
-    async fn collect(&mut self, report: &mut GuestReport) -> Result<()> {
+    pub(crate) async fn collect(&mut self, report: &mut GuestReport) -> Result<()> {
         let mut pids = BTreeSet::new();
         // waitpid is limited to this process's children. This untrusted candidate
         // is only reaped, never signaled outside the authenticated owned cgroup.
@@ -750,7 +1001,8 @@ impl Machine {
                 let result = unsafe { libc::waitpid(*pid, &mut status, libc::WNOHANG) };
                 result == 0
                     || (result < 0
-                        && io::Error::last_os_error().raw_os_error() != Some(libc::ECHILD))
+                        && (io::Error::last_os_error().raw_os_error() != Some(libc::ECHILD)
+                            || Path::new("/proc").join(pid.to_string()).exists()))
             });
             let empty = !self.owned_cgroup
                 || std::fs::read_to_string(self.cgroup.join("cgroup.events"))?
@@ -776,10 +1028,27 @@ impl Machine {
             self.owned_cgroup = false;
         }
         if self.owned_root {
-            let value: serde_json::Value =
-                serde_json::from_slice(&std::fs::read(self.root.join("intent.json"))?)?;
+            let marker = std::fs::read(self.root.join("intent.json"));
+            let value: serde_json::Value = match marker {
+                Ok(bytes) => serde_json::from_slice(&bytes)?,
+                Err(error) if error.kind() == io::ErrorKind::NotFound && !self.recovered => {
+                    // This live owner created the private root and failed before
+                    // its first marker write; no recovered path is authorized here.
+                    if self.persistent.is_some() {
+                        serde_json::json!({"generation":self.generation,"owner":self.record().owner})
+                    } else {
+                        serde_json::json!({"generation":self.generation})
+                    }
+                }
+                Err(error) => return Err(error.into()),
+            };
             if value["generation"] != self.generation.to_string() {
                 return Err(invalid("owned root generation mismatch; retained").into());
+            }
+            if let Some((_, record)) = &self.persistent
+                && value["owner"] != serde_json::to_value(&record.owner)?
+            {
+                return Err(invalid("owned VM marker mismatch; retained").into());
             }
             std::fs::remove_dir_all(&self.root)?;
             self.owned_root = false;
@@ -789,6 +1058,9 @@ impl Machine {
         if !report.root_absent || !report.cgroup_absent {
             return Err(invalid("owned filesystem collection unconfirmed").into());
         }
+        if self.persistent.is_some() {
+            self.set_phase("vm_collected")?;
+        }
         Ok(())
     }
 }
@@ -797,7 +1069,7 @@ impl Drop for Machine {
     fn drop(&mut self) {
         // Best effort fencing is not evidence of collection. Explicit collect
         // above alone may set CleanupState::Complete.
-        if self.owned_cgroup {
+        if self.owned_cgroup && (self.persistent.is_none() || !self.recovered) {
             let _ = std::fs::write(self.cgroup.join("cgroup.kill"), b"1");
         }
     }

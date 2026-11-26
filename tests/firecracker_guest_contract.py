@@ -59,13 +59,16 @@ def main():
     parser.add_argument('--owner', required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--source-commit', required=True)
+    parser.add_argument('--driver-contract', action='store_true')
     args = parser.parse_args()
     assert re.fullmatch(r'[0-9a-f]{40}', args.source_commit)
     assert re.fullmatch(r'[0-9]+-[0-9]+', args.owner)
     root = Path(__file__).resolve().parent.parent
     sources = [root / 'Cargo.toml', root / 'Cargo.lock', Path(__file__).resolve(),
                root / '.github/workflows/firecracker-guest.yml', root / 'images/agent/Dockerfile']
-    for crate in ['firecracker', 'guest-init', 'agent', 'protocol']:
+    if args.driver_contract:
+        sources += [root / 'tests/firecracker_driver_contract.py', root / '.github/workflows/firecracker-driver.yml']
+    for crate in ['firecracker', 'guest-init', 'agent', 'protocol', 'runtime']:
         sources += sorted((root / f'crates/{crate}').rglob('*.rs'))
         sources.append(root / f'crates/{crate}/Cargo.toml')
     sources += sorted((root / 'images/microvm').glob('*.json'))
@@ -181,7 +184,17 @@ def main():
         assert probe['guest_started'] and len(probe['checks']) >= 5
         report['cases'] = ['corrupt_kernel_digest_refused_before_launch_with_confirmed_collection'] + probe['checks']
         report['result'] = 'passed'
+        if args.driver_contract:
+            from firecracker_driver_contract import suite
+            report['scope'] = 'actual native RuntimeDriver/AgentTransport lifecycle; public Worker/SDK integration and full M4 remain unaccepted'
+            guest_collected = False
+            driver = suite(binary, boot, fixture)
+            report['driver'] = driver
+            guest_collected = driver['cleanup'] == 'complete'
+            report['cases'] += ['driver:' + case for case in driver['cases']]
+            assert driver['result'] == 'passed' and guest_collected, driver.get('error', 'native driver collection unconfirmed')
     except Exception as error:
+        report['result'] = 'failed'
         report['error'] = str(error)
     finally:
         cleanup_errors = []

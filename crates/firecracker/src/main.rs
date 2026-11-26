@@ -16,11 +16,56 @@ enum Action {
         #[arg(long)]
         config: std::path::PathBuf,
     },
+    /// Private root lifecycle service, launched only from a durable driver intent.
+    Supervise {
+        #[arg(long)]
+        config: std::path::PathBuf,
+        #[arg(long)]
+        sandbox: uuid::Uuid,
+        #[arg(long)]
+        generation: uuid::Uuid,
+    },
+    /// Exercise the native driver traits using private root-owned input files.
+    DriverCall {
+        #[arg(long)]
+        config: std::path::PathBuf,
+        #[arg(long)]
+        request: std::path::PathBuf,
+    },
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     match Args::parse().command {
+        Action::Supervise {
+            config,
+            sandbox,
+            generation,
+        } => {
+            #[cfg(target_os = "linux")]
+            goldenhoop_firecracker::lifecycle::run_supervisor(config, sandbox, generation).await?;
+            #[cfg(not(target_os = "linux"))]
+            {
+                let _ = (config, sandbox, generation);
+                return Err("native supervisor requires Linux root/KVM".into());
+            }
+        }
+        Action::DriverCall { config, request } => {
+            #[cfg(target_os = "linux")]
+            {
+                let value =
+                    goldenhoop_firecracker::lifecycle::run_driver_call(config, request).await?;
+                println!("{}", serde_json::to_string(&value)?);
+                if value["ok"] != true {
+                    std::process::exit(2);
+                }
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                let _ = (config, request);
+                return Err("native driver requires Linux root/KVM".into());
+            }
+        }
         Action::ProbeKvm => {
             let observation = goldenhoop_firecracker::kvm::probe_kvm();
             println!("{}", serde_json::to_string(&observation)?);

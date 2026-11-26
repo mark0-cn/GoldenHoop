@@ -1,0 +1,45 @@
+{
+  "timestamp": "2026-11-26T19:28:44.839680+00:00",
+  "scope": "Independent native lifecycle implementation comparison; actual KVM lifecycle gate pending",
+  "sources": [
+    {
+      "project": "alibaba/OpenSandbox",
+      "revision": "48347c8789202b611d2b8a184e6be260160f030f",
+      "path": "server/opensandbox_server/services/docker/metadata.py",
+      "sha256": "e79bd8114cc51c62daef40254b75133848b8efce9b67134d5aa292245ab1b9f3",
+      "url": "https://github.com/alibaba/OpenSandbox/blob/48347c8789202b611d2b8a184e6be260160f030f/server/opensandbox_server/services/docker/metadata.py",
+      "observation": "Expiration metadata persists the original expires_at separately from in-memory timer tracking."
+    },
+    {
+      "project": "alibaba/OpenSandbox",
+      "revision": "48347c8789202b611d2b8a184e6be260160f030f",
+      "path": "server/opensandbox_server/services/docker/docker_service.py",
+      "sha256": "89bb456efed1da42a1f934ca4477185347a99a98eeef4eb78404f920562b103b",
+      "url": "https://github.com/alibaba/OpenSandbox/blob/48347c8789202b611d2b8a184e6be260160f030f/server/opensandbox_server/services/docker/docker_service.py",
+      "observation": "Per-sandbox lifecycle locks serialize expiration. The tracked deadline can be recovered from persistence; cleanup retries reschedule without changing the original tracked expiration."
+    },
+    {
+      "project": "Linux manual pages",
+      "url": "https://man7.org/linux/man-pages/man2/flock.2.html",
+      "observation": "A flock lease belongs to an open file description and survives fork until the duplicate descriptors close."
+    },
+    {
+      "project": "Linux kernel cgroup v2 documentation",
+      "url": "https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html",
+      "observation": "Forked children inherit their process cgroup. Later process migration does not migrate children that already exist."
+    }
+  ],
+  "application": [
+    "Persist the original UTC absolute deadline with host boot ID and CLOCK_BOOTTIME deadline; reconnect never renews the budget.",
+    "Use per-sandbox locks for native operations and a short independent installation admission lock. Do not serialize all VM startup/RPC work behind one long-lived lock.",
+    "Run a separate authenticated Rust supervisor so TTL and VMM console draining survive caller death. OpenSandbox timer code alone does not establish this independent-process guarantee.",
+    "Join each task-owned supervisor/VMM cgroup in pre_exec before exec; the inherited CLOEXEC installation lease fences caller-death recovery until helper placement.",
+    "Require actual process/namespace/cgroup/artifact identity before signaling and positive physical absence before reporting collection."
+  ],
+  "not_accepted": [
+    "actual new native lifecycle hardware behavior",
+    "public Worker/API/SDK/CLI integration",
+    "snapshots/restores/templates",
+    "complete M4-M6"
+  ]
+}

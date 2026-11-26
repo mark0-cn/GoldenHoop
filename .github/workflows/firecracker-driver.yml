@@ -1,0 +1,43 @@
+name: Firecracker native lifecycle
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  CARGO_BUILD_JOBS: 2
+  M4_IMAGE: goldenhoop-m4-rootfs:${{ github.run_id }}-${{ github.run_attempt }}
+  M4_OWNER: ${{ github.run_id }}-${{ github.run_attempt }}
+jobs:
+  driver:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the actual Rust driver and supervisor
+        run: cargo build --locked -p goldenhoop-firecracker
+      - name: Build the actual Rust guest init and shared agent
+        run: docker build --target microvm-rootfs --label dev.goldenhoop.task=m4-guest --label dev.goldenhoop.run="$M4_OWNER" --tag "$M4_IMAGE" --file images/agent/Dockerfile .
+      - name: Require actual jailed bootstrap and native lifecycle recovery
+        run: sudo -n python3 -B tests/firecracker_guest_contract.py --driver-contract --source-commit "$GITHUB_SHA" --binary "$PWD/target/debug/goldenhoop-firecracker" --image "$M4_IMAGE" --owner "$M4_OWNER" --output "$PWD/evidence/firecracker-driver.json"
+      - name: Collect the exact owned test image and positively observe absence
+        if: always()
+        shell: python
+        run: |
+          import json, os, subprocess
+          image = os.environ['M4_IMAGE']
+          def listed():
+              return subprocess.check_output(['docker', 'image', 'ls', '--no-trunc', '--filter', 'reference='+image, '--format', '{{.ID}}']).strip()
+          if listed():
+              value = json.loads(subprocess.check_output(['docker', 'image', 'inspect', image]))[0]
+              assert value['Config']['Labels']['dev.goldenhoop.run'] == os.environ['M4_OWNER']
+              assert value['Config']['Labels']['dev.goldenhoop.task'] == 'm4-guest'
+              subprocess.run(['docker', 'image', 'rm', image], check=True)
+          assert not listed()
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: firecracker-driver
+          path: evidence/*.json
+          if-no-files-found: error
