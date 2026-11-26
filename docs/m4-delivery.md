@@ -1,11 +1,11 @@
 # M4 delivery and acceptance
 
-M4 remains incomplete. The first increment adds Rust KVM-device observations and
-private Firecracker control components. It does not register an available
-Firecracker profile. Jailed guest boot, the shared public/client contract,
-images, disk/memory snapshots and templates still require implementation and
-actual supported-host acceptance. M0-M3 evidence remains in the unchanged
-[roadmap](roadmap.md).
+M4 remains incomplete. Implemented increments include actual KVM prerequisites,
+jailed guest boot, private native lifecycle and an opt-in worker backend that
+publishes only its actually probed basic capabilities. The full shared public
+contract, production image orchestration, disk/memory snapshots, templates and
+combined stage still require acceptance. M0-M3 evidence and the full M4-M6
+objective remain in the unchanged [roadmap](roadmap.md).
 
 ## Pinned upstream and control boundary
 
@@ -384,3 +384,38 @@ wrapped value. The SDK still waits for actual operation success within the same
 budget. Production Rust/SDK/image/Cargo/workflow bytes remain unchanged from the
 validated 37a3cb5 component. Full public acceptance requires a new exact-source
 run, and none of the remaining M4-M6 scope is removed.
+
+## Offline image converter component
+
+The Rust [offline converter](image-preparation.md) now binds archive/agent/init
+content, enforces bounded private extraction, overlays fresh protected assets,
+creates and checks ext4 without a host mount, and publishes a synced, fully
+read-back immutable disk/manifest. Cancellation fences new work and requires
+actual tool wait/drain before owned staging collection.
+
+The [initial component failure](evidence/m4-image-converter-component-validation-windows.json)
+retains Failed/Unknown. After the documented FSETID/descriptor-readback and
+scoped Windows read-only cleanup correction, the
+[actual local runc-development contract](evidence/m4-image-converter-fsetid-component-validation-windows.json)
+passes seven groups with Complete collection and 276 verified source inputs.
+Its actual workspace is 1000:1000 02770; pinned bytes, old hardlink isolation,
+no-overwrite and invalid archive refusals, and interrupted-tool collection pass.
+[Windows checks](evidence/m4-image-converter-fsetid-validation-windows.json) pass
+276 tests; [Linux checks](evidence/m4-image-converter-fsetid-validation-linux.json)
+pass 325 and the musl converter/guest build. Both include full format/strict lint
+and fingerprints of all 275 build inputs.
+
+These are portable and offline component results. Production Rust image
+resolution/export/allocation/collection, external host-limit verification for
+gVisor and actual boot of a produced image remain required. Virtual in-sandbox
+cgroup values cannot attest the host boundary. No image/snapshot/template
+capability or combined M4 acceptance is published by this increment.
+
+The [aaaaaf3 public gate](evidence/m4-native-45907404138-archive.json) passes
+bootstrap/private controls and public pause/resume, but remains Failed/Complete
+because its pre-SIGKILL setup does not observe Running within 25 seconds. The
+original execution transitions are missing, so its exact cause stays unknown.
+The corrected setup holds a nonce-marked actual command behind a release barrier
+until the same VM/execution is recovered after worker death, retaining transition
+evidence and the original readiness/wait/TTL budgets. A local real-process check
+verifies that barrier only; new actual KVM acceptance is still required.

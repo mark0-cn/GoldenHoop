@@ -22,9 +22,11 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     && cargo build --locked --release --target x86_64-unknown-linux-musl -p goldenhoop-agent \
     && cargo build --locked --release --target x86_64-unknown-linux-musl -p goldenhoop-egress \
     && cargo build --locked --release --target x86_64-unknown-linux-musl -p goldenhoop-init \
+    && cargo build --locked --release --target x86_64-unknown-linux-musl -p goldenhoop-image-builder \
     && cp /src/target/x86_64-unknown-linux-musl/release/goldenhoop-agent /goldenhoop-agent \
     && cp /src/target/x86_64-unknown-linux-musl/release/goldenhoop-egress /goldenhoop-egress \
-    && cp /src/target/x86_64-unknown-linux-musl/release/goldenhoop-init /goldenhoop-init
+    && cp /src/target/x86_64-unknown-linux-musl/release/goldenhoop-init /goldenhoop-init \
+    && cp /src/target/x86_64-unknown-linux-musl/release/goldenhoop-image-builder /goldenhoop-image-builder
 
 FROM debian:bookworm-slim AS host-egress
 LABEL dev.goldenhoop.egress="host-netfilter"
@@ -50,6 +52,21 @@ LABEL dev.goldenhoop.microvm="rootfs"
 COPY --from=build /goldenhoop-init /sbin/goldenhoop-init
 COPY images/microvm/guest.json /etc/goldenhoop/guest.json
 ENTRYPOINT ["/sbin/goldenhoop-init"]
+
+FROM debian:bookworm-slim AS image-builder
+LABEL dev.goldenhoop.image-builder="offline-ext4-v1"
+RUN apt-get update && apt-get install -y --no-install-recommends e2fsprogs \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /input /output /opt/goldenhoop
+COPY --from=build /goldenhoop-agent /opt/goldenhoop/agent
+COPY --from=build /goldenhoop-init /opt/goldenhoop/init
+COPY --from=build /goldenhoop-image-builder /usr/local/bin/goldenhoop-image-builder
+RUN chmod 0555 /opt/goldenhoop/agent /opt/goldenhoop/init /usr/local/bin/goldenhoop-image-builder \
+    && /usr/local/bin/goldenhoop-image-builder inventory > /opt/goldenhoop/inventory.json \
+    && chmod 0444 /opt/goldenhoop/inventory.json
+ENV LANG=C.UTF-8
+ENTRYPOINT ["/usr/local/bin/goldenhoop-image-builder"]
+CMD ["prepare"]
 
 # Keep the default build target compatible with the existing container backend.
 FROM agent-base AS agent

@@ -13,6 +13,16 @@ from goldenhoop import ApiError, Client, Command, CreateArtifact
 from firecracker_manager_fixture import Manager
 
 
+def recovery_program(nonce, workspace='/workspace'):
+    return ("from pathlib import Path; import time; "
+            f"root=Path({workspace!r}); "
+            f"(root/{('ready-' + nonce)!r}).write_text('ready'); "
+            f"release=root/{('release-' + nonce)!r}\n"
+            "while not release.exists(): time.sleep(.05)\n"
+            "with (root/'once').open('a') as output: output.write('once')\n"
+            "print('once',end='')")
+
+
 def suite(control, cli, native, boot, fixture):
     report = {'result': 'failed', 'cleanup': 'unknown', 'cases': [], 'observations': {},
               'scope': 'basic native public lifecycle only; full M4 remains unaccepted'}
@@ -176,18 +186,33 @@ def suite(control, cli, native, boot, fixture):
         assert client.read_file(sid, 'native-public.bin') == binary
         report['cases'].append('public_pause_resume_preserves_guest_file')
 
-        command = Command(['python3', '-c', "import time; time.sleep(3); open('/workspace/once','a').write('once'); print('once',end='')"])
+        # Keep the actual execution live until the post-restart release, so a
+        # transient three-second state cannot be missed by control-plane polls.
+        command = Command(['python3', '-c', recovery_program(nonce)])
         command_key = str(uuid.uuid4())
         execution = client.start(sid, command, command_key)
         until = time.monotonic() + 25
-        while client.execution(execution['id'])['state'] != 'running':
-            assert time.monotonic() < until, 'command was not observed running before worker kill'
+        transitions = report['observations']['recovery_execution_transitions'] = []
+        while True:
+            current = client.execution(execution['id'])
+            if not transitions or transitions[-1] != current:
+                transitions.append(current)
+                del transitions[:-64]
+            assert time.monotonic() < until, f'command readiness deadline: {current}'
+            if current['state'] == 'running':
+                break
+            assert current['state'] == 'pending', f'command ended before fault injection: {current}'
             time.sleep(.05)
+        assert client.read_file(sid, 'ready-' + nonce) == b'ready'
+        assert time.monotonic() < until, 'guest readiness readback exceeded original fault-injection budget'
+        report['observations']['recovery_guest_ready_before_kill'] = True
         stop('worker', kill=True)
         start('worker')
         assert record(sid)['owner']['generation'] == generation
         assert client.create(request, key)['sandbox']['id'] == sid
         assert client.start(sid, command, command_key)['id'] == execution['id']
+        assert client.execution(execution['id'])['state'] == 'running'
+        client.write_file(sid, 'release-' + nonce, b'release')
         assert client.wait_execution(execution['id'])['state'] == 'succeeded'
         assert client.read_file(sid, 'once') == b'once'
         assert client.read_file(sid, 'native-public.bin') == binary
