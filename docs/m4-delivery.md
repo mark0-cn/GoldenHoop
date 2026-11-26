@@ -339,3 +339,31 @@ independent versions and confirmed scoped collection. Full portable checks pass
 format/lint and static guest/rootfs construction. This component does not
 implement image conversion, guest quiescence, snapshots, restore authority or
 templates. Their implementation and all combined M4-M6 gates remain required.
+
+## Supervisor preparation memory
+
+The [9d44d42 native-public archive](evidence/m4-native-45900869982-archive.json)
+verifies 293 inputs and retains Failed/Complete collection. Before VMM readiness,
+the supervisor reaches its unchanged 128-MiB limit and records one OOM kill. This
+is a confirmed failure in this run; earlier missing telemetry stays unknown.
+
+Artifact preparation now preserves independent sparse zero ranges and uses
+bounded synchronization/cache-release windows for copying and hashing. It keeps
+exact logical length, full source/destination SHA256 and durable readback. Linux
+cache advice is a hint, so actual host-memory evidence is still required. The
+[controlled 128-MiB I/O gate](evidence/m4-bounded-copy-128m-validation-windows.json)
+verifies a 1-GiB sparse file with a 5713920-byte peak and no OOM, then confirms all
+owned fixture collection. A 16-MiB filesystem regression also passes. These
+results do not establish a usable VM; the corrected real KVM private/public
+contract remains required with all existing resource and lifetime boundaries.
+
+[Windows checks](evidence/m4-bounded-copy-validation-windows.json) pass 275 tests
+and [Linux checks](evidence/m4-bounded-copy-validation-linux.json) pass 322 plus
+the static musl guest/rootfs build. Both include format, strict full-workspace
+lint and fingerprints of 270 inputs. The 25-input controlled memory fixture and
+these portable results remain distinct from the required native guest gate.
+
+The image-converter component is being developed in a separate Git worktree so
+its archive/asset/tool validation does not delay this correction. It remains
+unpublished and unaccepted. Production image orchestration, snapshots, restore
+identity/templates and every combined M4-M6 gate remain required.

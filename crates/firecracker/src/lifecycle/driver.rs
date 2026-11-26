@@ -639,6 +639,8 @@ impl NativeEngine {
             "memory.current",
             "memory.peak",
             "memory.events.local",
+            "memory.stat",
+            "io.stat",
             "pids.events",
             "cpu.stat",
         ] {

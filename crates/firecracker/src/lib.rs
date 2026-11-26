@@ -5,6 +5,8 @@ pub mod agent;
 #[cfg(target_os = "linux")]
 pub mod api;
 pub mod control;
+#[cfg(target_os = "linux")]
+mod fileio;
 pub mod kvm;
 #[cfg(target_os = "linux")]
 pub mod lifecycle;

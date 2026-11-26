@@ -18,7 +18,6 @@ use goldenhoop_protocol::{
     AgentRequest, AgentResponse, CleanupState, CommandSpec, EventKind, ExecutionState,
 };
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use tokio::{io::AsyncReadExt, process::Child, task::JoinHandle};
 use uuid::Uuid;
 
@@ -138,19 +137,8 @@ pub(crate) fn trusted_file(path: &Path) -> io::Result<File> {
     Ok(file)
 }
 
-pub(crate) fn digest(mut input: impl Read) -> io::Result<(String, u64)> {
-    let mut hash = Sha256::new();
-    let mut count = 0;
-    let mut buffer = [0; 65536];
-    loop {
-        let read = input.read(&mut buffer)?;
-        if read == 0 {
-            break;
-        }
-        hash.update(&buffer[..read]);
-        count += read as u64;
-    }
-    Ok((format!("{:x}", hash.finalize()), count))
+pub(crate) fn digest(input: File) -> io::Result<(String, u64)> {
+    crate::fileio::digest(input)
 }
 
 fn copy_artifact(artifact: &Artifact, destination: &Path, mode: u32) -> io::Result<()> {
@@ -164,38 +152,13 @@ fn copy_artifact(artifact: &Artifact, destination: &Path, mode: u32) -> io::Resu
     {
         return Err(invalid("invalid artifact digest or length"));
     }
-    let mut input = trusted_file(&artifact.path)?;
-    if input.metadata()?.len() != artifact.size {
-        return Err(invalid("artifact length mismatch"));
-    }
-    let mut output = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(mode)
-        .open(destination)?;
-    let mut hash = Sha256::new();
-    let mut count = 0;
-    let mut buffer = [0; 65536];
-    loop {
-        let read = input.read(&mut buffer)?;
-        if read == 0 {
-            break;
-        }
-        count += read as u64;
-        if count > artifact.size {
-            return Err(invalid("artifact changed while copying"));
-        }
-        hash.update(&buffer[..read]);
-        output.write_all(&buffer[..read])?;
-    }
-    if count != artifact.size || format!("{:x}", hash.finalize()) != artifact.sha256 {
-        return Err(invalid("artifact digest mismatch"));
-    }
-    output.sync_all()?;
-    if digest(File::open(destination)?)? != (artifact.sha256.clone(), artifact.size) {
-        return Err(invalid("copied artifact digest mismatch"));
-    }
-    Ok(())
+    crate::fileio::copy(
+        trusted_file(&artifact.path)?,
+        destination,
+        &artifact.sha256,
+        artifact.size,
+        mode,
+    )
 }
 
 pub(crate) struct Machine {

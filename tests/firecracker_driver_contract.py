@@ -133,6 +133,13 @@ def suite(binary, boot, fixture):
         assert (vm_group / 'memory.max').read_text().strip() == str(384 * 1024**2)
         assert (vm_group / 'pids.max').read_text().strip() == '64'
         assert (sup_group / 'pids.max').read_text().strip() == '8'
+        supervisor_memory = {name: (sup_group / name).read_text() for name in
+                             ['memory.max', 'memory.peak', 'memory.events.local', 'memory.stat', 'io.stat']}
+        report['observations']['supervisor_preparation_memory'] = supervisor_memory
+        assert int(supervisor_memory['memory.max'].strip()) == 128 * 1024**2
+        assert int(supervisor_memory['memory.peak'].strip()) <= 128 * 1024**2
+        events = dict(line.split() for line in supervisor_memory['memory.events.local'].splitlines())
+        assert int(events['oom_kill']) == 0, supervisor_memory
         assert canary.encode() not in (Path('/proc') / str(a_record['supervisor']['pid']) / 'environ').read_bytes()
         nonce = uuid.uuid4().hex
         script = f"import os\ns=open('/proc/self/status').read()\nassert os.getuid()==os.getgid()==1000\nassert 'NoNewPrivs:\\t1' in s\nassert next(l.split(':',1)[1].strip() for l in s.splitlines() if l.startswith('CapEff:'))=='0000000000000000'\nassert open('/sys/fs/cgroup/goldenhoop/pids.max').read().strip()=='32'\nassert sorted(os.listdir('/sys/class/net'))==['lo']\nassert 'GH_M4_HOST_CANARY' not in os.environ\nprint({nonce!r},flush=True)"
