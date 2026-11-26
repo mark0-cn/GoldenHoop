@@ -76,7 +76,7 @@ impl WorkloadNetworkPlan {
         }
         Ok(())
     }
-    fn provider_plan(&self) -> NetworkPlan {
+    pub(super) fn provider_plan(&self) -> NetworkPlan {
         NetworkPlan {
             identity: self.native.identity.clone(),
             provisioning_token: self.native.provisioning_token,
@@ -253,7 +253,8 @@ impl DockerDriver {
         let actual = self.owned(handle).await?.ok_or_else(conflict)?;
         match_requested_plan(&actual, Some(network))
             .map_err(|e| bootstrap_context("recovered workload plan label", e))?;
-        admit_placement(&actual, network, self.config.profile.runtime())
+        let gateway = self.owned_network_gateway(network).await?;
+        admit_placement(&actual, network, self.config.profile.runtime(), gateway)
             .map_err(|e| bootstrap_context("recovered placement", e))?;
         if actual.id.as_deref() != Some(handle.backend_ref.as_str())
             || actual
@@ -294,7 +295,8 @@ impl DockerDriver {
         let actual = self.owned(handle).await?.ok_or_else(conflict)?;
         match_requested_plan(&actual, Some(network))
             .map_err(|e| bootstrap_context("start workload plan label", e))?;
-        admit_placement(&actual, network, self.config.profile.runtime())
+        let gateway = self.owned_network_gateway(network).await?;
+        admit_placement(&actual, network, self.config.profile.runtime(), gateway)
             .map_err(|e| bootstrap_context("start placement", e))?;
         if actual.state.as_ref().and_then(|s| s.status) != Some(ContainerStateStatusEnum::CREATED) {
             return Err(bootstrap_context(
@@ -324,8 +326,6 @@ impl DockerDriver {
         let actual = self.owned(handle).await?.ok_or_else(conflict)?;
         match_requested_plan(&actual, Some(network))
             .map_err(|e| bootstrap_context("endpoint workload plan label", e))?;
-        admit_placement(&actual, network, self.config.profile.runtime())
-            .map_err(|e| bootstrap_context("endpoint placement", e))?;
         if actual.state.as_ref().and_then(|s| s.running) != Some(true) {
             return Err(bootstrap_context(
                 "endpoint requires running workload",
@@ -343,6 +343,13 @@ impl DockerDriver {
                 conflict(),
             ));
         }
+        admit_placement(
+            &actual,
+            network,
+            self.config.profile.runtime(),
+            observed.ipv4_gateway,
+        )
+        .map_err(|e| bootstrap_context("endpoint placement", e))?;
         let native = self
             .docker
             .inspect_network(&network.network_id, None)
@@ -357,6 +364,7 @@ fn admit_placement(
     actual: &ContainerInspectResponse,
     network: &WorkloadNetworkPlan,
     runtime: &str,
+    gateway: Ipv4Addr,
 ) -> Result<(), ApiError> {
     let config = actual.config.as_ref().ok_or_else(conflict)?;
     let host = actual.host_config.as_ref().ok_or_else(conflict)?;
@@ -397,12 +405,7 @@ fn admit_placement(
         || host.ipc_mode.as_deref() != Some("private")
         || host.devices.as_ref().is_some_and(|v| !v.is_empty())
         || host.device_requests.as_ref().is_some_and(|v| !v.is_empty())
-        || actual.mounts.as_ref().is_none_or(|v| {
-            v.len() != 1
-                || v[0].typ.as_deref() != Some("volume")
-                || v[0].destination.as_deref() != Some("/opt/goldenhoop")
-                || v[0].rw != Some(false)
-        })
+        || !crate::resolver::admit_mounts(actual, gateway)
     {
         return Err(conflict());
     }

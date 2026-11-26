@@ -1,0 +1,31 @@
+{
+  "timestamp": "2026-11-26T10:56:42.952160+00:00",
+  "subject": "system resolver routing in production protected workloads",
+  "upstream": {
+    "repository": "moby/moby",
+    "revision": "ef9054461f8e11d5e13e56806a70fc151759b205",
+    "path": "daemon/libnetwork/sandbox_dns_unix.go",
+    "blob_sha": "19ae3eb56409d28227aeed7c2620536b04b1700c",
+    "sha256": "99d6926a4e3976cfaa9eb1cbfcb9eb8cc27063b4cfd12e81d0ee601be4347302",
+    "url": "https://github.com/moby/moby/blob/ef9054461f8e11d5e13e56806a70fc151759b205/daemon/libnetwork/sandbox_dns_unix.go",
+    "relevant_lines": [
+      {
+        "line": 26,
+        "text": "resolverIPSandbox = \"127.0.0.11\""
+      },
+      {
+        "line": 297,
+        "text": "func (sb *Sandbox) rebuildDNS() error {"
+      },
+      {
+        "line": 320,
+        "text": "extNameServers, err = rc.TransformForIntNS(intNS, sb.resolver.ResolverOptions())"
+      }
+    ]
+  },
+  "finding": "Moby replaces the user-defined-network resolver configuration with its embedded resolver, retaining other servers as upstreams. GoldenHoop production workloads did not override their resolver file, whereas its accepted owned-resolver component did.",
+  "existing_component": "docs/evidence/ci-45550041538/network-ipv4-runc/egress-runc.json",
+  "current_mount_layout_validation": "docs/evidence/m3-resolver-subpath-layout-native-windows-docker.json",
+  "implementation": "trusted network-none Rust helper atomically prepares public content-addressed resolver data in the owned agent bundle; workload receives a read-only volume subpath before start; startup/recovery verify exact actual source and configured subpath with actual owned network gateway; no resolver setting grants network authority",
+  "scope": "native credential DNS/TLS name binding and full Stage gates remain required"
+}

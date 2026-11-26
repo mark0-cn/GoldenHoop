@@ -31,6 +31,19 @@ pub(super) fn model() -> (WorkloadNetworkPlan, Value, Value, NetworkObservation)
         "Mounts":[{"Type":"volume","Destination":"/opt/goldenhoop","RW":false}],
         "NetworkSettings":{"Networks":{(name):{"NetworkID":network.network_id,"EndpointID":endpoint_id,"MacAddress":"02:00:00:00:00:02","IPAddress":"10.77.0.2","IPPrefixLen":24,"Gateway":"10.77.0.1","GlobalIPv6Address":address6.to_string(),"GlobalIPv6PrefixLen":64,"IPv6Gateway":gateway6.to_string()}}}});
     let provider = json!({"Id":network.network_id,"Containers":{(id):{"EndpointID":endpoint_id,"MacAddress":"02:00:00:00:00:02","IPv4Address":"10.77.0.2/24","IPv6Address":format!("{address6}/64")}}});
+    let mut actual = actual;
+    let resolver = goldenhoop_core::resolver::ResolverConfig::new(observed.ipv4_gateway);
+    let volume = "owned-agent-volume";
+    let source = "/var/lib/docker/volumes/owned-agent-volume/_data";
+    actual["HostConfig"]["Dns"] = json!([observed.ipv4_gateway.to_string()]);
+    actual["HostConfig"]["Mounts"] = json!([
+        {"Type":"volume","Target":"/opt/goldenhoop","Source":volume,"ReadOnly":true,"VolumeOptions":{"NoCopy":true}},
+        {"Type":"volume","Target":"/etc/resolv.conf","Source":volume,"ReadOnly":true,"VolumeOptions":{"NoCopy":true,"Subpath":resolver.file_name()}}
+    ]);
+    actual["Mounts"] = json!([
+        {"Type":"volume","Name":volume,"Source":source,"Destination":"/opt/goldenhoop","RW":false},
+        {"Type":"volume","Name":volume,"Source":source,"Destination":"/etc/resolv.conf","RW":false}
+    ]);
     (network, actual, provider, observed)
 }
 #[test]
@@ -67,6 +80,7 @@ fn guarded_start_admission_rejects_image_hooks_host_authority_and_other_networks
         &serde_json::from_value(original.clone()).unwrap(),
         &plan,
         "runc",
+        "10.77.0.1".parse().unwrap(),
     )
     .unwrap();
     let mut changed = Vec::new();
@@ -102,7 +116,13 @@ fn guarded_start_admission_rejects_image_hooks_host_authority_and_other_networks
     }
     for (name, value) in changed {
         assert!(
-            admit_placement(&serde_json::from_value(value).unwrap(), &plan, "runc").is_err(),
+            admit_placement(
+                &serde_json::from_value(value).unwrap(),
+                &plan,
+                "runc",
+                "10.77.0.1".parse().unwrap()
+            )
+            .is_err(),
             "{name}"
         );
     }
@@ -113,9 +133,64 @@ fn guarded_start_admission_rejects_image_hooks_host_authority_and_other_networks
     ] {
         let mut value = original.clone();
         value["Mounts"] = setting;
-        assert!(admit_placement(&serde_json::from_value(value).unwrap(), &plan, "runc").is_err());
+        assert!(
+            admit_placement(
+                &serde_json::from_value(value).unwrap(),
+                &plan,
+                "runc",
+                "10.77.0.1".parse().unwrap()
+            )
+            .is_err()
+        );
     }
 }
+#[test]
+fn resolver_placement_refuses_missing_writable_foreign_or_wrong_gateway_configuration() {
+    let (plan, original, _, observed) = model();
+    let good: ContainerInspectResponse = serde_json::from_value(original.clone()).unwrap();
+    admit_placement(&good, &plan, "runc", observed.ipv4_gateway).unwrap();
+    assert!(admit_placement(&good, &plan, "runc", "10.77.0.2".parse().unwrap()).is_err());
+    for (path, changed) in [
+        ("/HostConfig/Dns", json!(["127.0.0.11"])),
+        ("/HostConfig/Mounts/1/ReadOnly", json!(false)),
+        ("/HostConfig/Mounts/1/Source", json!("foreign-volume")),
+        (
+            "/HostConfig/Mounts/1/VolumeOptions/Subpath",
+            json!("../resolv.conf"),
+        ),
+        ("/HostConfig/Mounts/1/VolumeOptions/NoCopy", json!(false)),
+        ("/Mounts/1/RW", json!(true)),
+        ("/Mounts/1/Name", json!("foreign-volume")),
+        ("/Mounts/1/Source", json!("/foreign")),
+        ("/Mounts/1/Type", json!("bind")),
+        ("/Mounts/1/Destination", json!("/etc/hosts")),
+    ] {
+        let mut bad = original.clone();
+        *bad.pointer_mut(path).unwrap() = changed;
+        assert!(
+            admit_placement(
+                &serde_json::from_value(bad).unwrap(),
+                &plan,
+                "runc",
+                observed.ipv4_gateway
+            )
+            .is_err(),
+            "{path}"
+        );
+    }
+    let mut missing = original;
+    missing["Mounts"].as_array_mut().unwrap().pop();
+    assert!(
+        admit_placement(
+            &serde_json::from_value(missing).unwrap(),
+            &plan,
+            "runc",
+            observed.ipv4_gateway
+        )
+        .is_err()
+    );
+}
+
 #[test]
 fn endpoint_requires_both_actual_views_to_agree_on_one_physical_dual_stack_attachment() {
     let (plan, actual, provider, observed) = model();

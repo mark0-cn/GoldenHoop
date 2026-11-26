@@ -29,6 +29,7 @@ mod controllers;
 mod guarded;
 mod isolated;
 mod networks;
+mod resolver;
 mod sessions;
 pub use controllers::{
     ControllerObservation, ControllerPlan, ControllerRemoval, ControllerSession,
@@ -281,31 +282,63 @@ impl DockerDriver {
                 "agent volume ownership mismatch",
             ));
         }
+        self.run_bundle_helper(&volume, image_id, vec!["/bin/sh".into()], vec![
+            "-c".into(), "cp /usr/local/bin/goldenhoop-agent /bundle/.agent-new && chmod 0555 /bundle/.agent-new && mv /bundle/.agent-new /bundle/goldenhoop-agent".into(),
+        ]).await?;
+        *cached = Some(volume.clone());
+        Ok(volume)
+    }
+
+    async fn run_bundle_helper(
+        &self,
+        volume: &str,
+        image_id: String,
+        entrypoint: Vec<String>,
+        command: Vec<String>,
+    ) -> Result<(), ApiError> {
         let name = format!("goldenhoop-bootstrap-{}", Uuid::new_v4());
         let mut helper_labels = self.labels("bootstrap");
         helper_labels.insert(
             EXPIRY_LABEL.into(),
             (Utc::now() + chrono::Duration::seconds(60)).to_rfc3339(),
         );
-        let helper = self.docker.create_container(
-            Some(CreateContainerOptionsBuilder::default().name(&name).build()),
-            ContainerCreateBody {
-                image: Some(image_id), user: Some("0:0".into()), working_dir: Some("/".into()),
-                healthcheck: Some(HealthConfig { test: Some(vec!["NONE".into()]), ..Default::default() }),
-                entrypoint: Some(vec!["/bin/sh".into()]),
-                cmd: Some(vec!["-c".into(), "cp /usr/local/bin/goldenhoop-agent /bundle/.agent-new && chmod 0555 /bundle/.agent-new && mv /bundle/.agent-new /bundle/goldenhoop-agent".into()]),
-                labels: Some(helper_labels),
-                host_config: Some(HostConfig {
-                    runtime: Some(self.config.profile.runtime().into()),
-                    network_mode: Some("none".into()), readonly_rootfs: Some(true),
-                    cap_drop: Some(vec!["ALL".into()]), security_opt: Some(vec!["no-new-privileges".into()]),
-                    memory: Some(128 * 1024 * 1024), nano_cpus: Some(1_000_000_000), pids_limit: Some(32),
-                    mounts: Some(vec![Mount { target: Some("/bundle".into()), source: Some(volume.clone()), typ: Some(MountType::VOLUME), read_only: Some(false), ..Default::default() }]),
+        let helper = self
+            .docker
+            .create_container(
+                Some(CreateContainerOptionsBuilder::default().name(&name).build()),
+                ContainerCreateBody {
+                    image: Some(image_id),
+                    user: Some("0:0".into()),
+                    working_dir: Some("/".into()),
+                    healthcheck: Some(HealthConfig {
+                        test: Some(vec!["NONE".into()]),
+                        ..Default::default()
+                    }),
+                    entrypoint: Some(entrypoint),
+                    cmd: Some(command),
+                    labels: Some(helper_labels),
+                    host_config: Some(HostConfig {
+                        runtime: Some(self.config.profile.runtime().into()),
+                        network_mode: Some("none".into()),
+                        readonly_rootfs: Some(true),
+                        cap_drop: Some(vec!["ALL".into()]),
+                        security_opt: Some(vec!["no-new-privileges".into()]),
+                        memory: Some(128 * 1024 * 1024),
+                        nano_cpus: Some(1_000_000_000),
+                        pids_limit: Some(32),
+                        mounts: Some(vec![Mount {
+                            target: Some("/bundle".into()),
+                            source: Some(volume.into()),
+                            typ: Some(MountType::VOLUME),
+                            read_only: Some(false),
+                            ..Default::default()
+                        }]),
+                        ..Default::default()
+                    }),
                     ..Default::default()
-                }),
-                ..Default::default()
-            }
-        ).await;
+                },
+            )
+            .await;
         let helper = match helper {
             Ok(value) => value,
             Err(error) => {
@@ -334,9 +367,7 @@ impl DockerDriver {
         .await;
         // Cleanup runs even on failed startup/wait. Confirm absence before returning.
         self.remove_helper(&helper.id).await?;
-        outcome?;
-        *cached = Some(volume.clone());
-        Ok(volume)
+        outcome
     }
 
     async fn remove_helper(&self, id: &str) -> Result<(), ApiError> {
@@ -503,7 +534,7 @@ impl DockerDriver {
                 pids_limit: Some(i64::from(request.resources.pids)),
                 mounts: Some(vec![Mount {
                     target: Some("/opt/goldenhoop".into()),
-                    source: Some(volume),
+                    source: Some(volume.clone()),
                     typ: Some(MountType::VOLUME),
                     read_only: Some(true),
                     volume_options: Some(MountVolumeOptions {
@@ -538,6 +569,7 @@ impl DockerDriver {
             ..Default::default()
         };
         if let Some(network) = network {
+            self.configure_resolver(&mut body, &volume, network).await?;
             body.host_config
                 .as_mut()
                 .expect("fixed host config")

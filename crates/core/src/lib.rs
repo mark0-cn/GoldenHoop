@@ -2,6 +2,7 @@
 use chrono::{DateTime, Utc};
 use goldenhoop_protocol::*;
 use sha2::{Digest, Sha256};
+pub mod resolver;
 
 pub fn validate_create(profile: &RuntimeProfile, request: &CreateSandbox) -> Result<(), ApiError> {
     if profile.id != request.profile {

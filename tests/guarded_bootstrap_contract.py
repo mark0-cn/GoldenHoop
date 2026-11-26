@@ -222,7 +222,20 @@ class Contract(RecoveryContract):
                 assert host['NetworkMode']==recovered['provider']['network_id'] and host['Runtime']==self.args.runtime
                 assert not host['Privileged'] and host['ReadonlyRootfs'] and host['CapDrop']==['ALL']
                 assert set(host['CapAdd'])=={'SETUID','SETGID','KILL','CHOWN','FOWNER','DAC_OVERRIDE'}
-                assert len(actual['Mounts'])==1 and actual['Mounts'][0]['Destination']=='/opt/goldenhoop' and not actual['Mounts'][0]['RW']
+                mounts = {mount['Destination']: mount for mount in actual['Mounts']}
+                assert len(actual['Mounts']) == len(mounts) == 2 and set(mounts) == {'/opt/goldenhoop', '/etc/resolv.conf'}
+                assert all(mount['Type'] == 'volume' and not mount['RW'] for mount in mounts.values())
+                assert mounts['/opt/goldenhoop']['Name'] == mounts['/etc/resolv.conf']['Name']
+                gateway = recovered['provider']['ipv4_gateway']
+                contents = f'nameserver {gateway}\noptions timeout:1 attempts:1\n'
+                filename = 'resolver-' + hashlib.sha256(contents.encode('ascii')).hexdigest() + '.conf'
+                configured = {mount['Target']: mount for mount in host['Mounts']}
+                assert len(host['Mounts']) == len(configured) == 2 and set(configured) == set(mounts)
+                assert host['Dns'] == [gateway]
+                for target, mount in configured.items():
+                    assert mount['Type'] == 'volume' and mount['Source'] == mounts[target]['Name'] and mount['ReadOnly']
+                    assert mount['VolumeOptions']['NoCopy']
+                assert configured['/etc/resolv.conf']['VolumeOptions']['Subpath'] == filename
                 assert json.loads(config['Labels']['dev.goldenhoop.workload-network-plan'])['native']['expires_at']==self.plan['expires_at']
                 self.report['independent_runtime_inspection'] = actual
                 self.check('independent_inspection_confirms_the_fixed_trusted_supervisor_disabled_image_hooks_and_exact_owned_network')

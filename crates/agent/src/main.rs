@@ -12,6 +12,9 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Action {
+    ResolverConfig {
+        gateway: std::net::Ipv4Addr,
+    },
     Serve {
         #[arg(long, default_value = "/run/goldenhoop/agent.sock")]
         socket: std::path::PathBuf,
@@ -29,6 +32,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     #[cfg(target_os = "linux")]
     match args.command {
+        Action::ResolverConfig { gateway } => goldenhoop_agent::resolver::configure(gateway)?,
         Action::Serve { socket, workspace } => {
             if std::env::var("GOLDENHOOP_ISOLATED_AGENT").as_deref() != Ok("1") {
                 return Err(
