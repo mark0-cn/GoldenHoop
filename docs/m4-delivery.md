@@ -367,3 +367,20 @@ The image-converter component is being developed in a separate Git worktree so
 its archive/asset/tool validation does not delay this correction. It remains
 unpublished and unaccepted. Production image orchestration, snapshots, restore
 identity/templates and every combined M4-M6 gate remain required.
+
+## Private lifecycle acceptance and public response shape
+
+The [37a3cb5 native-public archive](evidence/m4-native-45904573773-archive.json)
+verifies 295 inputs. All six bootstrap and nine private lifecycle groups pass,
+including interrupted-caller recovery and independent paused expiry with actual
+joint process/path collection. The observed supervisor peak is 3776512 bytes
+under the original 128-MiB limit, with zero OOM counters. The overall run still
+fails after four public groups, and final collection is Complete.
+
+The failure is a public fixture `KeyError`: it expects an operation wrapper from
+SDK lifecycle calls that return a plain Operation. The completion helper now
+takes the plain operation; create/capture callers explicitly select their
+wrapped value. The SDK still waits for actual operation success within the same
+budget. Production Rust/SDK/image/Cargo/workflow bytes remain unchanged from the
+validated 37a3cb5 component. Full public acceptance requires a new exact-source
+run, and none of the remaining M4-M6 scope is removed.

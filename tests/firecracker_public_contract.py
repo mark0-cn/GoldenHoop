@@ -90,7 +90,7 @@ def suite(control, cli, native, boot, fixture):
                 'required_capabilities': ['commands', 'files', 'pause', 'network_isolation', 'artifacts']}
 
     def complete(value):
-        return client.wait_operation(value['operation']['id'], timeout=150)
+        return client.wait_operation(value['id'], timeout=150)
 
     def terminate(sid):
         complete(client.terminate(sid, str(uuid.uuid4())))
@@ -148,7 +148,7 @@ def suite(control, cli, native, boot, fixture):
         sid = created['sandbox']['id']; sandboxes.append(sid)
         repeated = client.create(request, key)
         assert repeated['sandbox']['id'] == sid and repeated['operation']['id'] == created['operation']['id']
-        complete(created)
+        complete(created['operation'])
         assert client.sandbox(sid)['state'] == 'running'
         generation = record(sid)['owner']['generation']
         nonce = uuid.uuid4().hex
@@ -194,18 +194,18 @@ def suite(control, cli, native, boot, fixture):
         report['cases'].append('public_worker_SIGKILL_recovers_same_VM_and_execution_without_replay')
 
         captured = client.create_artifact(sid, CreateArtifact('native-public.bin', 'native-public.bin'), str(uuid.uuid4()))
-        complete(captured); artifact_id = captured['artifact']['id']
+        complete(captured['operation']); artifact_id = captured['artifact']['id']
         assert client.artifact_bytes(artifact_id) == binary
         terminate(sid)
         assert client.artifact_bytes(artifact_id) == binary
-        complete({'operation': client.delete_artifact(artifact_id, str(uuid.uuid4()))})
+        complete(client.delete_artifact(artifact_id, str(uuid.uuid4())))
         deleted = client.artifact(artifact_id)
         assert deleted['state'] == 'deleted' and deleted['cleanup'] == 'complete'
         report['cases'].append('native_file_artifact_survives_VM_collection_then_confirms_storage_collection')
 
         expiring = client.create(create(ttl=75), str(uuid.uuid4()))
         eid = expiring['sandbox']['id']; sandboxes.append(eid)
-        complete(expiring)
+        complete(expiring['operation'])
         complete(client.pause(eid, str(uuid.uuid4())))
         expired_record = record(eid)
         stop('worker', kill=True)
