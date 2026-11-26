@@ -686,6 +686,21 @@ class Contract(ContextCases, IsolatedCases):
         operation = self.request("DELETE", f"/v1/sandboxes/{sandbox}", key=str(uuid.uuid4()))
         self.wait_operation(operation["id"])
 
+    def wait_failed_sandbox_cleanup(self, identity, started, deadline, observation, initial=None):
+        observation.update(sandbox_id=identity, shared_wait_budget_seconds=deadline-started, samples=[])
+        sandbox = initial if initial is not None else self.request("GET", f"/v1/sandboxes/{identity}")
+        while True:
+            assert sandbox["state"] == "failed", sandbox
+            sample = {"state": sandbox["state"], "cleanup": sandbox["cleanup"]}
+            if not observation["samples"] or sample != observation["samples"][-1]["observation"]:
+                assert len(observation["samples"]) < 64
+                observation["samples"].append({"elapsed_seconds": time.monotonic()-started, "observation": sample})
+            assert time.monotonic() <= deadline, sandbox
+            if sandbox["cleanup"] == "complete":
+                return sandbox
+            time.sleep(min(.1, max(0, deadline-time.monotonic())))
+            sandbox = self.request("GET", f"/v1/sandboxes/{identity}")
+
     def lost_runtime_never_replays_queued_session_input(self):
         source = self.session_source(ttl=90)
         container = self.container(source)
@@ -706,21 +721,9 @@ class Contract(ContextCases, IsolatedCases):
         receipt = self.request("GET", f"/v1/sessions/{identity}/controls/1")
         assert receipt["state"] == "unknown", receipt
         assert self.request("POST", f"/v1/sessions/{identity}/controls", control) == receipt
-        sandbox = self.request("GET", f"/v1/sandboxes/{source}")
-        observation = {"sandbox_id": source, "shared_wait_budget_seconds": 25, "samples": []}
+        observation = {}
         self.runtime_loss_cleanup_observations = observation
-        while True:
-            assert sandbox["state"] == "failed", sandbox
-            sample = {"state": sandbox["state"], "cleanup": sandbox["cleanup"]}
-            if not observation["samples"] or sample != observation["samples"][-1]["observation"]:
-                assert len(observation["samples"]) < 64
-                observation["samples"].append({"elapsed_seconds": time.monotonic()-started, "observation": sample})
-            assert time.monotonic() <= deadline, sandbox
-            if sandbox["cleanup"] == "complete":
-                break
-            assert time.monotonic() < deadline, sandbox
-            time.sleep(min(.1, max(0, deadline-time.monotonic())))
-            sandbox = self.request("GET", f"/v1/sandboxes/{source}")
+        sandbox = self.wait_failed_sandbox_cleanup(source, started, deadline, observation)
         assert sandbox["state"] == "failed" and sandbox["cleanup"] == "complete", sandbox
         assert not docker("ps", "-a", "--filter", f"id={container}", "--format", "{{.ID}}")
         assert not docker("ps", "-a", "--filter", f"label=dev.goldenhoop.sandbox={source}", "--format", "{{.ID}}")
@@ -783,7 +786,9 @@ time.sleep(30)
         if self.args.runtime == "runc":
             assert int(self.pid_pressure["before_cancel_stats"]["PIDs"]) >= 120, self.pid_pressure
         self.request("POST", f"/v1/executions/{command['id']}/cancel")
-        terminal = self.wait_execution(command["id"], limit=40)
+        wait_started = time.monotonic()
+        wait_deadline = wait_started + 40
+        terminal = self.wait_execution(command["id"], limit=wait_deadline-time.monotonic())
         self.pid_pressure["terminal_execution"] = terminal
         record = self.request("GET", f"/v1/sandboxes/{identity}")
         self.pid_pressure["terminal_sandbox"] = record
@@ -797,11 +802,18 @@ time.sleep(30)
             self.pid_pressure["outcome"] = "runtime_failed_and_removed"
             assert "runtime exited" in (record.get("reason") or ""), self.pid_pressure
             assert any(event.get("Action") == "die" for event in self.pid_pressure["runtime_events"]), self.pid_pressure
+            observation = self.pid_pressure["sandbox_collection_observations"] = {}
+            record = self.wait_failed_sandbox_cleanup(identity, wait_started, wait_deadline, observation, initial=record)
+            self.pid_pressure["terminal_sandbox"] = record
             assert record["state"] == "failed" and record["cleanup"] == "complete", self.pid_pressure
         else:
             self.pid_pressure["outcome"] = "cancelled_with_confirmed_cleanup"
             assert terminal["state"] == "cancelled", self.pid_pressure
         if record["state"] in ("terminated", "failed"):
+            if record["state"] == "failed" and record["cleanup"] != "complete":
+                observation = self.pid_pressure.setdefault("sandbox_collection_observations", {})
+                record = self.wait_failed_sandbox_cleanup(identity, wait_started, wait_deadline, observation, initial=record)
+                self.pid_pressure["terminal_sandbox"] = record
             assert record["cleanup"] == "complete"
             assert not docker("ps", "-a", "--filter", f"id={container}", "--format", "{{.ID}}")
         else:
