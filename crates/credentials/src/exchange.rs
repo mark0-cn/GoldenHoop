@@ -17,7 +17,7 @@ fn uncertain() -> ApiError {
     error
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExchangeProvider {
     pub endpoint: String,
@@ -35,7 +35,16 @@ pub struct ExchangeRegistry {
 }
 
 impl ExchangeRegistry {
+    pub fn supports(&self, name: &str) -> bool {
+        self.providers.contains_key(name)
+    }
     pub fn new(providers: BTreeMap<String, ExchangeProvider>) -> Result<Self, ApiError> {
+        Self::with_trust(providers, Vec::new())
+    }
+    pub fn with_trust(
+        providers: BTreeMap<String, ExchangeProvider>,
+        certificates: Vec<reqwest::Certificate>,
+    ) -> Result<Self, ApiError> {
         if providers.len() > 64 {
             return Err(error(
                 ErrorCode::QuotaExceeded,
@@ -118,20 +127,22 @@ impl ExchangeRegistry {
                 },
             );
         }
-        let client = reqwest::Client::builder()
+        let mut client = reqwest::Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .retry(reqwest::retry::never())
             .connect_timeout(std::time::Duration::from_secs(3))
             .timeout(std::time::Duration::from_secs(8))
-            .pool_max_idle_per_host(0)
-            .build()
-            .map_err(|_| {
-                error(
-                    ErrorCode::BackendUnavailable,
-                    "trusted exchange transport unavailable",
-                )
-            })?;
+            .pool_max_idle_per_host(0);
+        for certificate in certificates {
+            client = client.tls_certs_merge([certificate]);
+        }
+        let client = client.build().map_err(|_| {
+            error(
+                ErrorCode::BackendUnavailable,
+                "trusted exchange transport unavailable",
+            )
+        })?;
         Ok(Self {
             providers: values,
             client,

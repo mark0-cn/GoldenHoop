@@ -5,7 +5,7 @@ use goldenhoop_artifacts::{BlobStore, S3Config};
 use goldenhoop_control::{
     api,
     http::BearerAuth,
-    worker::{NetworkOptions, NetworkSetup, Worker},
+    worker::{CredentialSetup, NetworkOptions, NetworkSetup, Worker},
 };
 use goldenhoop_store::Store;
 use std::io::Read;
@@ -121,6 +121,12 @@ enum Role {
         egress_controller_image: Option<String>,
         #[arg(long, requires = "egress_controller_image")]
         network_config: Option<PathBuf>,
+        #[arg(
+            long,
+            requires = "credential_key_file",
+            env = "GOLDENHOOP_CREDENTIAL_CONFIG"
+        )]
+        credential_config: Option<PathBuf>,
         #[arg(long)]
         allow_runc_development: bool,
         #[command(flatten)]
@@ -169,6 +175,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             kernel_probe_image,
             egress_controller_image,
             network_config,
+            credential_config,
             allow_runc_development,
             artifacts,
         } => {
@@ -199,6 +206,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     },
                 )
                 .transpose()?;
+            let credentials = if let Some(path) = args.credential_key_file.as_deref() {
+                let key = goldenhoop_credentials::VaultKey::open(path)?;
+                let providers = if let Some(path) = credential_config {
+                    let bytes = goldenhoop_credentials::read_private_config(&path)?;
+                    serde_json::from_slice(&bytes)
+                        .map_err(|_| "invalid private credential configuration")?
+                } else {
+                    Default::default()
+                };
+                Some(CredentialSetup::new(key, providers)?)
+            } else {
+                None
+            };
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
             let worker = Worker::new(
                 store.clone(),
@@ -210,6 +230,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 NetworkSetup {
                     controller_image: egress_controller_image,
                     options: network_options,
+                    credentials,
                 },
             )
             .await?;

@@ -17,6 +17,7 @@ use tokio::{
 const NFT: &str = "/usr/sbin/nft";
 const MAX_OUTPUT: u64 = 4 * 1024 * 1024;
 mod binding;
+mod credentials;
 mod destinations;
 mod effective;
 mod resolver;
@@ -50,6 +51,8 @@ pub struct Manager {
     ethernet_required: bool,
     source_scope: Option<crate::SourceScope>,
     destinations: Option<crate::DestinationDefinition>,
+    credential_redirect: Option<crate::CredentialRedirect>,
+    packet_epoch: uuid::Uuid,
     // Abstract Unix names share the host network namespace, including across
     // containers with distinct /run mounts. Dropping the process releases it.
     _lock: UnixDatagram,
@@ -135,6 +138,8 @@ impl Manager {
             ethernet_required: false,
             source_scope: None,
             destinations: None,
+            credential_redirect: None,
+            packet_epoch: uuid::Uuid::new_v4(),
             _lock: lock,
         };
         // Reconcile the immutable floor on attachment. A restart cannot forget
@@ -148,6 +153,12 @@ impl Manager {
         if let Some(observed) = manager.destination_guard().await? {
             manager.uncertain |= !observed.healthy;
             manager.destinations = Some(observed.definition);
+        }
+        if let Some(observed) = manager.credential_guard().await? {
+            manager.credential_redirect = Some(observed);
+            // A restarted process has no provider material or live packets.
+            // Recovery must install a fresh broker snapshot under quarantine.
+            manager.can_renew = false;
         }
         Ok(manager)
     }
@@ -350,6 +361,7 @@ impl Manager {
                 "required destination guard is unavailable or changed",
             ));
         }
+        self.verify_credential_guard().await?;
         Ok(())
     }
 
@@ -415,6 +427,12 @@ impl Manager {
         policy: Option<&Config>,
     ) -> Result<Observation, ApiError> {
         let mut batch = String::new();
+        if self.credential_guard().await?.is_some() {
+            batch.push_str(&format!(
+                "delete table inet {}\n",
+                self.allocation.credential_table()
+            ));
+        }
         if replace {
             batch.push_str(&format!("delete table inet {}\n", self.allocation.table()));
         }
@@ -594,6 +612,7 @@ impl Manager {
         self.ethernet_required = false;
         self.source_scope = None;
         self.destinations = None;
+        self.credential_redirect = None;
         let observed = self.inspect().await?;
         if observed.installed
             || observed.ethernet_guarded
@@ -605,6 +624,12 @@ impl Manager {
             return Err(error(
                 ErrorCode::BackendUnavailable,
                 "egress collection is unconfirmed",
+            ));
+        }
+        if self.credential_guard().await?.is_some() {
+            return Err(error(
+                ErrorCode::BackendUnavailable,
+                "credential redirect collection is unconfirmed",
             ));
         }
         self.revision = None;

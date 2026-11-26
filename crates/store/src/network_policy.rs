@@ -200,7 +200,7 @@ pub(super) async fn live(
     }
     Ok(sandbox)
 }
-async fn current_worker(
+pub(super) async fn current_worker(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     worker_id: Uuid,
 ) -> Result<(), ApiError> {

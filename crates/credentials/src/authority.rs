@@ -60,6 +60,14 @@ pub struct BrokerAudit {
     pub outcome: CredentialOutcome,
 }
 
+/// Private durable-delivery identity. Contains only redacted typed observations.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrokerAuditDelivery {
+    pub id: Uuid,
+    pub record: BrokerAudit,
+}
+
 #[async_trait]
 pub trait CredentialAudit: Send + Sync {
     async fn append(&self, record: BrokerAudit) -> Result<(), ApiError>;

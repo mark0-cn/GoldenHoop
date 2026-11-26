@@ -174,6 +174,208 @@ fn receipt(intent: &NetworkPolicyControl) -> EffectivePolicyReceipt {
         lease_remaining_milliseconds: 8000,
     }
 }
+
+#[tokio::test]
+async fn credential_native_ack_is_cas_fenced_and_private_audit_delivery_is_idempotent() {
+    checked(|store, _| async move {
+        use goldenhoop_credentials::*;
+        use goldenhoop_egress::{CredentialRedirect, DnsBinding, InstalledCredentials};
+        use sha2::{Digest, Sha256};
+        let (intent, worker) = fixture(&store).await;
+        let id = intent.sandbox_id;
+        let key = VaultKey::from_bytes([87; 32]);
+        let public = store.ensure_credential_ca(&key, id).await.unwrap();
+        let binding_id = Uuid::new_v4();
+        let input = WriteCredential {
+            expected_revision: 0,
+            binding: BindingSpec {
+                scheme: Scheme::Https,
+                host: "api.example.test".into(),
+                port: 443,
+                methods: ["POST".into()].into(),
+                path_prefix: "/v1/".into(),
+                injection: Injection::Bearer,
+                substitutions: Vec::new(),
+            },
+            secret: SecretSource::Literal {
+                value: Secret(zeroize::Zeroizing::new(
+                    "private-test-provider-value".into(),
+                )),
+            },
+        };
+        let pending = store
+            .put_credential(&key, Uuid::new_v4(), id, binding_id, input)
+            .await
+            .unwrap();
+        let process = controller(&store, &intent).await;
+        let claimed = store
+            .claim_network_policy(
+                id,
+                intent.revision,
+                worker.id,
+                process.controller_generation,
+            )
+            .await
+            .unwrap();
+        let owner = claimed.owner.as_ref().unwrap();
+        let installed = InstalledCredentials {
+            epoch: Uuid::new_v4(),
+            bindings: [(binding_id, 1)].into(),
+            public_ca_sha256: format!("{:x}", Sha256::digest(public.as_bytes())),
+            redirect: CredentialRedirect {
+                v4: DnsBinding::new("10.42.0.1".parse::<std::net::IpAddr>().unwrap(), 40000)
+                    .unwrap(),
+                v6: Some(
+                    DnsBinding::new("fd42::1".parse::<std::net::IpAddr>().unwrap(), 40001).unwrap(),
+                ),
+                ports: [(443, Scheme::Https)].into(),
+            },
+            observed_at: Utc::now(),
+        };
+        assert!(
+            store
+                .confirm_credentials(id, owner, std::slice::from_ref(&pending), Some(&installed))
+                .await
+                .is_err()
+        );
+        let applying = store
+            .begin_network_policy_apply(id, claimed.revision, owner)
+            .await
+            .unwrap();
+        let active = store
+            .confirm_network_policy(
+                id,
+                applying.revision,
+                owner,
+                applying.attempt.unwrap(),
+                receipt(&applying),
+            )
+            .await
+            .unwrap();
+        let mut wrong = installed.clone();
+        wrong.redirect.ports = [(8443, Scheme::Https)].into();
+        assert!(
+            store
+                .confirm_credentials(id, owner, std::slice::from_ref(&pending), Some(&wrong))
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            store.credential(id, binding_id).await.unwrap().state,
+            CredentialState::Pending
+        );
+        store
+            .confirm_credentials(id, owner, std::slice::from_ref(&pending), Some(&installed))
+            .await
+            .unwrap();
+        let observed = store.credential(id, binding_id).await.unwrap();
+        assert_eq!(observed.state, CredentialState::Active);
+        assert_eq!(observed.applied_revision, Some(1));
+        let delivery = BrokerAuditDelivery {
+            id: Uuid::new_v4(),
+            record: BrokerAudit {
+                request_id: Uuid::new_v4(),
+                sandbox_id: id,
+                binding_id,
+                binding_revision: 1,
+                policy_revision: installed.bindings[&binding_id],
+                broker_epoch: installed.epoch,
+                outcome: CredentialOutcome::UpstreamStarted,
+            },
+        };
+        store
+            .append_broker_audit_batch(
+                id,
+                process.controller_generation,
+                std::slice::from_ref(&delivery),
+            )
+            .await
+            .unwrap();
+        store
+            .append_broker_audit_batch(
+                id,
+                process.controller_generation,
+                std::slice::from_ref(&delivery),
+            )
+            .await
+            .unwrap();
+        let audit = store.audit_page(0, 1000).await.unwrap();
+        assert_eq!(
+            audit
+                .items
+                .iter()
+                .filter(|r| r.event.request_id == Some(delivery.record.request_id))
+                .count(),
+            1
+        );
+        let mut changed = delivery.clone();
+        changed.record.outcome = CredentialOutcome::BodyCompleted;
+        let mut fresh = delivery.clone();
+        fresh.id = Uuid::new_v4();
+        fresh.record.request_id = Uuid::new_v4();
+        assert!(
+            store
+                .append_broker_audit_batch(
+                    id,
+                    process.controller_generation,
+                    &[fresh.clone(), changed]
+                )
+                .await
+                .is_err()
+        );
+        assert!(
+            !store
+                .audit_page(0, 1000)
+                .await
+                .unwrap()
+                .items
+                .iter()
+                .any(|r| r.event.request_id == Some(fresh.record.request_id))
+        );
+        assert!(
+            store
+                .append_broker_audit_batch(
+                    Uuid::new_v4(),
+                    process.controller_generation,
+                    std::slice::from_ref(&delivery)
+                )
+                .await
+                .is_err()
+        );
+        let revoked = store
+            .revoke_credential(Uuid::new_v4(), id, binding_id)
+            .await
+            .unwrap();
+        assert_eq!(revoked.state, CredentialState::Revoking);
+        assert!(
+            store
+                .confirm_credentials(id, owner, std::slice::from_ref(&pending), Some(&installed))
+                .await
+                .is_err()
+        );
+        // The previous process cannot acknowledge a different snapshot or
+        // drained revocation merely because its database metadata was fenced.
+        assert!(
+            store
+                .confirm_credentials(id, owner, std::slice::from_ref(&revoked), None)
+                .await
+                .is_err()
+        );
+        store.fence_network_policy(id, owner).await.unwrap();
+        assert_eq!(
+            store.network_policy(id).await.unwrap().phase,
+            NetworkPolicyPhase::Fenced
+        );
+        assert!(
+            store
+                .confirm_credentials(id, owner, &[revoked], None)
+                .await
+                .is_err()
+        );
+        assert_eq!(active.desired_revision, 0);
+    })
+    .await;
+}
 #[tokio::test]
 async fn changed_desired_policy_fences_running_and_rejects_inflight_old_ack() {
     checked(|store, _| async move {

@@ -1,0 +1,724 @@
+{
+  "suite": "numeric versus symbolic native policy output",
+  "scope": "private inet namespace, not host bridge or runtime acceptance",
+  "attempt": "fde00587-8069-4016-a214-936c513a5807",
+  "commands": [
+    {
+      "argv": [
+        "docker",
+        "image",
+        "inspect",
+        "sha256:cf8c56d6c4637e9230d9bf7e10fb20b9eeb6fe7c79a4f8c0ff7117da7dfed6f0"
+      ],
+      "code": 0,
+      "stdout": "[\n    {\n        \"Id\": \"sha256:cf8c56d6c4637e9230d9bf7e10fb20b9eeb6fe7c79a4f8c0ff7117da7dfed6f0\",\n        \"RepoTags\": [\n            \"goldenhoop-egress:test\"\n        ],\n        \"RepoDigests\": [\n            \"goldenhoop-egress@sha256:cf8c56d6c4637e9230d9bf7e10fb20b9eeb6fe7c79a4f8c0ff7117da7dfed6f0\"\n        ],\n        \"Comment\": \"buildkit.dockerfile.v0\",\n        \"Created\": \"2026-11-26T03:05:17.102151884Z\",\n        \"Config\": {\n            \"Env\": [\n                \"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\"\n            ],\n            \"Entrypoint\": [\n                \"/usr/local/bin/goldenhoop-egress\"\n            ],\n            \"Labels\": {\n                \"dev.goldenhoop.egress\": \"host-netfilter\"\n            }\n        },\n        \"Architecture\": \"amd64\",\n        \"Os\": \"linux\",\n        \"Size\": 135908750,\n        \"RootFS\": {\n            \"Type\": \"layers\",\n            \"Layers\": [\n                \"sha256:1d7b9dd8778ebc4d9bf2f64436dd358640718cb349f5640b33bebaea4ffd62c2\",\n                \"sha256:732551c1fafb2436833e49d1a2f568e55986f490e121dc312c06a69085267b31\",\n                \"sha256:ca782f0a8e44705098c1754758650f3286b6d9db560b8dbc52acc47db9658b32\"\n            ]\n        },\n        \"Metadata\": {\n            \"LastTagTime\": \"2026-11-26T03:05:17.806570403Z\"\n        },\n        \"Descriptor\": {\n            \"mediaType\": \"application/vnd.oci.image.index.v1+json\",\n            \"digest\": \"sha256:cf8c56d6c4637e9230d9bf7e10fb20b9eeb6fe7c79a4f8c0ff7117da7dfed6f0\",\n            \"size\": 855\n        },\n        \"Identity\": {\n            \"Build\": [\n                {\n                    \"Ref\": \"s533ghlszow9c5qb3th03tntt\",\n                    \"CreatedAt\": \"2026-11-26T03:05:17.913159523Z\"\n                }\n            ]\n        }\n    }\n]\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "docker",
+        "create",
+        "--name",
+        "goldenhoop-m3-numeric-fde00587",
+        "--network",
+        "none",
+        "--read-only",
+        "--tmpfs",
+        "/tmp:rw,noexec,nosuid,size=1m",
+        "--cap-drop",
+        "ALL",
+        "--cap-add",
+        "NET_ADMIN",
+        "--security-opt",
+        "no-new-privileges:true",
+        "--cpus",
+        "1",
+        "--memory",
+        "64m",
+        "--pids-limit",
+        "32",
+        "--label",
+        "dev.goldenhoop.test=m3-native-json-diff",
+        "--label",
+        "dev.goldenhoop.attempt=fde00587-8069-4016-a214-936c513a5807",
+        "--entrypoint",
+        "/bin/sh",
+        "sha256:cf8c56d6c4637e9230d9bf7e10fb20b9eeb6fe7c79a4f8c0ff7117da7dfed6f0",
+        "-c",
+        "set -eu\n/usr/sbin/nft -f - <<'NFT'\nadd table inet gh_snapshot_a\nadd set inet gh_snapshot_a live { type ifname; flags timeout; timeout 10s; }\nadd element inet gh_snapshot_a live { \"lo\" timeout 10s }\nadd chain inet gh_snapshot_a input { type filter hook input priority -190; policy accept; }\nadd rule inet gh_snapshot_a input iifname @live counter accept\nadd rule inet gh_snapshot_a input ip6 hoplimit 255 icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert } icmpv6 code 0 counter accept\nadd chain inet gh_snapshot_a pre { type nat hook prerouting priority -105; policy accept; }\nadd rule inet gh_snapshot_a pre meta nfproto ipv4 tcp dport 443 counter dnat ip to 198.19.1.1:18080\nNFT\n/usr/sbin/nft -j -n list table inet gh_snapshot_a\n/usr/sbin/nft -j list ruleset\n/usr/sbin/nft -j -n list ruleset\n"
+      ],
+      "code": 0,
+      "stdout": "70ed7ff7111c7245fbb8d3e0277ce1e502344ae9e65701491619a4bf9243d759\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "docker",
+        "start",
+        "--attach",
+        "70ed7ff7111c7245fbb8d3e0277ce1e502344ae9e65701491619a4bf9243d759"
+      ],
+      "code": 0,
+      "stdout": "{\"nftables\": [{\"metainfo\": {\"version\": \"1.0.6\", \"release_name\": \"Lester Gooch #5\", \"json_schema_version\": 1}}, {\"table\": {\"family\": \"inet\", \"name\": \"gh_snapshot_a\", \"handle\": 1}}, {\"set\": {\"family\": \"inet\", \"name\": \"live\", \"table\": \"gh_snapshot_a\", \"type\": \"ifname\", \"handle\": 1, \"flags\": [\"timeout\"], \"timeout\": 10, \"elem\": [{\"elem\": {\"val\": \"lo\", \"expires\": 9}}]}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_snapshot_a\", \"name\": \"input\", \"handle\": 2, \"type\": \"filter\", \"hook\": \"input\", \"prio\": -190, \"policy\": \"accept\"}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_snapshot_a\", \"name\": \"pre\", \"handle\": 6, \"type\": \"nat\", \"hook\": \"prerouting\", \"prio\": -105, \"policy\": \"accept\"}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_snapshot_a\", \"chain\": \"input\", \"handle\": 3, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"@live\"}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"accept\": null}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_snapshot_a\", \"chain\": \"input\", \"handle\": 5, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"ip6\", \"field\": \"hoplimit\"}}, \"right\": 255}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"icmpv6\", \"field\": \"type\"}}, \"right\": {\"set\": [135, 136]}}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"icmpv6\", \"field\": \"code\"}}, \"right\": 0}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"accept\": null}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_snapshot_a\", \"chain\": \"pre\", \"handle\": 7, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"nfproto\"}}, \"right\": 2}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"tcp\", \"field\": \"dport\"}}, \"right\": 443}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"dnat\": {\"family\": \"ip\", \"addr\": \"198.19.1.1\", \"port\": 18080}}]}}]}\n{\"nftables\": [{\"metainfo\": {\"version\": \"1.0.6\", \"release_name\": \"Lester Gooch #5\", \"json_schema_version\": 1}}, {\"table\": {\"family\": \"inet\", \"name\": \"gh_snapshot_a\", \"handle\": 1}}, {\"set\": {\"family\": \"inet\", \"name\": \"live\", \"table\": \"gh_snapshot_a\", \"type\": \"ifname\", \"handle\": 1, \"flags\": [\"timeout\"], \"timeout\": 10, \"elem\": [{\"elem\": {\"val\": \"lo\", \"expires\": 9}}]}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_snapshot_a\", \"name\": \"input\", \"handle\": 2, \"type\": \"filter\", \"hook\": \"input\", \"prio\": -190, \"policy\": \"accept\"}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_snapshot_a\", \"name\": \"pre\", \"handle\": 6, \"type\": \"nat\", \"hook\": \"prerouting\", \"prio\": -105, \"policy\": \"accept\"}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_snapshot_a\", \"chain\": \"input\", \"handle\": 3, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"@live\"}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"accept\": null}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_snapshot_a\", \"chain\": \"input\", \"handle\": 5, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"ip6\", \"field\": \"hoplimit\"}}, \"right\": 255}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"icmpv6\", \"field\": \"type\"}}, \"right\": {\"set\": [\"nd-neighbor-solicit\", \"nd-neighbor-advert\"]}}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"icmpv6\", \"field\": \"code\"}}, \"right\": \"no-route\"}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"accept\": null}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_snapshot_a\", \"chain\": \"pre\", \"handle\": 7, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"nfproto\"}}, \"right\": \"ipv4\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"tcp\", \"field\": \"dport\"}}, \"right\": 443}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"dnat\": {\"family\": \"ip\", \"addr\": \"198.19.1.1\", \"port\": 18080}}]}}]}\n{\"nftables\": [{\"metainfo\": {\"version\": \"1.0.6\", \"release_name\": \"Lester Gooch #5\", \"json_schema_version\": 1}}, {\"table\": {\"family\": \"inet\", \"name\": \"gh_snapshot_a\", \"handle\": 1}}, {\"set\": {\"family\": \"inet\", \"name\": \"live\", \"table\": \"gh_snapshot_a\", \"type\": \"ifname\", \"handle\": 1, \"flags\": [\"timeout\"], \"timeout\": 10, \"elem\": [{\"elem\": {\"val\": \"lo\", \"expires\": 9}}]}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_snapshot_a\", \"name\": \"input\", \"handle\": 2, \"type\": \"filter\", \"hook\": \"input\", \"prio\": -190, \"policy\": \"accept\"}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_snapshot_a\", \"name\": \"pre\", \"handle\": 6, \"type\": \"nat\", \"hook\": \"prerouting\", \"prio\": -105, \"policy\": \"accept\"}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_snapshot_a\", \"chain\": \"input\", \"handle\": 3, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"@live\"}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"accept\": null}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_snapshot_a\", \"chain\": \"input\", \"handle\": 5, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"ip6\", \"field\": \"hoplimit\"}}, \"right\": 255}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"icmpv6\", \"field\": \"type\"}}, \"right\": {\"set\": [135, 136]}}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"icmpv6\", \"field\": \"code\"}}, \"right\": 0}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"accept\": null}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_snapshot_a\", \"chain\": \"pre\", \"handle\": 7, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"nfproto\"}}, \"right\": 2}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"tcp\", \"field\": \"dport\"}}, \"right\": 443}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"dnat\": {\"family\": \"ip\", \"addr\": \"198.19.1.1\", \"port\": 18080}}]}}]}\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "docker",
+        "logs",
+        "70ed7ff7111c7245fbb8d3e0277ce1e502344ae9e65701491619a4bf9243d759"
+      ],
+      "code": 0,
+      "stdout": "{\"nftables\": [{\"metainfo\": {\"version\": \"1.0.6\", \"release_name\": \"Lester Gooch #5\", \"json_schema_version\": 1}}, {\"table\": {\"family\": \"inet\", \"name\": \"gh_snapshot_a\", \"handle\": 1}}, {\"set\": {\"family\": \"inet\", \"name\": \"live\", \"table\": \"gh_snapshot_a\", \"type\": \"ifname\", \"handle\": 1, \"flags\": [\"timeout\"], \"timeout\": 10, \"elem\": [{\"elem\": {\"val\": \"lo\", \"expires\": 9}}]}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_snapshot_a\", \"name\": \"input\", \"handle\": 2, \"type\": \"filter\", \"hook\": \"input\", \"prio\": -190, \"policy\": \"accept\"}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_snapshot_a\", \"name\": \"pre\", \"handle\": 6, \"type\": \"nat\", \"hook\": \"prerouting\", \"prio\": -105, \"policy\": \"accept\"}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_snapshot_a\", \"chain\": \"input\", \"handle\": 3, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"@live\"}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"accept\": null}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_snapshot_a\", \"chain\": \"input\", \"handle\": 5, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"ip6\", \"field\": \"hoplimit\"}}, \"right\": 255}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"icmpv6\", \"field\": \"type\"}}, \"right\": {\"set\": [135, 136]}}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"icmpv6\", \"field\": \"code\"}}, \"right\": 0}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"accept\": null}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_snapshot_a\", \"chain\": \"pre\", \"handle\": 7, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"nfproto\"}}, \"right\": 2}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"tcp\", \"field\": \"dport\"}}, \"right\": 443}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"dnat\": {\"family\": \"ip\", \"addr\": \"198.19.1.1\", \"port\": 18080}}]}}]}\n{\"nftables\": [{\"metainfo\": {\"version\": \"1.0.6\", \"release_name\": \"Lester Gooch #5\", \"json_schema_version\": 1}}, {\"table\": {\"family\": \"inet\", \"name\": \"gh_snapshot_a\", \"handle\": 1}}, {\"set\": {\"family\": \"inet\", \"name\": \"live\", \"table\": \"gh_snapshot_a\", \"type\": \"ifname\", \"handle\": 1, \"flags\": [\"timeout\"], \"timeout\": 10, \"elem\": [{\"elem\": {\"val\": \"lo\", \"expires\": 9}}]}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_snapshot_a\", \"name\": \"input\", \"handle\": 2, \"type\": \"filter\", \"hook\": \"input\", \"prio\": -190, \"policy\": \"accept\"}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_snapshot_a\", \"name\": \"pre\", \"handle\": 6, \"type\": \"nat\", \"hook\": \"prerouting\", \"prio\": -105, \"policy\": \"accept\"}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_snapshot_a\", \"chain\": \"input\", \"handle\": 3, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"@live\"}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"accept\": null}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_snapshot_a\", \"chain\": \"input\", \"handle\": 5, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"ip6\", \"field\": \"hoplimit\"}}, \"right\": 255}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"icmpv6\", \"field\": \"type\"}}, \"right\": {\"set\": [\"nd-neighbor-solicit\", \"nd-neighbor-advert\"]}}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"icmpv6\", \"field\": \"code\"}}, \"right\": \"no-route\"}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"accept\": null}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_snapshot_a\", \"chain\": \"pre\", \"handle\": 7, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"nfproto\"}}, \"right\": \"ipv4\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"tcp\", \"field\": \"dport\"}}, \"right\": 443}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"dnat\": {\"family\": \"ip\", \"addr\": \"198.19.1.1\", \"port\": 18080}}]}}]}\n{\"nftables\": [{\"metainfo\": {\"version\": \"1.0.6\", \"release_name\": \"Lester Gooch #5\", \"json_schema_version\": 1}}, {\"table\": {\"family\": \"inet\", \"name\": \"gh_snapshot_a\", \"handle\": 1}}, {\"set\": {\"family\": \"inet\", \"name\": \"live\", \"table\": \"gh_snapshot_a\", \"type\": \"ifname\", \"handle\": 1, \"flags\": [\"timeout\"], \"timeout\": 10, \"elem\": [{\"elem\": {\"val\": \"lo\", \"expires\": 9}}]}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_snapshot_a\", \"name\": \"input\", \"handle\": 2, \"type\": \"filter\", \"hook\": \"input\", \"prio\": -190, \"policy\": \"accept\"}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_snapshot_a\", \"name\": \"pre\", \"handle\": 6, \"type\": \"nat\", \"hook\": \"prerouting\", \"prio\": -105, \"policy\": \"accept\"}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_snapshot_a\", \"chain\": \"input\", \"handle\": 3, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"@live\"}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"accept\": null}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_snapshot_a\", \"chain\": \"input\", \"handle\": 5, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"ip6\", \"field\": \"hoplimit\"}}, \"right\": 255}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"icmpv6\", \"field\": \"type\"}}, \"right\": {\"set\": [135, 136]}}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"icmpv6\", \"field\": \"code\"}}, \"right\": 0}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"accept\": null}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_snapshot_a\", \"chain\": \"pre\", \"handle\": 7, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"nfproto\"}}, \"right\": 2}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"tcp\", \"field\": \"dport\"}}, \"right\": 443}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"dnat\": {\"family\": \"ip\", \"addr\": \"198.19.1.1\", \"port\": 18080}}]}}]}\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "docker",
+        "inspect",
+        "70ed7ff7111c7245fbb8d3e0277ce1e502344ae9e65701491619a4bf9243d759"
+      ],
+      "code": 0,
+      "stdout": "[\n    {\n        \"Id\": \"70ed7ff7111c7245fbb8d3e0277ce1e502344ae9e65701491619a4bf9243d759\",\n        \"Created\": \"2026-11-26T03:48:36.383997748Z\",\n        \"Path\": \"/bin/sh\",\n        \"Args\": [\n            \"-c\",\n            \"set -eu\\n/usr/sbin/nft -f - \\u003c\\u003c'NFT'\\nadd table inet gh_snapshot_a\\nadd set inet gh_snapshot_a live { type ifname; flags timeout; timeout 10s; }\\nadd element inet gh_snapshot_a live { \\\"lo\\\" timeout 10s }\\nadd chain inet gh_snapshot_a input { type filter hook input priority -190; policy accept; }\\nadd rule inet gh_snapshot_a input iifname @live counter accept\\nadd rule inet gh_snapshot_a input ip6 hoplimit 255 icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert } icmpv6 code 0 counter accept\\nadd chain inet gh_snapshot_a pre { type nat hook prerouting priority -105; policy accept; }\\nadd rule inet gh_snapshot_a pre meta nfproto ipv4 tcp dport 443 counter dnat ip to 198.19.1.1:18080\\nNFT\\n/usr/sbin/nft -j -n list table inet gh_snapshot_a\\n/usr/sbin/nft -j list ruleset\\n/usr/sbin/nft -j -n list ruleset\\n\"\n        ],\n        \"State\": {\n            \"Status\": \"exited\",\n            \"Running\": false,\n            \"Paused\": false,\n            \"Restarting\": false,\n            \"OOMKilled\": false,\n            \"Dead\": false,\n            \"Pid\": 0,\n            \"ExitCode\": 0,\n            \"Error\": \"\",\n            \"StartedAt\": \"2026-11-26T03:48:36.739913955Z\",\n            \"FinishedAt\": \"2026-11-26T03:48:36.976422031Z\"\n        },\n        \"Image\": \"sha256:cf8c56d6c4637e9230d9bf7e10fb20b9eeb6fe7c79a4f8c0ff7117da7dfed6f0\",\n        \"ResolvConfPath\": \"/var/lib/docker/containers/70ed7ff7111c7245fbb8d3e0277ce1e502344ae9e65701491619a4bf9243d759/resolv.conf\",\n        \"HostnamePath\": \"/var/lib/docker/containers/70ed7ff7111c7245fbb8d3e0277ce1e502344ae9e65701491619a4bf9243d759/hostname\",\n        \"HostsPath\": \"/var/lib/docker/containers/70ed7ff7111c7245fbb8d3e0277ce1e502344ae9e65701491619a4bf9243d759/hosts\",\n        \"LogPath\": \"\",\n        \"Name\": \"/goldenhoop-m3-numeric-fde00587\",\n        \"RestartCount\": 0,\n        \"Driver\": \"overlayfs\",\n        \"Platform\": \"linux\",\n        \"MountLabel\": \"\",\n        \"ProcessLabel\": \"\",\n        \"AppArmorProfile\": \"\",\n        \"ExecIDs\": null,\n        \"HostConfig\": {\n            \"Binds\": null,\n            \"ContainerIDFile\": \"\",\n            \"LogConfig\": {\n                \"Type\": \"local\",\n                \"Config\": {}\n            },\n            \"NetworkMode\": \"none\",\n            \"PortBindings\": {},\n            \"RestartPolicy\": {\n                \"Name\": \"no\",\n                \"MaximumRetryCount\": 0\n            },\n            \"AutoRemove\": false,\n            \"VolumeDriver\": \"\",\n            \"VolumesFrom\": null,\n            \"ConsoleSize\": [\n                0,\n                0\n            ],\n            \"CapAdd\": [\n                \"CAP_NET_ADMIN\"\n            ],\n            \"CapDrop\": [\n                \"ALL\"\n            ],\n            \"CgroupnsMode\": \"private\",\n            \"Dns\": null,\n            \"DnsOptions\": [],\n            \"DnsSearch\": [],\n            \"ExtraHosts\": null,\n            \"GroupAdd\": null,\n            \"IpcMode\": \"private\",\n            \"Cgroup\": \"\",\n            \"Links\": null,\n            \"OomScoreAdj\": 0,\n            \"PidMode\": \"\",\n            \"Privileged\": false,\n            \"PublishAllPorts\": false,\n            \"ReadonlyRootfs\": true,\n            \"SecurityOpt\": [\n                \"no-new-privileges:true\"\n            ],\n            \"Tmpfs\": {\n                \"/tmp\": \"rw,noexec,nosuid,size=1m\"\n            },\n            \"UTSMode\": \"\",\n            \"UsernsMode\": \"\",\n            \"ShmSize\": 67108864,\n            \"Runtime\": \"runc\",\n            \"Isolation\": \"\",\n            \"CpuShares\": 0,\n            \"Memory\": 67108864,\n            \"NanoCpus\": 1000000000,\n            \"CgroupParent\": \"\",\n            \"BlkioWeight\": 0,\n            \"BlkioWeightDevice\": [],\n            \"BlkioDeviceReadBps\": [],\n            \"BlkioDeviceWriteBps\": [],\n            \"BlkioDeviceReadIOps\": [],\n            \"BlkioDeviceWriteIOps\": [],\n            \"CpuPeriod\": 0,\n            \"CpuQuota\": 0,\n            \"CpuRealtimePeriod\": 0,\n            \"CpuRealtimeRuntime\": 0,\n            \"CpusetCpus\": \"\",\n            \"CpusetMems\": \"\",\n            \"Devices\": [],\n            \"DeviceCgroupRules\": null,\n            \"DeviceRequests\": null,\n            \"MemoryReservation\": 0,\n            \"MemorySwap\": 134217728,\n            \"MemorySwappiness\": null,\n            \"OomKillDisable\": null,\n            \"PidsLimit\": 32,\n            \"Ulimits\": null,\n            \"CpuCount\": 0,\n            \"CpuPercent\": 0,\n            \"IOMaximumIOps\": 0,\n            \"IOMaximumBandwidth\": 0,\n            \"MaskedPaths\": [\n                \"/proc/acpi\",\n                \"/proc/asound\",\n                \"/proc/interrupts\",\n                \"/proc/kcore\",\n                \"/proc/keys\",\n                \"/proc/latency_stats\",\n                \"/proc/sched_debug\",\n                \"/proc/scsi\",\n                \"/proc/timer_list\",\n                \"/proc/timer_stats\",\n                \"/sys/devices/virtual/powercap\",\n                \"/sys/firmware\"\n            ],\n            \"ReadonlyPaths\": [\n                \"/proc/bus\",\n                \"/proc/fs\",\n                \"/proc/irq\",\n                \"/proc/sys\",\n                \"/proc/sysrq-trigger\"\n            ]\n        },\n        \"Storage\": {\n            \"RootFS\": {\n                \"Snapshot\": {\n                    \"Name\": \"overlayfs\"\n                }\n            }\n        },\n        \"Mounts\": [],\n        \"Config\": {\n            \"Hostname\": \"70ed7ff7111c\",\n            \"Domainname\": \"\",\n            \"User\": \"\",\n            \"AttachStdin\": false,\n            \"AttachStdout\": true,\n            \"AttachStderr\": true,\n            \"Tty\": false,\n            \"OpenStdin\": false,\n            \"StdinOnce\": false,\n            \"Env\": [\n                \"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\"\n            ],\n            \"Cmd\": [\n                \"-c\",\n                \"set -eu\\n/usr/sbin/nft -f - \\u003c\\u003c'NFT'\\nadd table inet gh_snapshot_a\\nadd set inet gh_snapshot_a live { type ifname; flags timeout; timeout 10s; }\\nadd element inet gh_snapshot_a live { \\\"lo\\\" timeout 10s }\\nadd chain inet gh_snapshot_a input { type filter hook input priority -190; policy accept; }\\nadd rule inet gh_snapshot_a input iifname @live counter accept\\nadd rule inet gh_snapshot_a input ip6 hoplimit 255 icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert } icmpv6 code 0 counter accept\\nadd chain inet gh_snapshot_a pre { type nat hook prerouting priority -105; policy accept; }\\nadd rule inet gh_snapshot_a pre meta nfproto ipv4 tcp dport 443 counter dnat ip to 198.19.1.1:18080\\nNFT\\n/usr/sbin/nft -j -n list table inet gh_snapshot_a\\n/usr/sbin/nft -j list ruleset\\n/usr/sbin/nft -j -n list ruleset\\n\"\n            ],\n            \"Image\": \"sha256:cf8c56d6c4637e9230d9bf7e10fb20b9eeb6fe7c79a4f8c0ff7117da7dfed6f0\",\n            \"Volumes\": null,\n            \"WorkingDir\": \"\",\n            \"Entrypoint\": [\n                \"/bin/sh\"\n            ],\n            \"Labels\": {\n                \"dev.goldenhoop.attempt\": \"fde00587-8069-4016-a214-936c513a5807\",\n                \"dev.goldenhoop.egress\": \"host-netfilter\",\n                \"dev.goldenhoop.test\": \"m3-native-json-diff\"\n            }\n        },\n        \"NetworkSettings\": {\n            \"SandboxID\": \"\",\n            \"SandboxKey\": \"\",\n            \"Ports\": {},\n            \"Networks\": {\n                \"none\": {\n                    \"IPAMConfig\": null,\n                    \"Links\": null,\n                    \"Aliases\": null,\n                    \"DriverOpts\": null,\n                    \"GwPriority\": 0,\n                    \"NetworkID\": \"991bdf43662c4620cf46329df571655377f003b5cc87b299f41ac48e695efbac\",\n                    \"EndpointID\": \"\",\n                    \"Gateway\": \"\",\n                    \"IPAddress\": \"\",\n                    \"MacAddress\": \"\",\n                    \"IPPrefixLen\": 0,\n                    \"IPv6Gateway\": \"\",\n                    \"GlobalIPv6Address\": \"\",\n                    \"GlobalIPv6PrefixLen\": 0,\n                    \"DNSNames\": null\n                }\n            }\n        },\n        \"ImageManifestDescriptor\": {\n            \"mediaType\": \"application/vnd.oci.image.manifest.v1+json\",\n            \"digest\": \"sha256:c0c040018f53b0a37e92807f28145ff862251049d975218d3322bb2060b52b7a\",\n            \"size\": 866,\n            \"platform\": {\n                \"architecture\": \"amd64\",\n                \"os\": \"linux\"\n            }\n        }\n    }\n]\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "docker",
+        "rm",
+        "--force",
+        "70ed7ff7111c7245fbb8d3e0277ce1e502344ae9e65701491619a4bf9243d759"
+      ],
+      "code": 0,
+      "stdout": "70ed7ff7111c7245fbb8d3e0277ce1e502344ae9e65701491619a4bf9243d759\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "docker",
+        "inspect",
+        "70ed7ff7111c7245fbb8d3e0277ce1e502344ae9e65701491619a4bf9243d759"
+      ],
+      "code": 1,
+      "stdout": "[]\n",
+      "stderr": "error: no such object: 70ed7ff7111c7245fbb8d3e0277ce1e502344ae9e65701491619a4bf9243d759\n"
+    },
+    {
+      "argv": [
+        "docker",
+        "ps",
+        "-a",
+        "--filter",
+        "label=dev.goldenhoop.attempt=fde00587-8069-4016-a214-936c513a5807",
+        "--format",
+        "{{.ID}}"
+      ],
+      "code": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "result": "passed",
+  "cleanup": "complete",
+  "observations": [
+    {
+      "nftables": [
+        {
+          "metainfo": {
+            "version": "1.0.6",
+            "release_name": "Lester Gooch #5",
+            "json_schema_version": 1
+          }
+        },
+        {
+          "table": {
+            "family": "inet",
+            "name": "gh_snapshot_a",
+            "handle": 1
+          }
+        },
+        {
+          "set": {
+            "family": "inet",
+            "name": "live",
+            "table": "gh_snapshot_a",
+            "type": "ifname",
+            "handle": 1,
+            "flags": [
+              "timeout"
+            ],
+            "timeout": 10,
+            "elem": [
+              {
+                "elem": {
+                  "val": "lo",
+                  "expires": 9
+                }
+              }
+            ]
+          }
+        },
+        {
+          "chain": {
+            "family": "inet",
+            "table": "gh_snapshot_a",
+            "name": "input",
+            "handle": 2,
+            "type": "filter",
+            "hook": "input",
+            "prio": -190,
+            "policy": "accept"
+          }
+        },
+        {
+          "chain": {
+            "family": "inet",
+            "table": "gh_snapshot_a",
+            "name": "pre",
+            "handle": 6,
+            "type": "nat",
+            "hook": "prerouting",
+            "prio": -105,
+            "policy": "accept"
+          }
+        },
+        {
+          "rule": {
+            "family": "inet",
+            "table": "gh_snapshot_a",
+            "chain": "input",
+            "handle": 3,
+            "expr": [
+              {
+                "match": {
+                  "op": "==",
+                  "left": {
+                    "meta": {
+                      "key": "iifname"
+                    }
+                  },
+                  "right": "@live"
+                }
+              },
+              {
+                "counter": {
+                  "packets": 0,
+                  "bytes": 0
+                }
+              },
+              {
+                "accept": null
+              }
+            ]
+          }
+        },
+        {
+          "rule": {
+            "family": "inet",
+            "table": "gh_snapshot_a",
+            "chain": "input",
+            "handle": 5,
+            "expr": [
+              {
+                "match": {
+                  "op": "==",
+                  "left": {
+                    "payload": {
+                      "protocol": "ip6",
+                      "field": "hoplimit"
+                    }
+                  },
+                  "right": 255
+                }
+              },
+              {
+                "match": {
+                  "op": "==",
+                  "left": {
+                    "payload": {
+                      "protocol": "icmpv6",
+                      "field": "type"
+                    }
+                  },
+                  "right": {
+                    "set": [
+                      135,
+                      136
+                    ]
+                  }
+                }
+              },
+              {
+                "match": {
+                  "op": "==",
+                  "left": {
+                    "payload": {
+                      "protocol": "icmpv6",
+                      "field": "code"
+                    }
+                  },
+                  "right": 0
+                }
+              },
+              {
+                "counter": {
+                  "packets": 0,
+                  "bytes": 0
+                }
+              },
+              {
+                "accept": null
+              }
+            ]
+          }
+        },
+        {
+          "rule": {
+            "family": "inet",
+            "table": "gh_snapshot_a",
+            "chain": "pre",
+            "handle": 7,
+            "expr": [
+              {
+                "match": {
+                  "op": "==",
+                  "left": {
+                    "meta": {
+                      "key": "nfproto"
+                    }
+                  },
+                  "right": 2
+                }
+              },
+              {
+                "match": {
+                  "op": "==",
+                  "left": {
+                    "payload": {
+                      "protocol": "tcp",
+                      "field": "dport"
+                    }
+                  },
+                  "right": 443
+                }
+              },
+              {
+                "counter": {
+                  "packets": 0,
+                  "bytes": 0
+                }
+              },
+              {
+                "dnat": {
+                  "family": "ip",
+                  "addr": "198.19.1.1",
+                  "port": 18080
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "nftables": [
+        {
+          "metainfo": {
+            "version": "1.0.6",
+            "release_name": "Lester Gooch #5",
+            "json_schema_version": 1
+          }
+        },
+        {
+          "table": {
+            "family": "inet",
+            "name": "gh_snapshot_a",
+            "handle": 1
+          }
+        },
+        {
+          "set": {
+            "family": "inet",
+            "name": "live",
+            "table": "gh_snapshot_a",
+            "type": "ifname",
+            "handle": 1,
+            "flags": [
+              "timeout"
+            ],
+            "timeout": 10,
+            "elem": [
+              {
+                "elem": {
+                  "val": "lo",
+                  "expires": 9
+                }
+              }
+            ]
+          }
+        },
+        {
+          "chain": {
+            "family": "inet",
+            "table": "gh_snapshot_a",
+            "name": "input",
+            "handle": 2,
+            "type": "filter",
+            "hook": "input",
+            "prio": -190,
+            "policy": "accept"
+          }
+        },
+        {
+          "chain": {
+            "family": "inet",
+            "table": "gh_snapshot_a",
+            "name": "pre",
+            "handle": 6,
+            "type": "nat",
+            "hook": "prerouting",
+            "prio": -105,
+            "policy": "accept"
+          }
+        },
+        {
+          "rule": {
+            "family": "inet",
+            "table": "gh_snapshot_a",
+            "chain": "input",
+            "handle": 3,
+            "expr": [
+              {
+                "match": {
+                  "op": "==",
+                  "left": {
+                    "meta": {
+                      "key": "iifname"
+                    }
+                  },
+                  "right": "@live"
+                }
+              },
+              {
+                "counter": {
+                  "packets": 0,
+                  "bytes": 0
+                }
+              },
+              {
+                "accept": null
+              }
+            ]
+          }
+        },
+        {
+          "rule": {
+            "family": "inet",
+            "table": "gh_snapshot_a",
+            "chain": "input",
+            "handle": 5,
+            "expr": [
+              {
+                "match": {
+                  "op": "==",
+                  "left": {
+                    "payload": {
+                      "protocol": "ip6",
+                      "field": "hoplimit"
+                    }
+                  },
+                  "right": 255
+                }
+              },
+              {
+                "match": {
+                  "op": "==",
+                  "left": {
+                    "payload": {
+                      "protocol": "icmpv6",
+                      "field": "type"
+                    }
+                  },
+                  "right": {
+                    "set": [
+                      "nd-neighbor-solicit",
+                      "nd-neighbor-advert"
+                    ]
+                  }
+                }
+              },
+              {
+                "match": {
+                  "op": "==",
+                  "left": {
+                    "payload": {
+                      "protocol": "icmpv6",
+                      "field": "code"
+                    }
+                  },
+                  "right": "no-route"
+                }
+              },
+              {
+                "counter": {
+                  "packets": 0,
+                  "bytes": 0
+                }
+              },
+              {
+                "accept": null
+              }
+            ]
+          }
+        },
+        {
+          "rule": {
+            "family": "inet",
+            "table": "gh_snapshot_a",
+            "chain": "pre",
+            "handle": 7,
+            "expr": [
+              {
+                "match": {
+                  "op": "==",
+                  "left": {
+                    "meta": {
+                      "key": "nfproto"
+                    }
+                  },
+                  "right": "ipv4"
+                }
+              },
+              {
+                "match": {
+                  "op": "==",
+                  "left": {
+                    "payload": {
+                      "protocol": "tcp",
+                      "field": "dport"
+                    }
+                  },
+                  "right": 443
+                }
+              },
+              {
+                "counter": {
+                  "packets": 0,
+                  "bytes": 0
+                }
+              },
+              {
+                "dnat": {
+                  "family": "ip",
+                  "addr": "198.19.1.1",
+                  "port": 18080
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "nftables": [
+        {
+          "metainfo": {
+            "version": "1.0.6",
+            "release_name": "Lester Gooch #5",
+            "json_schema_version": 1
+          }
+        },
+        {
+          "table": {
+            "family": "inet",
+            "name": "gh_snapshot_a",
+            "handle": 1
+          }
+        },
+        {
+          "set": {
+            "family": "inet",
+            "name": "live",
+            "table": "gh_snapshot_a",
+            "type": "ifname",
+            "handle": 1,
+            "flags": [
+              "timeout"
+            ],
+            "timeout": 10,
+            "elem": [
+              {
+                "elem": {
+                  "val": "lo",
+                  "expires": 9
+                }
+              }
+            ]
+          }
+        },
+        {
+          "chain": {
+            "family": "inet",
+            "table": "gh_snapshot_a",
+            "name": "input",
+            "handle": 2,
+            "type": "filter",
+            "hook": "input",
+            "prio": -190,
+            "policy": "accept"
+          }
+        },
+        {
+          "chain": {
+            "family": "inet",
+            "table": "gh_snapshot_a",
+            "name": "pre",
+            "handle": 6,
+            "type": "nat",
+            "hook": "prerouting",
+            "prio": -105,
+            "policy": "accept"
+          }
+        },
+        {
+          "rule": {
+            "family": "inet",
+            "table": "gh_snapshot_a",
+            "chain": "input",
+            "handle": 3,
+            "expr": [
+              {
+                "match": {
+                  "op": "==",
+                  "left": {
+                    "meta": {
+                      "key": "iifname"
+                    }
+                  },
+                  "right": "@live"
+                }
+              },
+              {
+                "counter": {
+                  "packets": 0,
+                  "bytes": 0
+                }
+              },
+              {
+                "accept": null
+              }
+            ]
+          }
+        },
+        {
+          "rule": {
+            "family": "inet",
+            "table": "gh_snapshot_a",
+            "chain": "input",
+            "handle": 5,
+            "expr": [
+              {
+                "match": {
+                  "op": "==",
+                  "left": {
+                    "payload": {
+                      "protocol": "ip6",
+                      "field": "hoplimit"
+                    }
+                  },
+                  "right": 255
+                }
+              },
+              {
+                "match": {
+                  "op": "==",
+                  "left": {
+                    "payload": {
+                      "protocol": "icmpv6",
+                      "field": "type"
+                    }
+                  },
+                  "right": {
+                    "set": [
+                      135,
+                      136
+                    ]
+                  }
+                }
+              },
+              {
+                "match": {
+                  "op": "==",
+                  "left": {
+                    "payload": {
+                      "protocol": "icmpv6",
+                      "field": "code"
+                    }
+                  },
+                  "right": 0
+                }
+              },
+              {
+                "counter": {
+                  "packets": 0,
+                  "bytes": 0
+                }
+              },
+              {
+                "accept": null
+              }
+            ]
+          }
+        },
+        {
+          "rule": {
+            "family": "inet",
+            "table": "gh_snapshot_a",
+            "chain": "pre",
+            "handle": 7,
+            "expr": [
+              {
+                "match": {
+                  "op": "==",
+                  "left": {
+                    "meta": {
+                      "key": "nfproto"
+                    }
+                  },
+                  "right": 2
+                }
+              },
+              {
+                "match": {
+                  "op": "==",
+                  "left": {
+                    "payload": {
+                      "protocol": "tcp",
+                      "field": "dport"
+                    }
+                  },
+                  "right": 443
+                }
+              },
+              {
+                "counter": {
+                  "packets": 0,
+                  "bytes": 0
+                }
+              },
+              {
+                "dnat": {
+                  "family": "ip",
+                  "addr": "198.19.1.1",
+                  "port": 18080
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "numeric_equivalence": true,
+  "symbolic_differs": true
+}

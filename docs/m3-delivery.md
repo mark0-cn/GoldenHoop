@@ -75,6 +75,47 @@ while the other replacements remain active. Trailers and upgrades are refused.
 The public CA is available at `/v1/sandboxes/{sandbox}/credential-ca`; its private
 signing key is encrypted with installation/sandbox identity and restored across
 restart. Missing previously provisioned CAs and wrong installation master keys
-are refused. These components do not yet install trust or intercept container
-traffic. Production native authority, runtime convergence and actual capability
-probes remain required before SecretInjection is advertised.
+are refused. Clients explicitly trust that public CA for intercepted TLS;
+certificate-pinned clients, upgrades and trailers have no bypass fallback.
+
+The native implementation now redirects configured credential TCP ports to the
+allocation's existing protected ingress. It adds no host/private destination
+exemption. The accepted socket's original destination and exact owned source
+select the sandbox; workload headers cannot select another allocation. Packet
+authority requires the current native monotonic lease, immutable destination
+floor, policy hierarchy and an exact live name/address grant for named hosts.
+Configured credential ports refuse unmatched origins, methods and paths. Other
+permitted ports retain their normal packet path.
+
+The worker transfers bounded private binding/provider frames over its owned
+controller channel. Those buffers are zeroized; provider material and private
+CA keys are never mounted in a workload. Rotation, revocation and policy changes
+fence dispatch and physically collect the previous controller before a fresh
+snapshot is applied. Durable generation history prevents a different snapshot
+from reusing an old process. Pending/Revoking remain intent; Active/Revoked are
+observations after correlated installation/removal and native confirmation.
+Active metadata alone is not a continuously valid packet lease.
+
+Audit delivery uses a bounded private queue. Reading a batch does not authorize
+dispatch: the worker commits an idempotent SQL batch and acknowledges exact
+delivery IDs. The broker rechecks authority after that wait. `dispatch_intent`
+is separate from an observed upstream HTTP response or consumed upstream body;
+the historical `upstream_started` spelling was also a pre-dispatch intent.
+Revoked bodies produce an error rather than a successful end of stream.
+
+Worker configuration uses `--credential-key-file KEY` and `--credential-config
+PRIVATE_JSON`, together with the protected network configuration. The optional
+JSON fields are `exchanges` (named fixed HTTPS resolvers), `upstream_ca_pem`
+(at most four operator-owned additional roots), and `probe`. Unix configuration
+must be a private regular file owned by the service. A configured probe contains
+`http_url`, `https_url`, a probe-only `credential`, and `expected_body`; its
+numeric endpoints belong to an operator-owned receiver, use different TCP ports,
+and must already satisfy the administrator destination floor. Never use a real
+provider credential as a probe canary.
+
+Only an actual ordinary-UID HTTP/TLS probe with durable response/body observations
+and completed native collection publishes SecretInjection. A failed credential
+probe withholds that capability while independently accepted networking remains
+available. Missing probe configuration leaves SecretInjection unadvertised. The
+implementation and its native gate are present; current supported-host results
+and full M3 stage acceptance are still pending.

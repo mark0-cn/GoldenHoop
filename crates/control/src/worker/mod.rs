@@ -1,9 +1,12 @@
 mod artifacts;
 mod contexts;
+mod credential_probe;
+mod credentials;
 mod executions;
 mod lifecycle;
 mod network_bootstrap;
 mod network_probe;
+pub use credentials::{CredentialOptions, CredentialProbe, CredentialSetup};
 pub use network_bootstrap::{NetworkOptions, NetworkSetup};
 mod network_policy;
 mod networks;
@@ -48,6 +51,7 @@ pub struct Worker {
     artifact_concurrency: Arc<Semaphore>,
     network_controller_image: Option<String>,
     network_options: Option<NetworkOptions>,
+    credentials: Option<Arc<CredentialSetup>>,
     network_tasks: Mutex<HashMap<Uuid, network_policy::NetworkTask>>,
 }
 
@@ -64,7 +68,18 @@ impl Worker {
         let NetworkSetup {
             controller_image: network_controller_image,
             options: network_options,
+            credentials,
         } = network;
+        let credentials = credentials.map(Arc::new);
+        if let Some(credentials) = &credentials {
+            if network_options.is_none() || network_controller_image.is_none() {
+                return Err(ApiError::new(
+                    ErrorCode::InvalidRequest,
+                    "credential broker requires protected network configuration",
+                ));
+            }
+            store.verify_vault_key(&credentials.key).await?;
+        }
         if artifacts.installation_id() != store.installation_id() {
             return Err(ApiError::new(
                 ErrorCode::InvalidRequest,
@@ -142,6 +157,12 @@ impl Worker {
                     // Internal candidate only. The public registration remains
                     // unavailable until real application and cleanup succeed.
                     profile.capabilities.insert(Capability::NetworkPolicy);
+                    if credentials
+                        .as_ref()
+                        .is_some_and(|setup| setup.probe.is_some())
+                    {
+                        profile.capabilities.insert(Capability::SecretInjection);
+                    }
                 }
             }
         }
@@ -157,6 +178,7 @@ impl Worker {
             for profile in &mut pending.profiles {
                 profile.availability = Availability::Unavailable;
                 profile.capabilities.remove(&Capability::NetworkPolicy);
+                profile.capabilities.remove(&Capability::SecretInjection);
                 profile.reason = Some("protected network availability probe is in progress".into());
             }
         }
@@ -173,6 +195,7 @@ impl Worker {
             artifact_concurrency: Arc::new(Semaphore::new(2)),
             network_controller_image,
             network_options,
+            credentials,
             network_tasks: Mutex::new(HashMap::new()),
         });
         if worker.network_options.is_some() {

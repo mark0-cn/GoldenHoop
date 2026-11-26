@@ -46,8 +46,13 @@ pub struct CredentialGrant {
 #[serde(rename_all = "snake_case")]
 pub enum CredentialOutcome {
     Admitted,
+    /// Durable authorization to attempt I/O; it is not delivery evidence.
+    DispatchIntent,
+    /// Historical spelling of a pre-dispatch intent, retained for old audit.
     UpstreamStarted,
-    UpstreamResponded { status: u16 },
+    UpstreamResponded {
+        status: u16,
+    },
     BodyCompleted,
     Revoked,
     DeliveryUnknown,
@@ -254,6 +259,7 @@ impl Broker {
         self.authority
             .record(&grant, CredentialOutcome::Admitted)
             .await?;
+        current(self.authority.as_ref(), &grant).await?;
         // Resolver output has no authority of its own. Rotation, revocation or
         // policy changes during exchange must be rechecked before injection.
         let secret = prepare(
@@ -365,8 +371,11 @@ impl Broker {
         };
         current(self.authority.as_ref(), &grant).await?;
         self.authority
-            .record(&grant, CredentialOutcome::UpstreamStarted)
+            .record(&grant, CredentialOutcome::DispatchIntent)
             .await?;
+        // Durable audit acknowledgement is asynchronous authority-neutral work.
+        // Revocation during that wait must not dispatch an old credential.
+        current(self.authority.as_ref(), &grant).await?;
         let sending = client
             .request(identity.method.clone(), url)
             .headers(request.headers)
@@ -434,6 +443,7 @@ impl Broker {
                 },
             )
             .await?;
+        current(self.authority.as_ref(), &grant).await?;
         let authority = self.authority.clone();
         let body = async_stream::stream! {
             // Plaintext is bounded to this request. Response bodies are an
@@ -441,7 +451,7 @@ impl Broker {
             let _secret=secret;let _value=value;let _client=client;let _permit=permit;let _redactions=redactions;
             let mut source=response.bytes_stream();
             loop {
-                if current(authority.as_ref(),&grant).await.is_err() {let _=authority.record(&grant,CredentialOutcome::Revoked).await;break;}
+                if let Err(error)=current(authority.as_ref(),&grant).await {let _=authority.record(&grant,CredentialOutcome::Revoked).await;yield Err(error);break;}
                 tokio::select! {
                     chunk=source.next()=>match chunk {
                         Some(Ok(chunk))=>yield Ok(chunk),

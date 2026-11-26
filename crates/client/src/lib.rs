@@ -1,9 +1,15 @@
 //! Cross-platform client. Waiting and observing never imply cancellation.
 mod artifacts;
 mod contexts;
+mod credentials;
 mod events;
 mod isolated;
 mod security;
+pub use credentials::CredentialCa;
+pub use goldenhoop_credentials::{
+    BindingSpec, CredentialBinding, CredentialState, Injection, Scheme, Secret, SecretSource,
+    SubstituteAt, Substitution, WriteCredential,
+};
 mod sessions;
 pub use contexts::{CodeContextEventStream, CodeRunOutput};
 pub use events::{EventStream, RunOutput};

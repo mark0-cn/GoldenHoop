@@ -202,8 +202,20 @@ impl Worker {
         let (sender, live) = watch::channel(None);
         let store = self.store.clone();
         let worker = self.registration.id;
+        let credentials = self.credentials.clone();
         let task = tokio::spawn(async move {
-            if let Err(error) = hold(store, driver, worker, image, id, sender, shutdown).await {
+            if let Err(error) = hold(
+                store,
+                driver,
+                worker,
+                image,
+                id,
+                sender,
+                shutdown,
+                credentials,
+            )
+            .await
+            {
                 report("network_policy_session_failed", &error);
             }
         });
@@ -341,7 +353,7 @@ impl Worker {
         Ok(())
     }
 }
-async fn call(
+pub(super) async fn call(
     session: &mut ControllerSession,
     request: Request,
 ) -> Result<serde_json::Value, ApiError> {
@@ -354,6 +366,7 @@ async fn call(
         Reply::Error(error) => Err(error),
     }
 }
+#[allow(clippy::too_many_arguments)]
 async fn hold(
     store: Store,
     driver: Arc<DockerDriver>,
@@ -362,6 +375,7 @@ async fn hold(
     id: Uuid,
     live: watch::Sender<Option<Live>>,
     mut shutdown: watch::Receiver<bool>,
+    credentials: Option<Arc<super::CredentialSetup>>,
 ) -> Result<(), ApiError> {
     let mut intent = store.network_policy(id).await?;
     if let Some(owner) = &intent.owner {
@@ -427,6 +441,16 @@ async fn hold(
                 &protection,
             )
             .await?;
+        let credential = super::credentials::install(
+            &store,
+            credentials.as_deref(),
+            id,
+            &mut session,
+            frozen.revision,
+        )
+        .await?;
+        let credential_versions = credential.versions();
+        let mut audit_acknowledged = Vec::new();
         if driver.inspect(handle).await?.state == ObservedState::Paused {
             if store.effective_desired(id).await? != DesiredState::Running {
                 return Ok(());
@@ -450,6 +474,20 @@ async fn hold(
                 return Err(unavailable());
             }
             let mut renewal_timing = None;
+            let current_credentials = super::credentials::CredentialIntent {
+                records: store.credentials(id).await?,
+                installation: None,
+            };
+            if current_credentials.versions() != credential_versions
+                || (credential.installation.is_some()
+                    && applied_revision.is_some_and(|applied| applied != intent.desired_revision))
+            {
+                // Stop dispatch before collecting the exact old process. Its
+                // upstream HTTP/2/background sockets cannot survive a rotation
+                // or policy change and borrow the replacement controller.
+                live.send_replace(None);
+                break;
+            }
             if applied_revision != Some(intent.desired_revision) {
                 let started = LeaseInstant::now();
                 live.send_replace(None);
@@ -486,6 +524,16 @@ async fn hold(
                         next.receipt().clone(),
                     )
                     .await?;
+                if credentials.is_some() || !credential.records.is_empty() {
+                    store
+                        .confirm_credentials(
+                            id,
+                            &owner,
+                            &credential.records,
+                            credential.installation.as_ref(),
+                        )
+                        .await?;
+                }
                 applied_revision = Some(intent.desired_revision);
                 lease = Some(next);
                 last = LeaseInstant::now();
@@ -540,6 +588,16 @@ async fn hold(
                 };
                 lease = Some(next);
                 last = LeaseInstant::now();
+            }
+            if credential.installation.is_some() {
+                super::credentials::poll_audit(
+                    &store,
+                    id,
+                    record.controller_generation,
+                    &mut session,
+                    &mut audit_acknowledged,
+                )
+                .await?;
             }
             let remaining = lease.as_ref().ok_or_else(unavailable)?.remaining();
             let usable = remaining

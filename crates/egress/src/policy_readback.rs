@@ -205,7 +205,10 @@ fn timed_element(
     Ok(())
 }
 
-fn normalize(allocation: &Allocation, expressions: &mut Vec<Value>) -> Result<(), ApiError> {
+pub(crate) fn normalize(
+    allocation: &Allocation,
+    expressions: &mut Vec<Value>,
+) -> Result<(), ApiError> {
     if let Some(index) = expressions.iter().position(|v| v.get("counter").is_some()) {
         let counter = expressions[index]["counter"].as_object().ok_or_else(bad)?;
         if index + 2 != expressions.len()

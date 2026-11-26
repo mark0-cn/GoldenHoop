@@ -97,6 +97,18 @@ impl DnsBinding {
         self.port
     }
 }
+impl<'de> Deserialize<'de> for DnsBinding {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Wire {
+            address: std::net::IpAddr,
+            port: u16,
+        }
+        let wire = Wire::deserialize(deserializer)?;
+        Self::new(wire.address, wire.port).map_err(serde::de::Error::custom)
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct DnsBindings {

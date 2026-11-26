@@ -6,6 +6,7 @@ mod server {
     use serde::Serialize;
     use serde_json::json;
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+    use zeroize::{Zeroize, Zeroizing};
 
     #[derive(Serialize)]
     #[serde(untagged)]
@@ -19,6 +20,8 @@ mod server {
         BoundSource(goldenhoop_egress::SourceBindingReceipt),
         Binding(goldenhoop_egress::ProtectedBindingReceipt),
         Effective(goldenhoop_egress::EffectivePolicyReceipt),
+        Credentials(goldenhoop_egress::InstalledCredentials),
+        Audit(Vec<goldenhoop_credentials::BrokerAuditDelivery>),
     }
 
     async fn execute(
@@ -27,6 +30,7 @@ mod server {
         native_context: &mut Option<goldenhoop_egress::native::NativeBridgePlan>,
         frontend: &mut Option<goldenhoop_egress::frontend::Frontend>,
         queries: &tokio::sync::mpsc::Sender<goldenhoop_egress::frontend::QueryRequest>,
+        credentials: &mut goldenhoop_egress::credential_runtime::CredentialService,
         request: Request,
     ) -> Result<Reply, ApiError> {
         if collection_only
@@ -84,6 +88,54 @@ mod server {
             ApiError::new(ErrorCode::InvalidState, "open a trusted allocation first")
         })?;
         match request {
+            Request::BeginCredentials {
+                epoch,
+                ca,
+                binding_count,
+                provider_count,
+                upstream_ca_pem,
+            } => {
+                credentials.begin(epoch, ca, binding_count, provider_count, upstream_ca_pem)?;
+                return Ok(Reply::Source(json!({"staged":true})));
+            }
+            Request::StageCredential {
+                epoch,
+                binding,
+                source,
+            } => {
+                credentials.binding(epoch, binding, source)?;
+                return Ok(Reply::Source(json!({"staged":true})));
+            }
+            Request::StageExchangeProvider {
+                epoch,
+                name,
+                provider,
+            } => {
+                credentials.provider(epoch, name, provider)?;
+                return Ok(Reply::Source(json!({"staged":true})));
+            }
+            Request::ActivateCredentials {
+                epoch,
+                expected_revision,
+            } => {
+                return credentials
+                    .activate(manager, epoch, expected_revision)
+                    .await
+                    .map(Reply::Credentials);
+            }
+            Request::DisableCredentials { expected_revision } => {
+                manager
+                    .disable_credential_redirect(expected_revision)
+                    .await?;
+                return Ok(Reply::Source(json!({"disabled":true})));
+            }
+            Request::CredentialAudit { acknowledged } => {
+                return credentials
+                    .audit
+                    .poll(&acknowledged)
+                    .await
+                    .map(Reply::Audit);
+            }
             Request::RecoverDns {
                 expected_revision,
                 upstream,
@@ -112,7 +164,9 @@ mod server {
                         &destinations,
                     )
                     .await?;
-                *frontend = Some(sockets.serve(queries.clone()));
+                *frontend = Some(
+                    sockets.serve_with_tcp(queries.clone(), Some(credentials.ingress.clone())),
+                );
                 return Ok(Reply::Listening(state));
             }
             Request::ConfigureDns {
@@ -211,7 +265,9 @@ mod server {
                     ));
                 }
                 let (state, sockets) = manager.listen_dns(expected_revision).await?;
-                *frontend = Some(sockets.serve(queries.clone()));
+                *frontend = Some(
+                    sockets.serve_with_tcp(queries.clone(), Some(credentials.ingress.clone())),
+                );
                 return Ok(Reply::Listening(state));
             }
 
@@ -305,10 +361,11 @@ mod server {
         let mut manager: Option<Manager> = None;
         let mut native_context = None;
         let mut frontend: Option<goldenhoop_egress::frontend::Frontend> = None;
+        let mut credentials = goldenhoop_egress::credential_runtime::CredentialService::default();
         let (queries, mut incoming) = goldenhoop_egress::frontend::channel();
         let mut input = BufReader::new(tokio::io::stdin());
         let mut output = tokio::io::stdout();
-        let mut bytes = Vec::new();
+        let mut bytes = Zeroizing::new(Vec::new());
         loop {
             let remaining = (MAX_FRAME + 1).saturating_sub(bytes.len() as u64);
             let mut bounded = (&mut input).take(remaining);
@@ -317,7 +374,9 @@ mod server {
                 count=bounded.read_until(b'\n',&mut bytes)=>Some(count?),
                 Some(query)=incoming.recv(),if frontend.is_some()=>{
                     if !query.reply.is_closed(){
+                        credentials.fence();
                         let result=match manager.as_mut(){Some(manager)=>manager.resolve(&query.wire,query.tcp).await,None=>Err(ApiError::new(ErrorCode::InvalidState,"DNS allocation is unavailable"))};
+                        if let Some(manager)=manager.as_ref(){manager.publish_credential_packets(&credentials.packets);}
                         let response=match result{Ok(resolved)=>Some(resolved.wire),Err(error)=>goldenhoop_egress::dns::failure_wire(&query.wire,error.code)};
                         if let Some(response)=response{let _=query.reply.send(response);}
                     }
@@ -326,6 +385,7 @@ mod server {
             };
             let Some(count) = read else { continue };
             if count == 0 && bytes.is_empty() {
+                credentials.fence();
                 if let Some(frontend) = frontend.take() {
                     frontend.shutdown().await;
                 }
@@ -335,16 +395,31 @@ mod server {
             let response = if frame_valid {
                 match serde_json::from_slice::<Envelope>(&bytes) {
                     Ok(frame) => {
-                        match execute(
+                        if !matches!(
+                            &frame.command,
+                            Request::Renew { .. }
+                                | Request::Inspect {}
+                                | Request::InspectPolicy { .. }
+                                | Request::InspectBinding { .. }
+                                | Request::CredentialAudit { .. }
+                                | Request::DnsSource { .. }
+                        ) {
+                            credentials.fence();
+                        }
+                        let result = execute(
                             collection_only,
                             &mut manager,
                             &mut native_context,
                             &mut frontend,
                             &queries,
+                            &mut credentials,
                             frame.command,
                         )
-                        .await
-                        {
+                        .await;
+                        if let Some(manager) = manager.as_ref() {
+                            manager.publish_credential_packets(&credentials.packets);
+                        }
+                        match result {
                             Ok(value) => json!({"id":frame.id,"result":value}),
                             Err(error) => json!({"id":frame.id,"error":error}),
                         }
@@ -363,7 +438,7 @@ mod server {
             if !frame_valid {
                 return Err("control framing lost".into());
             }
-            bytes.clear();
+            bytes.zeroize();
         }
     }
 }

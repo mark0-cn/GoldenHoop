@@ -21,6 +21,7 @@ from ._code_sync import CodeClientMixin
 from ._protocol import CreateIsolatedSession
 from ._isolated import check_scope, check_isolated_created
 from ._network import policy_state, policy_request, policy_change
+from . import _credentials
 
 
 class Client(CodeClientMixin):
@@ -79,6 +80,26 @@ class Client(CodeClientMixin):
 
     def profiles(self) -> list[Json]:
         return self._request("GET", "v1/profiles")
+
+    def credentials(self, sandbox_id: str) -> list[Json]:
+        sid = identity(sandbox_id)
+        return _credentials.records(self._request("GET", f"v1/sandboxes/{sid}/credentials"), sid)
+
+    def credential(self, sandbox_id: str, binding_id: str) -> Json:
+        sid, bid = identity(sandbox_id), identity(binding_id)
+        return _credentials.record(self._request("GET", f"v1/sandboxes/{sid}/credentials/{bid}"), sid, bid)
+
+    def put_credential(self, sandbox_id: str, binding_id: str, request: Json) -> Json:
+        sid, bid = identity(sandbox_id), identity(binding_id)
+        return _credentials.record(self._request("PUT", f"v1/sandboxes/{sid}/credentials/{bid}", request), sid, bid)
+
+    def revoke_credential(self, sandbox_id: str, binding_id: str) -> Json:
+        sid, bid = identity(sandbox_id), identity(binding_id)
+        return _credentials.record(self._request("DELETE", f"v1/sandboxes/{sid}/credentials/{bid}"), sid, bid)
+
+    def credential_ca(self, sandbox_id: str) -> Json:
+        sid = identity(sandbox_id)
+        return _credentials.ca(self._request("GET", f"v1/sandboxes/{sid}/credential-ca"), sid)
 
     def create(self, request: CreateSandbox | Json, key: str) -> Json:
         request = body(request)

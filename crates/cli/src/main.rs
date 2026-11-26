@@ -80,11 +80,17 @@ enum Command {
         #[command(subcommand)]
         command: KeyCommand,
     },
+    Credentials {
+        #[command(subcommand)]
+        command: CredentialCommand,
+    },
     Audit {
         #[arg(long, default_value_t = 0)]
         after: u64,
         #[arg(long, default_value_t = 100)]
         limit: u32,
+        #[arg(long)]
+        through: Option<u64>,
     },
     #[command(flatten)]
     Sandbox(SandboxCommand),
@@ -105,6 +111,29 @@ enum KeyCommand {
     Create { request: PathBuf },
     Get { id: Uuid },
     Revoke { id: Uuid },
+}
+
+#[derive(Subcommand)]
+enum CredentialCommand {
+    List {
+        sandbox: Uuid,
+    },
+    Get {
+        sandbox: Uuid,
+        id: Uuid,
+    },
+    Put {
+        sandbox: Uuid,
+        id: Uuid,
+        request: PathBuf,
+    },
+    Revoke {
+        sandbox: Uuid,
+        id: Uuid,
+    },
+    Ca {
+        sandbox: Uuid,
+    },
 }
 
 #[derive(Subcommand)]
@@ -506,7 +535,44 @@ async fn run(args: Args) -> CliResult<u8> {
         Command::Keys {
             command: KeyCommand::Revoke { id },
         } => print_json(&client.revoke_api_key(id).await?)?,
-        Command::Audit { after, limit } => print_json(&client.audit(after, limit).await?)?,
+        Command::Audit {
+            after,
+            limit,
+            through,
+        } => {
+            let page = if let Some(through) = through {
+                client.audit_through(after, limit, through).await?
+            } else {
+                client.audit(after, limit).await?
+            };
+            print_json(&page)?;
+        }
+        Command::Credentials { command } => match command {
+            CredentialCommand::List { sandbox } => print_json(&client.credentials(sandbox).await?)?,
+            CredentialCommand::Get { sandbox, id } => {
+                print_json(&client.credential(sandbox, id).await?)?
+            }
+            CredentialCommand::Revoke { sandbox, id } => {
+                print_json(&client.revoke_credential(sandbox, id).await?)?
+            }
+            CredentialCommand::Ca { sandbox } => print_json(&client.credential_ca(sandbox).await?)?,
+            CredentialCommand::Put {
+                sandbox,
+                id,
+                request,
+            } => {
+                let mut bytes = zeroize::Zeroizing::new(Vec::new());
+                std::fs::File::open(request)?
+                    .take(256 * 1024 + 1)
+                    .read_to_end(&mut bytes)?;
+                if bytes.len() > 256 * 1024 {
+                    return Err("credential request exceeds 256 KiB".into());
+                }
+                let request: WriteCredential =
+                    serde_json::from_slice(&bytes).map_err(|_| "invalid credential request")?;
+                print_json(&client.put_credential(sandbox, id, &request).await?)?;
+            }
+        },
         Command::Sandbox(SandboxCommand::Create {
             profile,
             image,

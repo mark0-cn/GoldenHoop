@@ -89,6 +89,12 @@ impl Worker {
                 .finish_operations(root, "network_profile_probe", OperationState::Running, None)
                 .await?;
             let result = Box::pin(self.probe_network_tree(profile, root, &limits)).await;
+            let credential_result =
+                if result.is_ok() && profile.capabilities.contains(&Capability::SecretInjection) {
+                    Some(Box::pin(self.probe_credential_profile(root)).await)
+                } else {
+                    None
+                };
             if result.is_err()
                 && let Err(error) = self.observe_probe_failure(root).await
             {
@@ -113,8 +119,19 @@ impl Worker {
                 report("network_profile_probe_failed", &error);
                 profile.availability = Availability::Unavailable;
                 profile.capabilities.remove(&Capability::NetworkPolicy);
+                profile.capabilities.remove(&Capability::SecretInjection);
                 profile.reason =
                     Some("actual protected network application failed; no runtime fallback".into());
+            }
+            if let Some(result) = credential_result {
+                if let Err(error) = &result {
+                    report("credential_profile_probe_failed", error);
+                    profile.capabilities.remove(&Capability::SecretInjection);
+                }
+                println!(
+                    "{}",
+                    serde_json::json!({"event":"credential_profile_probe_collected","profile":profile.id,"sandbox_id":root,"available":result.is_ok()})
+                );
             }
             println!(
                 "{}",
@@ -157,7 +174,7 @@ impl Worker {
         Ok(())
     }
 
-    async fn wait_probe_ready(&self, ids: &[Uuid]) -> Result<(), ApiError> {
+    pub(super) async fn wait_probe_ready(&self, ids: &[Uuid]) -> Result<(), ApiError> {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(90);
         loop {
             let mut ready = true;

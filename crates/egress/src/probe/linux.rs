@@ -92,7 +92,7 @@ pub async fn observe_probe(plan: ProbePlan) -> Result<ProbeObservation, ApiError
                     "invalid probe table inventory",
                 )
             })?;
-            let names = ["gh_e_", "gh_l_", "gh_s_", "gh_d_"]
+            let names = ["gh_e_", "gh_l_", "gh_s_", "gh_d_", "gh_c_"]
                 .map(|p| format!("{p}{}", plan.identity.generation.simple()));
             let tables = inventory["nftables"].as_array().ok_or_else(|| {
                 error(

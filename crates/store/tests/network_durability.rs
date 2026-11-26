@@ -497,7 +497,7 @@ async fn schema_five_upgrade_preserves_existing_identity_and_transactions() {
     checked(|store,path|async move{
     let id=create(&store).await;let installation=store.installation_id();let before=store.sandbox(id).await.unwrap().create_operation;store.close().await;
     let mut connection=SqliteConnection::connect_with(&SqliteConnectOptions::new().filename(&path)).await.unwrap();
-    let migration=sqlx::raw_sql("DROP TABLE network_create_dispatches;DROP TABLE network_policy_applied_sources;DROP TABLE network_policy_changes;DROP TABLE network_policy_users;DROP TABLE network_policy_events;DROP TABLE network_policies;DROP TABLE network_controller_events;DROP TABLE network_controllers;DROP TABLE network_allocation_events;DROP TABLE network_allocations;UPDATE meta SET value='5' WHERE key='schema_version'").execute(&mut connection).await;connection.close().await.unwrap();migration.unwrap();
+    let migration=sqlx::raw_sql("DROP TRIGGER credential_policy_fenced;DROP TRIGGER credential_controller_collecting;DROP TABLE credential_audit_deliveries;DROP TABLE credential_controller_history;DROP TABLE credential_epochs;DROP TABLE network_create_dispatches;DROP TABLE network_policy_applied_sources;DROP TABLE network_policy_changes;DROP TABLE network_policy_users;DROP TABLE network_policy_events;DROP TABLE network_policies;DROP TABLE network_controller_events;DROP TABLE network_controllers;DROP TABLE network_allocation_events;DROP TABLE network_allocations;UPDATE meta SET value='5' WHERE key='schema_version'").execute(&mut connection).await;connection.close().await.unwrap();migration.unwrap();
     let reopened=Store::open(&path).await.unwrap();let result=AssertUnwindSafe(async{
         assert_eq!(reopened.installation_id(),installation);assert_eq!(reopened.sandbox(id).await.unwrap().create_operation,before);assert_eq!(reopened.network_allocation_history(id,None,128).await.unwrap().len(),0);
         let reserved=reopened.reserve_network(id,Uuid::new_v4()).await.unwrap();assert_eq!(reserved.phase,NetworkPhase::Reserved);
@@ -868,7 +868,7 @@ async fn schema_six_complete_binding_keeps_original_payload_and_history_bytes() 
             .bind(&complete.network_id).bind(&payload).bind(id.to_string()).execute(&mut connection).await.unwrap();
         sqlx::query("INSERT INTO network_allocation_events(sandbox_id,revision,payload) VALUES(?,2,?)")
             .bind(id.to_string()).bind(&payload).execute(&mut connection).await.unwrap();
-        sqlx::raw_sql("DROP TABLE network_create_dispatches;DROP TABLE network_policy_applied_sources;DROP TABLE network_policy_changes;DROP TABLE network_policy_users;DROP TABLE network_policy_events;DROP TABLE network_policies;DROP TABLE network_controller_events;DROP TABLE network_controllers;UPDATE meta SET value='6' WHERE key='schema_version'").execute(&mut connection).await.unwrap();
+        sqlx::raw_sql("DROP TRIGGER credential_policy_fenced;DROP TRIGGER credential_controller_collecting;DROP TABLE credential_audit_deliveries;DROP TABLE credential_controller_history;DROP TABLE credential_epochs;DROP TABLE network_create_dispatches;DROP TABLE network_policy_applied_sources;DROP TABLE network_policy_changes;DROP TABLE network_policy_users;DROP TABLE network_policy_events;DROP TABLE network_policies;DROP TABLE network_controller_events;DROP TABLE network_controllers;UPDATE meta SET value='6' WHERE key='schema_version'").execute(&mut connection).await.unwrap();
         let before: Vec<String> = sqlx::query_scalar("SELECT payload FROM network_allocation_events ORDER BY revision").fetch_all(&mut connection).await.unwrap();
         connection.close().await.unwrap();
         let reopened = Store::open(&path).await.unwrap();
@@ -886,7 +886,7 @@ async fn schema_six_complete_binding_keeps_original_payload_and_history_bytes() 
             let after: Vec<String> = sqlx::query_scalar("SELECT payload FROM network_allocation_events ORDER BY revision").fetch_all(&mut connection).await.unwrap();
             let current: String = sqlx::query_scalar("SELECT payload FROM network_allocations WHERE sandbox_id=?").bind(id.to_string()).fetch_one(&mut connection).await.unwrap();
             connection.close().await.unwrap();
-            assert_eq!(version, "15");
+            assert_eq!(version, "16");
             assert_eq!(before, after);
             assert_eq!(current, payload);
         }).catch_unwind().await;

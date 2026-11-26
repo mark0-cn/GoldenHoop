@@ -28,8 +28,16 @@ mod destinations;
 pub use destinations::{DestinationClass, DestinationScope, ProtectedDestinations};
 mod destination_plan;
 pub use destination_plan::{DestinationDefinition, DestinationListener, DestinationPlan};
+mod credential_packets;
 mod plan;
 mod snapshot;
+pub use credential_packets::NativePacketAuthority;
+mod credential_redirect;
+pub use credential_redirect::{CredentialRedirect, CredentialRedirectPlan, InstalledCredentials};
+mod credential_audit;
+pub use credential_audit::AcknowledgedAudit;
+#[cfg(target_os = "linux")]
+pub mod credential_runtime;
 pub use snapshot::{MAX_SNAPSHOT_BYTES, ScopedKernelSnapshot};
 mod policy_binding;
 pub mod policy_readback;

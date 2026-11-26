@@ -16,7 +16,7 @@ use reqwest::Method;
 use std::{
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
     },
     time::Duration,
 };
@@ -31,6 +31,9 @@ struct Authority {
     delay: AtomicBool,
     started: Notify,
     release: Notify,
+    audit_gate: AtomicU8,
+    auditing: Notify,
+    audit_release: Notify,
 }
 #[async_trait]
 impl CredentialAuthority for Authority {
@@ -63,7 +66,20 @@ impl CredentialAuthority for Authority {
             "fixture-provider-private-value".into(),
         )))
     }
-    async fn record(&self, _: &CredentialGrant, _: CredentialOutcome) -> Result<(), ApiError> {
+    async fn record(
+        &self,
+        _: &CredentialGrant,
+        outcome: CredentialOutcome,
+    ) -> Result<(), ApiError> {
+        let phase = match outcome {
+            CredentialOutcome::Admitted => 1,
+            CredentialOutcome::DispatchIntent => 2,
+            _ => 0,
+        };
+        if phase != 0 && self.audit_gate.load(Ordering::SeqCst) == phase {
+            self.auditing.notify_one();
+            self.audit_release.notified().await;
+        }
         Ok(())
     }
 }
@@ -124,9 +140,53 @@ fn authority(port: u16) -> Arc<Authority> {
         current: AtomicBool::new(true),
         resolutions: AtomicU64::new(0),
         delay: AtomicBool::new(false),
+        audit_gate: AtomicU8::new(0),
+        auditing: Notify::new(),
+        audit_release: Notify::new(),
         started: Notify::new(),
         release: Notify::new(),
     })
+}
+
+#[tokio::test]
+async fn revocation_during_durable_admission_or_dispatch_ack_never_starts_upstream_io() {
+    let (address, calls, stop, task) = fixture().await;
+    let result = std::panic::AssertUnwindSafe(async {
+        for phase in [1, 2] {
+            let authority = authority(address.port());
+            authority.audit_gate.store(phase, Ordering::SeqCst);
+            let broker = Broker::new(authority.clone());
+            let input = request(&authority, "/v1/stream");
+            let forwarding = tokio::spawn(async move { broker.forward(input).await });
+            tokio::time::timeout(Duration::from_secs(2), authority.auditing.notified())
+                .await
+                .unwrap();
+            authority.current.store(false, Ordering::SeqCst);
+            authority.audit_release.notify_one();
+            assert!(
+                tokio::time::timeout(Duration::from_secs(2), forwarding)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .is_err()
+            );
+            assert_eq!(
+                authority.resolutions.load(Ordering::SeqCst),
+                if phase == 1 { 0 } else { 1 }
+            );
+            assert_eq!(calls.load(Ordering::SeqCst), 0);
+        }
+    })
+    .catch_unwind()
+    .await;
+    let _ = stop.send(());
+    tokio::time::timeout(Duration::from_secs(2), task)
+        .await
+        .unwrap()
+        .unwrap();
+    if let Err(error) = result {
+        std::panic::resume_unwind(error);
+    }
 }
 fn request(authority: &Authority, path: &str) -> BoundRequest {
     BoundRequest {
@@ -236,7 +296,7 @@ async fn actual_idle_stream_is_collected_on_revocation_and_origin_confusion_neve
             tokio::time::timeout(Duration::from_secs(2), response.body.next())
                 .await
                 .unwrap()
-                .is_none()
+                .is_some_and(|result| result.is_err())
         );
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     })

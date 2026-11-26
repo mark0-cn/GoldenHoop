@@ -8,6 +8,7 @@ use tokio::{
     io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader},
     time::Instant,
 };
+use zeroize::Zeroizing;
 
 pub const MAX_FRAME: u64 = 256 * 1024;
 
@@ -21,6 +22,33 @@ pub struct Envelope {
 #[derive(Deserialize, Serialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
+    BeginCredentials {
+        epoch: uuid::Uuid,
+        ca: goldenhoop_credentials::CaMaterial,
+        binding_count: u16,
+        provider_count: u16,
+        upstream_ca_pem: Vec<String>,
+    },
+    StageCredential {
+        epoch: uuid::Uuid,
+        binding: goldenhoop_credentials::CredentialBinding,
+        source: goldenhoop_credentials::SecretSource,
+    },
+    StageExchangeProvider {
+        epoch: uuid::Uuid,
+        name: String,
+        provider: goldenhoop_credentials::ExchangeProvider,
+    },
+    ActivateCredentials {
+        epoch: uuid::Uuid,
+        expected_revision: u64,
+    },
+    DisableCredentials {
+        expected_revision: u64,
+    },
+    CredentialAudit {
+        acknowledged: Vec<uuid::Uuid>,
+    },
     BindNative {
         plan: crate::native::NativeBridgePlan,
     },
@@ -152,7 +180,7 @@ enum Response {
 }
 
 #[derive(Default)]
-struct Frame(Vec<u8>);
+struct Frame(Zeroizing<Vec<u8>>);
 impl std::io::Write for Frame {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
         if bytes.len() > (MAX_FRAME as usize - 1).saturating_sub(self.0.len()) {

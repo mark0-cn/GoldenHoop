@@ -371,7 +371,7 @@ class Contract(ApiContract):
                 generation = uuid.UUID(allocation['generation']).hex
                 assert allocation['bridge'] == 'ghn' + generation[:12]
                 bridges.append(allocation['bridge'])
-                tables.update(part + generation for part in ('gh_e_', 'gh_l_', 'gh_s_', 'gh_d_'))
+                tables.update(part + generation for part in ('gh_e_', 'gh_l_', 'gh_s_', 'gh_d_', 'gh_c_'))
             for role in list(self.processes):
                 self.stop(role)
             name = 'goldenhoop-public-create-audit-' + uuid.uuid4().hex[:12]

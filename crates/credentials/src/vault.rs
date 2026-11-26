@@ -24,6 +24,42 @@ pub struct Sealed {
     pub ciphertext: Vec<u8>,
 }
 
+pub fn read_private_config(path: &Path) -> Result<Zeroizing<Vec<u8>>, ApiError> {
+    let unavailable = || {
+        error(
+            ErrorCode::Forbidden,
+            "private credential configuration is unavailable or unsafe",
+        )
+    };
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK);
+    }
+    let file = options.open(path).map_err(|_| unavailable())?;
+    let metadata = file.metadata().map_err(|_| unavailable())?;
+    if !metadata.is_file() || metadata.len() > 1024 * 1024 {
+        return Err(unavailable());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if metadata.mode() & 0o077 != 0 || metadata.uid() != unsafe { libc::geteuid() } {
+            return Err(unavailable());
+        }
+    }
+    let mut bytes = Zeroizing::new(Vec::new());
+    file.take(1024 * 1024 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| unavailable())?;
+    if bytes.len() > 1024 * 1024 {
+        return Err(unavailable());
+    }
+    Ok(bytes)
+}
+
 impl VaultKey {
     pub fn from_bytes(bytes: [u8; 32]) -> Self {
         Self(Arc::new(Zeroizing::new(bytes)))

@@ -34,6 +34,7 @@ struct State {
 
 /// Construct an empty book only after the trusted manager has confirmed kernel
 /// quarantine at this effective revision. Public values alone attest no I/O.
+#[derive(Clone)]
 pub struct LeaseBook {
     revision: u64,
     sandbox_deadline: Instant,
@@ -67,6 +68,26 @@ impl LeaseTransaction {
 }
 
 impl LeaseBook {
+    #[cfg(test)]
+    pub(crate) fn fixture_source(&mut self, name: &str, address: IpAddr, now: Instant) {
+        let request = GrantRequest {
+            lookup_id: Uuid::new_v4(),
+            lookup_deadline: now + Duration::from_secs(5),
+            revision: self.revision,
+            source: Domain::parse(name).unwrap(),
+            query_type: if address.is_ipv4() {
+                RecordType::A
+            } else {
+                RecordType::AAAA
+            },
+            origin: DecisionOrigin::UserAgreement,
+            addresses: vec![address],
+            expires_at: now + Duration::from_secs(30),
+        };
+        let transaction = self.begin(&request, now).unwrap();
+        let id = transaction.id();
+        self.commit(transaction, self.revision, id, now).unwrap();
+    }
     pub fn new(revision: u64, sandbox_deadline: Instant) -> Self {
         Self {
             revision,
@@ -106,6 +127,37 @@ impl LeaseBook {
     pub fn memberships(&self, now: Instant) -> Result<Vec<KernelLease>, ApiError> {
         self.known()?;
         Ok(memberships(&self.state, now))
+    }
+
+    /// Exact name/family/address authority. Aggregated kernel memberships must
+    /// never let one domain borrow another domain's shared destination address.
+    pub fn source_address(
+        &self,
+        name: &Domain,
+        address: IpAddr,
+        now: Instant,
+    ) -> Result<Option<(Authority, Instant)>, ApiError> {
+        self.known()?;
+        let query_type = if address.is_ipv4() {
+            RecordType::A
+        } else {
+            RecordType::AAAA
+        };
+        Ok(self
+            .state
+            .sources
+            .get(&(name.clone(), query_type))
+            .filter(|source| {
+                source.expires_at > now
+                    && self.sandbox_deadline > now
+                    && source.addresses.contains(&address)
+            })
+            .map(|source| {
+                (
+                    source.authority,
+                    source.expires_at.min(self.sandbox_deadline),
+                )
+            }))
     }
 
     /// The Unknown transition happens before the caller starts a kernel batch,

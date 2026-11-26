@@ -17,6 +17,18 @@ use tokio::{
 const MAX_QUERY: usize = 4096;
 const MAX_PENDING: usize = 16;
 
+#[async_trait::async_trait]
+pub trait TcpHandler: Send + Sync {
+    /// Return an untouched DNS stream or consume an authenticated transparent
+    /// HTTP/TLS stream. Identity is obtained from the socket, never payload.
+    async fn handle(
+        &self,
+        stream: TcpStream,
+        peer: SocketAddr,
+        stop: tokio_util::sync::CancellationToken,
+    ) -> Result<Option<TcpStream>, ApiError>;
+}
+
 pub struct QueryRequest {
     pub wire: Vec<u8>,
     pub tcp: bool,
@@ -94,6 +106,7 @@ impl BoundSockets {
         queries: mpsc::Sender<QueryRequest>,
         permits: Arc<Semaphore>,
         stop: &tokio_util::sync::CancellationToken,
+        handler: Option<Arc<dyn TcpHandler>>,
     ) -> Vec<JoinHandle<()>> {
         let udp_stop = stop.clone();
         let tcp_stop = stop.clone();
@@ -130,9 +143,15 @@ impl BoundSockets {
                     _=tcp_stop.cancelled()=>break,
                     _=workers.join_next(),if !workers.is_empty()=>{},
                     accepted=tcp.accept()=>{
-                        let Ok((stream,_))=accepted else {break};
+                        let Ok((stream,peer))=accepted else {break};
                         let Ok(permit)=permits.clone().try_acquire_owned() else {drop(stream);continue};
-                        let tx=queries.clone();workers.spawn(async move{let _permit=permit;connection(stream,tx).await;});
+                        let tx=queries.clone();let handler=handler.clone();let stop=tcp_stop.child_token();
+                        workers.spawn(async move{let _permit=permit;
+                            let stream=if let Some(handler)=handler {
+                                match handler.handle(stream,peer,stop).await {Ok(Some(stream))=>stream,_=>return}
+                            }else{stream};
+                            connection(stream,tx).await;
+                        });
                     }
                 }
             }
@@ -170,12 +189,21 @@ impl BoundListeners {
         })
     }
     pub fn serve(self, queries: mpsc::Sender<QueryRequest>) -> Frontend {
+        self.serve_with_tcp(queries, None)
+    }
+    pub fn serve_with_tcp(
+        self,
+        queries: mpsc::Sender<QueryRequest>,
+        handler: Option<Arc<dyn TcpHandler>>,
+    ) -> Frontend {
         let stop = tokio_util::sync::CancellationToken::new();
         let permits = Arc::new(Semaphore::new(MAX_PENDING));
         let tasks = self
             .sockets
             .into_iter()
-            .flat_map(|socket| socket.spawn(queries.clone(), permits.clone(), &stop))
+            .flat_map(|socket| {
+                socket.spawn(queries.clone(), permits.clone(), &stop, handler.clone())
+            })
             .collect();
         Frontend { tasks, stop }
     }

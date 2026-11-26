@@ -46,6 +46,7 @@ impl goldenhoop_docker::ResourceCreateObserver for CreateJournal {
 pub struct NetworkSetup {
     pub controller_image: Option<String>,
     pub options: Option<NetworkOptions>,
+    pub credentials: Option<super::CredentialSetup>,
 }
 
 #[derive(Clone, Deserialize)]

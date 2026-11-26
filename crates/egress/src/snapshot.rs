@@ -32,12 +32,14 @@ impl ScopedKernelSnapshot {
             .and_then(|v| v.get("nftables"))
             .and_then(Value::as_array)
             .ok_or_else(bad)?;
-        let expected = BTreeMap::from([
+        let required = BTreeMap::from([
             (allocation.table(), "inet"),
             (allocation.ethernet_table(), "bridge"),
             (allocation.source_table(), "bridge"),
             (allocation.destination_table(), "inet"),
         ]);
+        let mut expected = required.clone();
+        expected.insert(allocation.credential_table(), "inet");
         let mut tables: BTreeMap<String, Vec<Value>> = expected
             .keys()
             .map(|name| (name.clone(), Vec::new()))
@@ -65,12 +67,15 @@ impl ScopedKernelSnapshot {
             }
             tables.get_mut(name).ok_or_else(bad)?.push(entry.clone());
         }
-        if expected.keys().any(|name| counts.get(name) != Some(&1)) {
+        if required.keys().any(|name| counts.get(name) != Some(&1))
+            || counts.values().any(|count| *count != 1)
+        {
             return Err(bad());
         }
         Ok(Self {
             tables: tables
                 .into_iter()
+                .filter(|(_, entries)| !entries.is_empty())
                 .map(|(name, entries)| (name, json!({"nftables":entries})))
                 .collect(),
         })

@@ -4,6 +4,7 @@ use zeroize::Zeroizing;
 
 /// Deliberately lacks Debug. Serialization is limited to private control and
 /// encrypted vault input; public metadata uses CredentialBinding instead.
+#[derive(Clone)]
 pub struct Secret(pub Zeroizing<String>);
 impl Serialize for Secret {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
@@ -20,7 +21,7 @@ impl<'de> Deserialize<'de> for Secret {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SecretSource {
     Literal { value: Secret },

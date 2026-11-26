@@ -546,7 +546,7 @@ async fn schema_twelve_upgrade_preserves_public_intent_and_acknowledgement_bytes
         store.close().await;
         let options=SqliteConnectOptions::new().filename(&fixture.path);
         let mut connection=SqliteConnection::connect_with(&options).await.unwrap();
-        sqlx::raw_sql("DROP TABLE network_create_dispatches;UPDATE meta SET value='12' WHERE key='schema_version'").execute(&mut connection).await.unwrap();
+        sqlx::raw_sql("DROP TRIGGER credential_policy_fenced;DROP TRIGGER credential_controller_collecting;DROP TABLE credential_audit_deliveries;DROP TABLE credential_controller_history;DROP TABLE credential_epochs;DROP TABLE network_create_dispatches;UPDATE meta SET value='12' WHERE key='schema_version'").execute(&mut connection).await.unwrap();
         async fn snapshot(connection:&mut SqliteConnection)->Vec<String> {
             let mut values=Vec::new();
             for query in [
@@ -573,7 +573,7 @@ async fn schema_twelve_upgrade_preserves_public_intent_and_acknowledgement_bytes
         }
         let mut connection=SqliteConnection::connect_with(&options).await.unwrap();
         let version:String=sqlx::query_scalar("SELECT value FROM meta WHERE key='schema_version'").fetch_one(&mut connection).await.unwrap();
-        assert_eq!(version,"15");
+        assert_eq!(version,"16");
         assert_eq!(snapshot(&mut connection).await,before);
         connection.close().await.unwrap();
     }).await;
@@ -829,7 +829,7 @@ async fn schema_eleven_upgrade_preserves_private_history_without_promoting_it_to
         store.close().await;
         let options = SqliteConnectOptions::new().filename(&fixture.path);
         let mut connection = SqliteConnection::connect_with(&options).await.unwrap();
-        sqlx::raw_sql("DROP TABLE network_create_dispatches;DROP TABLE network_policy_applied_sources;DROP TABLE network_policy_changes;DROP TABLE network_policy_users;DELETE FROM meta WHERE key='network_operator_policy';UPDATE meta SET value='11' WHERE key='schema_version'")
+        sqlx::raw_sql("DROP TRIGGER credential_policy_fenced;DROP TRIGGER credential_controller_collecting;DROP TABLE credential_audit_deliveries;DROP TABLE credential_controller_history;DROP TABLE credential_epochs;DROP TABLE network_create_dispatches;DROP TABLE network_policy_applied_sources;DROP TABLE network_policy_changes;DROP TABLE network_policy_users;DELETE FROM meta WHERE key='network_operator_policy';UPDATE meta SET value='11' WHERE key='schema_version'")
             .execute(&mut connection).await.unwrap();
         async fn snapshot(connection: &mut SqliteConnection) -> Vec<String> {
             let mut values = Vec::new();
@@ -863,7 +863,7 @@ async fn schema_eleven_upgrade_preserves_private_history_without_promoting_it_to
         let mut connection = SqliteConnection::connect_with(&options).await.unwrap();
         let version: String = sqlx::query_scalar("SELECT value FROM meta WHERE key='schema_version'")
             .fetch_one(&mut connection).await.unwrap();
-        assert_eq!(version, "15");
+        assert_eq!(version, "16");
         assert_eq!(snapshot(&mut connection).await, before);
         let overrides: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM network_policy_users")
             .fetch_one(&mut connection).await.unwrap();
