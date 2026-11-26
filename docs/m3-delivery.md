@@ -117,8 +117,13 @@ Only an actual ordinary-UID HTTP/TLS probe with durable response/body observatio
 and completed native collection publishes SecretInjection. A failed credential
 probe withholds that capability while independently accepted networking remains
 available. Missing probe configuration leaves SecretInjection unadvertised. The
-implementation and its native gate are present; current supported-host results
-and full M3 stage acceptance are still pending.
+deployment probe now passes on both runc and gVisor. All twenty
+[focused credential groups](evidence/m3-native-45816391918-archive.json) pass,
+including DNS/TLS names, shared-IP and cross-sandbox isolation, rotation,
+substitutions, exchange, API/worker restart, SDK/CLI flows, stream revocation,
+packet deny and delayed-exchange refusal. Each artifact verifies 263 source
+inputs and Complete owned-resource collection. The combined runtime/network/S3
+Stage gate remains required before M3 is complete.
 
 ## Operator setup and credential requests
 

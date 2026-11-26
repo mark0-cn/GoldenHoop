@@ -5,9 +5,13 @@ This path uses the actual Docker driver and controller transport. New supported
 host gates cover Ready, commands, renewal, tightening, pause and crash recovery on
 runc and gVisor. Their current acceptance status belongs in `progress.md`.
 Optional public provisioning uses the same path and requires an actual deployment
-probe. Full public hierarchy acceptance remains required. NetworkPolicy stays
-unadvertised without configuration or after a failed probe; SecretInjection
-remains unadvertised.
+probe. The [focused five-level public gate](evidence/m3-native-45787821888-archive.json)
+passes all eight groups on runc and gVisor, including replacement-worker recovery
+and complete subtree collection. NetworkPolicy stays unadvertised without
+configuration or after a failed probe. SecretInjection separately requires the
+actual credential probe described in [M3 delivery](m3-delivery.md). Both runtimes
+pass all twenty [credential groups](evidence/m3-native-45816391918-archive.json).
+Combined Stage acceptance remains required.
 
 Schema 11 adds a desired configuration, its fingerprint and version, the original
 protected checkpoint, the approved upstream, controller ownership and an

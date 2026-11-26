@@ -4,7 +4,7 @@ A Rust agent sandbox platform with explicit runtime capabilities, independent AP
 
 ## Project status
 
-**M0-M2 have accepted runc/gVisor and S3-compatible baselines; M3 native acceptance is in progress. Commands, files, diagnostics, retained artifacts, shells, PTYs, six-language code contexts and isolated child sandboxes have actual API/SDK/CLI acceptance. M3 implements scoped and revocable API keys, encrypted credential storage, transparent HTTP/TLS brokering and durable redacted audit. Portable checks pass; supported-host public creation, five-level hierarchy, credentials and the final combined stage gate still require acceptance.**
+**M0-M2 have accepted runc/gVisor and S3-compatible baselines. M3 passes the focused native gates on both runc and gVisor: eight public creation/five-level hierarchy groups and twenty credential groups, including DNS/TLS names, isolation, rotation, restart, stream revocation and delayed-exchange refusal. Scoped API keys, encrypted credential storage and durable redacted audit also pass portable checks. The final combined Stage acceptance is still required before declaring M3 complete.**
 
 Code contexts have durable public APIs and Rust/Python/CLI bindings. Python's existing runc/gVisor and S3-compatible loops pass, including restart recovery and cleanup. New Python, Java, Go, TypeScript, Bash and JavaScript adapters use [explicitly probed language support](docs/code-languages.md) from a cached kernel image; support is disabled by default. [Isolated child sandboxes](docs/isolated-sessions.md) add reserved resources, inherited lifecycle and immutable feature ceilings, behind a separate actual runtime probe. See [current verification](docs/progress.md).
 

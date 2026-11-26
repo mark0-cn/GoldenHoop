@@ -3,8 +3,15 @@
 Public protected creation is optional and requires a pinned host controller and
 administrator network configuration. With no network configuration, profiles
 retain none-network isolation and do not advertise `NetworkPolicy`. New public
-creation, environment-probe and five-level runtime gates require their own
-supported-host acceptance; private staged contracts do not establish them.
+creation, environment-probe and five-level runtime gates require actual
+supported-host acceptance. The [4613870 focused gate](evidence/m3-native-45787821888-archive.json)
+passes all eight public creation/hierarchy groups on both runc and gVisor,
+including five levels, pause/restart/recovery and complete subtree collection.
+The current resolver/credential candidate also passes all twenty
+[credential groups](evidence/m3-native-45816391918-archive.json) on both runtimes;
+the combined Stage gate remains required.
+
+## Earlier readiness diagnosis
 
 At 8353aed, all ten host records and both sixteen-group public policy gates pass.
 The runc environment probe completes six root/child commands and confirmed
@@ -61,6 +68,15 @@ The resolver and exceptions are administrator input. Workload policy cannot
 provide these values. The operator policy is immutable for an installation;
 changing it currently refuses rather than silently changing existing authority.
 Existing allocations retain their frozen destination bindings.
+
+Protected workloads use the actual owned network gateway as their DNS server.
+The driver installs the exact resolver file read-only before startup and checks
+it again during recovery. Client resolver options use a five-second wait and one
+attempt so paired A/AAAA queries can complete their serialized native policy
+transactions. This client wait does not extend a DNS installation deadline,
+grant expiry or controller lease. A reachable resolver grants no permission:
+names must satisfy the effective policy, destination floor and live source
+grant before an address answer can authorize traffic.
 
 While probing, the public worker registration is Unavailable. A private root
 and, when supported, child run through actual protected creation, native apply,
