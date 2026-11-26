@@ -273,8 +273,11 @@ class DestinationCases:
             assert not after['uncertain'] and after['revision']==renewed['revision'] and after['maximum_lease_seconds']==10,after
             for key in ('ethernet_guarded','source_guarded','destinations_guarded'):
                 assert after[key],after
-            for key in ('ethernet_sha256','source_binding_sha256','destination_binding_sha256'):
+            for key in ('source_binding_sha256','destination_binding_sha256'):
                 assert after[key]==renewed[key],(key,renewed,after)
+            # Ethernet's raw observation hash includes live counters. Its
+            # complete native structure is verified on both renewals above.
+            assert isinstance(after['ethernet_sha256'],str) and len(after['ethernet_sha256'])==64,after
             assert 'binding' not in after and 'lease_remaining_milliseconds' not in after,after
             self.check('relative_DNS_lifetime_cannot_mint_a_public_policy_receipt_or_mutate_the_verified_basic_lease')
         for address in (self.target_ip,self.target6):
