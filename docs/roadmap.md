@@ -2,6 +2,8 @@
 
 The objective is the complete platform described in design.md. An early milestone does not redefine v1.0 completion.
 
+M0-M3 have accepted evidence for the tested Linux runc-development/gVisor profiles and retained S3-compatible regression. [M3 Stage acceptance](evidence/m3-native-45839996451-archive.json) passes all seven jobs and 63 source-verified reports with Complete collection. M4-M6 remain unaccepted; the Firecracker/KVM, Kubernetes and release objectives below are unchanged.
+
 | Milestone | Deliverable | Required evidence |
 | --- | --- | --- |
 | M0 | Domain/API models, state machine, capability/driver interfaces, repository CI and test framework | Format, lint, protocol and invariant tests |

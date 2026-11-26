@@ -9,7 +9,7 @@ passes all eight public creation/hierarchy groups on both runc and gVisor,
 including five levels, pause/restart/recovery and complete subtree collection.
 The current resolver/credential candidate also passes all twenty
 [credential groups](evidence/m3-native-45816391918-archive.json) on both runtimes;
-the combined Stage gate remains required.
+the [complete combined Stage](evidence/m3-native-45839996451-archive.json) now passes on the current candidate.
 
 ## Earlier readiness diagnosis
 
@@ -33,20 +33,20 @@ Static dispatch refusal reasons now distinguish the existing readiness checks
 and are retained in the sandbox observation. No check, lease lifetime,
 publication margin, timeout or execution assertion is relaxed.
 
-The current [sampling-budget diagnosis](evidence/m3-policy-sampling-budget-diagnosis.json)
+The earlier [sampling-budget diagnosis](evidence/m3-policy-sampling-budget-diagnosis.json)
 records a conservative accounting mismatch: the manager previously calculated
 remaining time after sampling, while the client anchored it at request start.
 The manager now returns a start-relative budget after the same complete native
 checks and a still-live-at-finish check. The client retains request-start
 anchoring and every existing dispatch fence. The native maximum, original
 lifetime and one-second publication margin are unchanged. Its effect on the
-full supported-host hierarchy requires a current-source retest.
+full supported-host hierarchy is now accepted by the combined Stage above.
 
 The independent readback fixture now proves its private IPv6 address can bind
 TCP and UDP before testing the production manager. Its seven local and f79409c
 hosted groups pass. This does not identify the original hosted binding failure's
-cause or establish public protected creation. Positive supported-host
-creation/hierarchy retesting remains required. Startup metadata and failure
+cause or establish public protected creation. The later supported-host
+creation/hierarchy gate and combined Stage above supply that separate evidence. Startup metadata and failure
 journals provide no live authority or native absence proof.
 
 ## Deployment

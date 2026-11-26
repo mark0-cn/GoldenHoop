@@ -1,10 +1,8 @@
 # M3 delivery and acceptance
 
-The remaining M3 work is delivered as independent increments: scoped API keys
-and durable redacted audit; encrypted credential storage and bound forwarding;
-transparent HTTP/TLS runtime integration and credential convergence; and the
-full protected five-level network hierarchy. A failure in one area does not
-prevent implementation of another. M3 remains incomplete until all pass.
+M3 is accepted on the tested Linux runc-development and gVisor configurations at 24e313aeacb646d067f61a993794f588d02796c3. The [complete Stage](https://github.com/mark0-cn/GoldenHoop/actions/runs/45839996451) passes runtime, network and S3 regression together. All 63 [archived reports](evidence/m3-native-45839996451-archive.json) pass with verified source fingerprints and Complete collection. The [acceptance summary](evidence/m3-stage-acceptance-final-summary.json) records the exact profile/gate counts and local cleanup exceptions.
+
+The independent increments cover scoped/revocable API keys and durable redacted audit; encrypted credential storage and bound forwarding; transparent HTTP/TLS integration and credential convergence; and full protected five-level network hierarchy. The complete M0-M6 roadmap remains in scope; M3 acceptance does not complete v1.0.
 
 Each increment runs the tests relevant to its changed boundary. Rust format,
 lint and workspace tests remain repository checks. Expensive real-runtime,
@@ -56,8 +54,8 @@ vault/broker; third-party HTTP/TLS buffers have their own bounded lifetimes.
 Credential intent is available at
 `/v1/sandboxes/{sandbox}/credentials/{binding}`. PUT uses an expected revision,
 GET returns metadata, and DELETE starts revocation. Pending/Revoking records
-do not claim installation or drained transports. SecretInjection remains
-unadvertised until the actual runtime integration passes. A parser, vault
+do not claim installation or drained transports. SecretInjection is published only after the configured actual runtime
+integration probe passes. A parser, vault
 test or loopback HTTP broker test does not satisfy that gate.
 
 Bound forwarding checks origin, port, method and path, rechecks authority after
@@ -122,8 +120,7 @@ deployment probe now passes on both runc and gVisor. All twenty
 including DNS/TLS names, shared-IP and cross-sandbox isolation, rotation,
 substitutions, exchange, API/worker restart, SDK/CLI flows, stream revocation,
 packet deny and delayed-exchange refusal. Each artifact verifies 263 source
-inputs and Complete owned-resource collection. The combined runtime/network/S3
-Stage gate remains required before M3 is complete.
+inputs and Complete owned-resource collection. The [complete runtime/network/S3 Stage](evidence/m3-native-45839996451-archive.json) now accepts these boundaries on the current candidate.
 
 ## Operator setup and credential requests
 

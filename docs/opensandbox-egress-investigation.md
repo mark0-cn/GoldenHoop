@@ -1,5 +1,7 @@
 # OpenSandbox egress comparison for M3
 
+The investigations below preserve the sequence of failures, upstream comparisons and focused corrections. Their pending statements refer to those revisions. The accepted current composition and exact final Stage are recorded at the end.
+
 ## Follow-up: compare the Linux socket ABI with other transparent proxies
 
 The ordinary-UID client eventually reached TCP but immediately received a
@@ -136,7 +138,7 @@ must pass its own runc and gVisor packet tests; upstream support is not
 evidence for those tests, and changing runtime is not an acceptance shortcut.
 [Source: upstream compatibility warning](https://github.com/opensandbox-group/OpenSandbox/blob/067a138cdaacce3f829fffb411acfc4001feefca/docs/architecture/network/egress.md#L160-L167).
 
-## Current actions and verification boundary
+## Historical actions and verification boundary
 
 The owned counter probe subsequently confirmed the allocated bridge at the
 inet hook, so GoldenHoop keeps that interface match. Packet visibility at
@@ -185,3 +187,15 @@ The Rust driver now derives the resolver address from the actual owned network a
 The final live-owner observations at d79d988 show completed DNS installation and zero errors on both runtimes, with the last resolution taking 795/988 ms. The one-second client resolver setting cannot reliably cover serialized A and AAAA transactions. An ordinary-UID, network-none experiment reproduces the same EAI_AGAIN with 800 ms per answer and timeout:1, while timeout:5 returns both addresses in 1681 ms. This establishes a client-waiting incompatibility rather than a failed installation. The public owned configuration now uses five seconds and one attempt; native grant/install/lease deadlines remain unchanged.
 
 The [glibc 2.36 resolver default](https://github.com/bminor/glibc/blob/c804cd1c00adde061ca51711f63068c103e94eef/resolv/resolv.h#L68) is five seconds. [Cilium's successful response path](https://github.com/cilium/cilium/blob/f631e869bfb6c9aed8d50d1c8bddd69289128d9d/pkg/fqdn/dnsproxy/proxy.go#L1119-L1135) also processes its response callback before publishing the DNS answer, providing a useful phase-order comparison. Its datapath and timeouts do not replace GoldenHoop's native confirmation or authority rules. [Pinned comparison](evidence/m3-client-dns-patience-upstream-comparison.json), [actual client experiment and confirmed collection](evidence/m3-libc-serialized-dns-latency-native-windows-docker.json). Complete production named-origin acceptance remains a separate gate.
+
+## Accepted M3 composition
+
+The final [combined Stage](https://github.com/mark0-cn/GoldenHoop/actions/runs/45839996451) at 24e313aeacb646d067f61a993794f588d02796c3 passes all seven jobs and all 63 [source-verified reports](evidence/m3-native-45839996451-archive.json) with Complete collection. Both runtimes accept the owned system resolver, named HTTP/TLS credential boundary, five-level recovery and complete destination enforcement. The relative-lifetime basic renewal regression is corrected by separating native observation from the stronger absolute-lifetime public receipt, retaining the same native verification and finite bounds. Earlier failures above remain historical evidence. [Acceptance summary](evidence/m3-stage-acceptance-final-summary.json).
+
+## Further upstream boundaries applied during acceptance
+
+The pinned [etcd lease response interface](https://github.com/etcd-io/etcd/blob/4e090c033abc29636df2f844fbdd363adffcd90b/api/etcdserverpb/rpc.proto) separates a remaining TTL from an original absolute expiry. The [comparison](evidence/m3-basic-renewal-ttl-upstream-comparison.json) informed the interface separation only: GoldenHoop basic renewal returns a completely verified finite native observation, while public policy receipts still require the original native context and absolute lifetime. No etcd renewal or authority semantics are imported. Both new relative-lifetime boundary cases pass in the final Stage.
+
+The pinned [Moby wait conditions](https://github.com/moby/moby/blob/ef9054461f8e11d5e13e56806a70fc151759b205/api/types/container/waitcondition.go) and [Docker wait API](https://docs.docker.com/reference/api/engine/version/v1.57/operations/ContainerWait/) distinguish not-running from removed. The [captured runtime-loss review](evidence/m3-runtime-loss-collection-wait-input-validation-windows.json) and [shared collection-wait review](evidence/m3-shared-runtime-collection-wait-input-validation-windows.json) led to one positive whole-sandbox collection wait for both fault-injection callers. It shares the original 25/40-second execution budgets, requires Failed throughout and Complete plus actual runtime absence, and retains Unknown/no-replay controls. Production lifecycle behavior and resource limits are unchanged.
+
+GitHub documents the [job timeout](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idtimeout-minutes) as an automatic whole-job cancellation budget. The fifth runc job hit its 40-minute watchdog after cold builds and sequential contracts; its interrupted destination suite remains failed with Unknown cleanup. The final accepted Stage ran under that original stricter wrapper. The only later [workflow metadata correction](evidence/m3-ci-watchdog-metadata-validation.json) reserves 60 minutes for cold builds and final collection; all step bytes, conditions, test deadlines, native leases and runtime inputs are identical.

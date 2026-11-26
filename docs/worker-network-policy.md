@@ -11,7 +11,7 @@ and complete subtree collection. NetworkPolicy stays unadvertised without
 configuration or after a failed probe. SecretInjection separately requires the
 actual credential probe described in [M3 delivery](m3-delivery.md). Both runtimes
 pass all twenty [credential groups](evidence/m3-native-45816391918-archive.json).
-Combined Stage acceptance remains required.
+The [complete combined Stage](evidence/m3-native-45839996451-archive.json) now accepts this composition on the current candidate.
 
 Schema 11 adds a desired configuration, its fingerprint and version, the original
 protected checkpoint, the approved upstream, controller ownership and an
