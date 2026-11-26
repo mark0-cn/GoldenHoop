@@ -92,11 +92,16 @@ struct Args {
         default_value = "state/goldenhoop.db"
     )]
     database: PathBuf,
+    #[arg(long, global = true, env = "GOLDENHOOP_CREDENTIAL_KEY_FILE")]
+    credential_key_file: Option<PathBuf>,
     #[command(subcommand)]
     command: Role,
 }
 #[derive(Subcommand)]
 enum Role {
+    VaultInit {
+        path: PathBuf,
+    },
     Api {
         #[arg(long, default_value = "127.0.0.1:8080")]
         bind: SocketAddr,
@@ -127,6 +132,7 @@ enum Role {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     match args.command {
+        Role::VaultInit { path } => goldenhoop_credentials::VaultKey::create(&path)?,
         Role::Api { bind, token } => {
             BearerAuth::new(&token)?;
             if !bind.ip().is_loopback() {
@@ -137,7 +143,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             let store = Store::open(&args.database).await?;
             let listener = tokio::net::TcpListener::bind(bind).await?;
-            let router = api::router(store.clone(), &token)?;
+            let vault = args
+                .credential_key_file
+                .as_deref()
+                .map(goldenhoop_credentials::VaultKey::open)
+                .transpose()?;
+            let router = api::router_with_vault(store.clone(), &token, vault)?;
             println!(
                 "{}",
                 serde_json::json!({"event":"api_started","address":listener.local_addr()?,"installation_id":store.installation_id()})

@@ -1,4 +1,6 @@
 use super::*;
+use crate::security::Principal;
+use axum::Extension;
 use axum::{
     extract::ws::{Message, WebSocket, WebSocketUpgrade},
     response::IntoResponse,
@@ -112,6 +114,7 @@ pub(super) async fn control_status(
 
 pub(super) async fn socket(
     State(app): State<AppState>,
+    Extension(principal): Extension<Principal>,
     ApiPath(id): ApiPath<Uuid>,
     ApiQuery(query): ApiQuery<EventsQuery>,
     upgrade: Result<WebSocketUpgrade, axum::extract::ws::rejection::WebSocketUpgradeRejection>,
@@ -147,7 +150,7 @@ pub(super) async fn socket(
         .max_write_buffer_size(2 * 1024 * 1024)
         .on_upgrade(move |socket| async move {
             let _permit = permit;
-            let _ = drive_socket(app, id, after, socket).await;
+            let _ = drive_socket(app, principal, id, after, socket).await;
         })
         .into_response())
 }
@@ -164,22 +167,38 @@ async fn send(socket: &mut WebSocket, message: SessionSocketServerMessage) -> Re
 }
 async fn drive_socket(
     app: AppState,
+    principal: Principal,
     id: Uuid,
     mut cursor: u64,
     mut socket: WebSocket,
 ) -> Result<(), ()> {
+    principal.check(&app.store).await.map_err(|_| ())?;
     let initial = app.store.session(id).await.map_err(|_| ())?;
+    let sandbox_id = initial.execution.sandbox_id;
     send(&mut socket, SessionSocketServerMessage::Session(initial)).await?;
     let mut pending = BTreeSet::new();
     let mut heartbeat = std::time::Instant::now();
     let mut interval = tokio::time::interval(Duration::from_millis(100));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
+        if principal.check(&app.store).await.is_err() {
+            let event = principal.event(
+                AuditAction::Execute,
+                AuditPhase::StreamRevoked,
+                Some(id),
+                Some(sandbox_id),
+            );
+            let _ = app.store.append_audit(&event).await;
+            return Ok(());
+        }
         tokio::select! {
             message=socket.recv()=>{
                 match message {
                     None|Some(Ok(Message::Close(_)))|Some(Err(_))=>return Ok(()),
                     Some(Ok(Message::Text(text)))=>{
+                        principal.check(&app.store).await.map_err(|_| ())?;
+                        let event=principal.event(AuditAction::Execute,AuditPhase::RequestStarted,Some(id),Some(sandbox_id));
+                        app.store.append_audit(&event).await.map_err(|_| ())?;
                         let result=match serde_json::from_str::<SessionSocketClientMessage>(&text) {
                             Ok(SessionSocketClientMessage::Control(control))=>enqueue(&app,id,&control).await,
                             Err(_)=>Err(ApiError::new(ErrorCode::InvalidRequest,"invalid session socket message")),

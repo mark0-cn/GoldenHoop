@@ -65,6 +65,18 @@ class Client(CodeClientMixin):
                 else:
                     raise TransportError() from None
 
+    def issue_api_key(self, request: Json) -> Json:
+        return self._request("POST", "v1/api-keys", request)
+
+    def api_key(self, key_id: str) -> Json:
+        return self._request("GET", f"v1/api-keys/{identity(key_id)}")
+
+    def revoke_api_key(self, key_id: str) -> Json:
+        return self._request("DELETE", f"v1/api-keys/{identity(key_id)}")
+
+    def audit(self, after: int = 0, limit: int = 100, through: int | None = None) -> Json:
+        return self._request("GET", "v1/audit", params={"after": after, "limit": limit, **({"through": through} if through is not None else {})})
+
     def profiles(self) -> list[Json]:
         return self._request("GET", "v1/profiles")
 

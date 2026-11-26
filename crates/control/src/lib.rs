@@ -2,6 +2,7 @@
 pub mod api;
 pub mod host_process;
 pub mod http;
+pub mod security;
 pub mod worker;
 
 #[derive(serde::Serialize, serde::Deserialize)]

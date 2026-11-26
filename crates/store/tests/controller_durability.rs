@@ -859,7 +859,7 @@ async fn schema_seven_upgrade_preserves_native_history_bytes_and_existing_operat
             let current:String=sqlx::query_scalar("SELECT payload FROM network_allocations WHERE sandbox_id=?").bind(id.to_string()).fetch_one(&mut connection).await?;
             let history:Vec<String>=sqlx::query_scalar("SELECT payload FROM network_allocation_events WHERE sandbox_id=? ORDER BY revision").bind(id.to_string()).fetch_all(&mut connection).await?;
             Ok::<_,sqlx::Error>((version,current,history))
-        }.await;connection.close().await.unwrap();let after=result.unwrap();assert_eq!(after.0,"13");assert_eq!((after.1,after.2),before);
+        }.await;connection.close().await.unwrap();let after=result.unwrap();assert_eq!(after.0,"14");assert_eq!((after.1,after.2),before);
         reserve(&upgraded,&network).await;
     }).await;
 }
@@ -1113,7 +1113,7 @@ async fn schema_eight_controller_payload_and_history_bytes_survive_purpose_upgra
             let payload:String=sqlx::query_scalar("SELECT payload FROM network_controllers WHERE controller_generation=?").bind(creating.controller_generation.to_string()).fetch_one(&mut connection).await?;
             let history:Vec<String>=sqlx::query_scalar("SELECT payload FROM network_controller_events WHERE controller_generation=? ORDER BY revision").bind(creating.controller_generation.to_string()).fetch_all(&mut connection).await?;
             Ok::<_,sqlx::Error>((version,payload,history))
-        }.await;connection.close().await.unwrap();let after=after.unwrap();assert_eq!(after.0,"13");assert_eq!((after.1,after.2),before);
+        }.await;connection.close().await.unwrap();let after=after.unwrap();assert_eq!(after.0,"14");assert_eq!((after.1,after.2),before);
         assert!(upgraded.begin_controller_create(network.sandbox_id,creating.controller_generation,actual.revision).await.is_err());
     }).await;
 }
@@ -1195,7 +1195,7 @@ async fn schema_nine_native_enforcement_and_collection_dispatches_keep_exact_byt
             .fetch_one(&mut connection)
             .await
             .unwrap();
-        assert_eq!(version, "13");
+        assert_eq!(version, "14");
         assert_eq!(snapshot(&mut connection).await, before);
         connection.close().await.unwrap();
     })

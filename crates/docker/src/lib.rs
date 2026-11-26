@@ -23,6 +23,7 @@ pub trait ResourceCreateObserver: Send + Sync {
     async fn settled(&self) -> Result<(), ApiError>;
 }
 
+mod bridge_diagnostics;
 mod contexts;
 mod controllers;
 mod guarded;
@@ -89,6 +90,7 @@ pub struct DockerDriver {
     bundle: Arc<Mutex<Option<String>>>,
     probes: Arc<Mutex<()>>,
     removals: Arc<Mutex<HashMap<Uuid, Weak<Mutex<()>>>>>,
+    bridge_diagnostic_budget: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 fn backend(error: DockerError) -> ApiError {
@@ -168,6 +170,7 @@ impl DockerDriver {
             bundle: Arc::new(Mutex::new(None)),
             probes: Arc::new(Mutex::new(())),
             removals: Arc::new(Mutex::new(HashMap::new())),
+            bridge_diagnostic_budget: Arc::new(std::sync::atomic::AtomicUsize::new(16)),
         })
     }
 
@@ -652,7 +655,8 @@ impl DockerDriver {
         self.owned(handle)
             .await?
             .ok_or_else(|| ApiError::new(ErrorCode::NotFound, "sandbox not found"))?;
-        tokio::time::timeout(Duration::from_secs(15), async {
+        let mut trace = bridge_diagnostics::BridgeDiagnostics::new(request);
+        let outcome = tokio::time::timeout(Duration::from_secs(15), async {
             let exec = self
                 .docker
                 .create_exec(
@@ -669,6 +673,8 @@ impl DockerDriver {
                 )
                 .await
                 .map_err(backend)?;
+            trace.exec_id = Some(exec.id.clone());
+            trace.phase = "attach_exec";
             let StartExecResults::Attached {
                 mut output,
                 mut input,
@@ -680,6 +686,7 @@ impl DockerDriver {
             else {
                 return Err(unavailable("agent bridge did not attach"));
             };
+            trace.phase = "encode_request";
             let mut bytes = serde_json::to_vec(request)
                 .map_err(|_| unavailable("could not encode agent request"))?;
             if bytes.len() > MAX_REPLY {
@@ -689,15 +696,18 @@ impl DockerDriver {
                 ));
             }
             bytes.push(b'\n');
+            trace.phase = "write_request";
             input
                 .write_all(&bytes)
                 .await
                 .map_err(|_| unavailable("agent bridge input failed"))?;
+            trace.phase = "flush_request";
             input
                 .flush()
                 .await
                 .map_err(|_| unavailable("agent bridge flush failed"))?;
             let mut reply = Vec::new();
+            trace.phase = "read_output";
             while let Some(packet) = output.next().await {
                 match packet.map_err(backend)? {
                     LogOutput::StdOut { message } => {
@@ -705,24 +715,37 @@ impl DockerDriver {
                             return Err(unavailable("agent reply exceeds limit"));
                         }
                         reply.extend_from_slice(&message);
+                        trace.observe_reply(&reply);
                     }
                     LogOutput::StdErr { message } if !message.is_empty() => {
+                        trace.stderr_observed = true;
                         return Err(unavailable("agent bridge reported an error"));
                     }
                     _ => {}
                 }
             }
+            trace.output_eof_observed = true;
+            trace.phase = "inspect_exec";
             let result = self.docker.inspect_exec(&exec.id).await.map_err(backend)?;
+            trace.terminal_running = result.running;
+            trace.terminal_exit_code = result.exit_code;
+            trace.phase = "validate_exit";
             if result.running != Some(false) || result.exit_code != Some(0) {
                 return Err(unavailable(
                     "agent bridge has no successful terminal result",
                 ));
             }
+            trace.phase = "decode_reply";
             serde_json::from_slice::<AgentReply>(&reply)
                 .map_err(|_| unavailable("invalid agent reply"))
         })
         .await
-        .map_err(|_| unavailable("agent bridge timed out"))?
+        .map_err(|_| unavailable("agent bridge timed out"))
+        .and_then(|value| value);
+        if let Err(error) = &outcome {
+            trace.report(self, handle, error);
+        }
+        outcome
     }
 
     async fn smoke_test(&self) -> Result<ProbeSupport, ApiError> {

@@ -20,12 +20,15 @@ use crate::{InternalArtifactCall, InternalFileCall, InternalSandboxCall, http::*
 use base64::{Engine, engine::general_purpose::STANDARD};
 
 mod contexts;
+mod credentials;
 mod isolated;
 mod network_policy;
+mod security;
 mod sessions;
 
 struct App {
     store: Store,
+    vault: Option<goldenhoop_credentials::VaultKey>,
     worker_client: reqwest::Client,
     session_sockets: Arc<tokio::sync::Semaphore>,
     context_streams: Arc<tokio::sync::Semaphore>,
@@ -33,7 +36,18 @@ struct App {
 type AppState = Arc<App>;
 
 pub fn router(store: Store, token: &str) -> Result<Router, ApiError> {
-    let auth = BearerAuth::new(token)?;
+    router_with_vault(store, token, None)
+}
+
+pub fn router_with_vault(
+    store: Store,
+    token: &str,
+    vault: Option<goldenhoop_credentials::VaultKey>,
+) -> Result<Router, ApiError> {
+    let auth = crate::security::Authorizer {
+        bootstrap: BearerAuth::new(token)?,
+        store: store.clone(),
+    };
     let worker_client = reqwest::Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
@@ -48,12 +62,27 @@ pub fn router(store: Store, token: &str) -> Result<Router, ApiError> {
         })?;
     let app = Arc::new(App {
         store,
+        vault,
         worker_client,
         session_sockets: Arc::new(tokio::sync::Semaphore::new(64)),
         context_streams: Arc::new(tokio::sync::Semaphore::new(16)),
     });
     Ok(Router::new()
         .route("/healthz", get(health))
+        .route("/v1/api-keys", post(security::issue))
+        .route(
+            "/v1/api-keys/{id}",
+            get(security::inspect).delete(security::revoke),
+        )
+        .route("/v1/audit", get(security::audit))
+        .route("/v1/sandboxes/{id}/credentials", get(credentials::list))
+        .route(
+            "/v1/sandboxes/{id}/credentials/{binding}",
+            get(credentials::inspect)
+                .put(credentials::put)
+                .delete(credentials::revoke)
+                .layer(DefaultBodyLimit::max(64 * 1024)),
+        )
         .route("/v1/profiles", get(profiles))
         .route("/v1/sandboxes", get(list).post(create))
         .route("/v1/sandboxes/{id}", get(inspect).delete(terminate))
@@ -112,7 +141,10 @@ pub fn router(store: Store, token: &str) -> Result<Router, ApiError> {
         .fallback(not_found)
         .layer(DefaultBodyLimit::max(24 * 1024 * 1024))
         .layer(ConcurrencyLimitLayer::new(64))
-        .layer(middleware::from_fn_with_state(auth, authenticate))
+        .layer(middleware::from_fn_with_state(
+            auth,
+            crate::security::authenticate,
+        ))
         .with_state(app))
 }
 
@@ -150,9 +182,13 @@ async fn profile(
 
 async fn create(
     State(app): State<AppState>,
+    axum::Extension(principal): axum::Extension<crate::security::Principal>,
     headers: HeaderMap,
     ApiJson(request): ApiJson<CreateSandbox>,
 ) -> Result<(StatusCode, Json<SandboxCreated>), HttpError> {
+    if request.network != NetworkPolicy::default() {
+        principal.require(KeyPermission::Network)?;
+    }
     let key = idempotency_key(&headers)?;
     if let Some(id) = app
         .store

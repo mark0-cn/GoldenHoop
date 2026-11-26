@@ -8,6 +8,22 @@ use goldenhoop_egress::controller::{Reply, Request};
 use goldenhoop_store::{NetworkPolicyOwner, NetworkPolicyPhase};
 use tokio::time::Instant as LeaseInstant;
 
+const PUBLICATION_MARGIN: Duration = Duration::from_secs(1);
+const RENEWAL_TICK: Duration = Duration::from_millis(300);
+
+fn renewal_due(since_last: Duration, remaining: Duration, slowest_exchange: Duration) -> bool {
+    // Reserve the actual exchange cost *before* the old publication expires.
+    // One further second covers scheduling/readback variance. Neither this
+    // estimate nor an exchange in flight extends any verified lease.
+    let headroom = slowest_exchange
+        .saturating_add(PUBLICATION_MARGIN)
+        .saturating_add(Duration::from_secs(1))
+        .max(Duration::from_secs(
+            u64::from(goldenhoop_egress::LEASE_SECONDS) / 2,
+        ));
+    since_last >= Duration::from_secs(2) || remaining <= headroom
+}
+
 #[derive(Clone)]
 struct Live {
     owner: NetworkPolicyOwner,
@@ -421,6 +437,7 @@ async fn hold(
         let mut applied_revision = None;
         let mut last = LeaseInstant::now();
         let mut timing_records_left = 8;
+        let mut slowest_exchange = Duration::from_secs(2);
         loop {
             if *shutdown.borrow() || store.effective_desired(id).await? != DesiredState::Running {
                 break;
@@ -434,6 +451,7 @@ async fn hold(
             }
             let mut renewal_timing = None;
             if applied_revision != Some(intent.desired_revision) {
+                let started = LeaseInstant::now();
                 live.send_replace(None);
                 intent = store
                     .begin_network_policy_apply(id, intent.revision, &owner)
@@ -471,10 +489,12 @@ async fn hold(
                 applied_revision = Some(intent.desired_revision);
                 lease = Some(next);
                 last = LeaseInstant::now();
-            } else if last.elapsed() >= Duration::from_secs(2)
-                || lease.as_ref().ok_or_else(unavailable)?.remaining()
-                    <= Duration::from_secs(u64::from(goldenhoop_egress::LEASE_SECONDS) / 2)
-            {
+                slowest_exchange = slowest_exchange.max(last.duration_since(started));
+            } else if renewal_due(
+                last.elapsed(),
+                lease.as_ref().ok_or_else(unavailable)?.remaining(),
+                slowest_exchange,
+            ) {
                 // Native readback deducts the entire exchange latency. A
                 // successful exchange can therefore leave much less than the
                 // maximum lease. Renew promptly when that remaining budget is
@@ -496,6 +516,7 @@ async fn hold(
                         lease.as_ref().ok_or_else(unavailable)?,
                     )
                     .await;
+                slowest_exchange = slowest_exchange.max(started.elapsed());
                 if timing_records_left > 0 {
                     timing_records_left -= 1;
                     renewal_timing = Some(RenewalTiming {
@@ -522,7 +543,7 @@ async fn hold(
             }
             let remaining = lease.as_ref().ok_or_else(unavailable)?.remaining();
             let usable = remaining
-                .checked_sub(Duration::from_secs(1))
+                .checked_sub(PUBLICATION_MARGIN)
                 .filter(|d| !d.is_zero());
             let Some(usable) = usable else {
                 let error = unavailable();
@@ -543,7 +564,7 @@ async fn hold(
             }
             tokio::select! {
                 result=shutdown.changed()=>{if result.is_err() || *shutdown.borrow(){break;}},
-                _=tokio::time::sleep(Duration::from_millis(300))=>{},
+                _=tokio::time::sleep(RENEWAL_TICK)=>{},
             }
         }
         Ok::<_, ApiError>(())
@@ -578,4 +599,28 @@ async fn hold(
     crate::host_process::collect(&store, fresh).await?;
     fenced?;
     result
+}
+
+#[cfg(test)]
+mod renewal_tests {
+    use super::*;
+    #[test]
+    fn observed_slow_exchange_is_reserved_before_private_publication_expires() {
+        let exchange = Duration::from_millis(4800);
+        let remaining = Duration::from_millis(6800);
+        // The old two-second/half-native-lifetime rule waited here. Its next
+        // observed 4.8 s exchange crossed the private (native minus 1 s) fence.
+        assert!(renewal_due(Duration::from_millis(300), remaining, exchange));
+        assert!(remaining.checked_sub(PUBLICATION_MARGIN).unwrap() > exchange);
+        assert!(!renewal_due(
+            Duration::from_millis(300),
+            Duration::from_secs(9),
+            Duration::from_millis(50)
+        ));
+        assert!(renewal_due(
+            Duration::from_secs(2),
+            Duration::from_secs(9),
+            Duration::from_millis(50)
+        ));
+    }
 }

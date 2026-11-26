@@ -166,7 +166,7 @@ pub(super) async fn terminate_descendants(
         .bind(id.to_string()).execute(&mut **tx).await.map_err(db)?;
     Ok(())
 }
-async fn effective_desired(
+pub(super) async fn effective_desired(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     id: Uuid,
 ) -> Result<DesiredState, ApiError> {

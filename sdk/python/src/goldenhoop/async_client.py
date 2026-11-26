@@ -63,6 +63,18 @@ class AsyncClient(AsyncCodeClientMixin):
                 else:
                     raise TransportError() from None
 
+    async def issue_api_key(self, request: Json) -> Json:
+        return await self._request("POST", "v1/api-keys", request)
+
+    async def api_key(self, key_id: str) -> Json:
+        return await self._request("GET", f"v1/api-keys/{identity(key_id)}")
+
+    async def revoke_api_key(self, key_id: str) -> Json:
+        return await self._request("DELETE", f"v1/api-keys/{identity(key_id)}")
+
+    async def audit(self, after: int = 0, limit: int = 100, through: int | None = None) -> Json:
+        return await self._request("GET", "v1/audit", params={"after": after, "limit": limit, **({"through": through} if through is not None else {})})
+
     async def profiles(self) -> list[Json]:
         return await self._request("GET", "v1/profiles")
 

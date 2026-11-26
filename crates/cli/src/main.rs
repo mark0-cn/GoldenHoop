@@ -76,6 +76,16 @@ impl ScopeArgs {
 #[derive(Subcommand)]
 enum Command {
     Profiles,
+    Keys {
+        #[command(subcommand)]
+        command: KeyCommand,
+    },
+    Audit {
+        #[arg(long, default_value_t = 0)]
+        after: u64,
+        #[arg(long, default_value_t = 100)]
+        limit: u32,
+    },
     #[command(flatten)]
     Sandbox(SandboxCommand),
     #[command(flatten)]
@@ -88,6 +98,13 @@ enum Command {
     Sessions(SessionsCommand),
     #[command(flatten)]
     Code(CodeCommand),
+}
+
+#[derive(Subcommand)]
+enum KeyCommand {
+    Create { request: PathBuf },
+    Get { id: Uuid },
+    Revoke { id: Uuid },
 }
 
 #[derive(Subcommand)]
@@ -470,6 +487,26 @@ async fn run(args: Args) -> CliResult<u8> {
     let client = Client::new(&args.endpoint, &token)?;
     match args.command {
         Command::Profiles => print_json(&client.profiles().await?)?,
+        Command::Keys {
+            command: KeyCommand::Create { request },
+        } => {
+            let mut data = Vec::new();
+            std::fs::File::open(request)?
+                .take(64 * 1024 + 1)
+                .read_to_end(&mut data)?;
+            if data.len() > 64 * 1024 {
+                return Err("key request exceeds size limit".into());
+            }
+            let request: CreateApiKey = serde_json::from_slice(&data)?;
+            print_json(&client.issue_api_key(&request).await?)?;
+        }
+        Command::Keys {
+            command: KeyCommand::Get { id },
+        } => print_json(&client.api_key(id).await?)?,
+        Command::Keys {
+            command: KeyCommand::Revoke { id },
+        } => print_json(&client.revoke_api_key(id).await?)?,
+        Command::Audit { after, limit } => print_json(&client.audit(after, limit).await?)?,
         Command::Sandbox(SandboxCommand::Create {
             profile,
             image,

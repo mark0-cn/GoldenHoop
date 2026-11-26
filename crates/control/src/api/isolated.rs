@@ -2,10 +2,18 @@ use super::*;
 
 pub(super) async fn create(
     State(app): State<AppState>,
+    axum::Extension(principal): axum::Extension<crate::security::Principal>,
     ApiPath(parent): ApiPath<Uuid>,
     headers: HeaderMap,
     ApiJson(spec): ApiJson<CreateIsolatedSession>,
 ) -> Result<(StatusCode, Json<IsolatedSessionCreated>), HttpError> {
+    if spec
+        .network
+        .as_ref()
+        .is_some_and(|policy| *policy != NetworkPolicy::default())
+    {
+        principal.require(KeyPermission::Network)?;
+    }
     let key = idempotency_key(&headers)?;
     if let Some(id) = app
         .store

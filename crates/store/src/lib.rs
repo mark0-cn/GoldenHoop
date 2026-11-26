@@ -13,6 +13,8 @@ pub use network_dispatch::{NetworkCreateDispatch, NetworkCreateKind};
 pub use network_policy_public::{NetworkOperatorPolicy, NetworkPolicyInputs, NetworkPolicySource};
 mod networks;
 pub use network_policy::{NetworkPolicyControl, NetworkPolicyOwner, NetworkPolicyPhase};
+mod credentials;
+mod security;
 mod sessions;
 pub use networks::{
     NetworkAbsence, NetworkAllocation, NetworkBinding, NetworkNativeBinding, NetworkPhase,
@@ -258,92 +260,35 @@ impl Store {
                 .fetch_one(&mut *tx)
                 .await
                 .map_err(db)?;
-        if !matches!(
-            version.as_str(),
-            "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "10" | "11" | "12" | "13"
-        ) {
+        let version: u32 = version.parse().map_err(|_| internal())?;
+        if !(1..=14).contains(&version) {
             return Err(ApiError::new(
                 ErrorCode::UnsupportedCapability,
                 "database schema version is unsupported",
             ));
         }
-        if version == "1" {
-            sqlx::raw_sql(include_str!("schema-v2.sql"))
-                .execute(&mut *tx)
-                .await
-                .map_err(db)?;
-        }
-        if matches!(version.as_str(), "1" | "2") {
-            sqlx::raw_sql(include_str!("schema-v3.sql"))
-                .execute(&mut *tx)
-                .await
-                .map_err(db)?;
-        }
-        if matches!(version.as_str(), "1" | "2" | "3") {
-            sqlx::raw_sql(include_str!("schema-v4.sql"))
-                .execute(&mut *tx)
-                .await
-                .map_err(db)?;
-        }
-        if matches!(version.as_str(), "1" | "2" | "3" | "4") {
-            sqlx::raw_sql(include_str!("schema-v5.sql"))
-                .execute(&mut *tx)
-                .await
-                .map_err(db)?;
-        }
-        if !matches!(
-            version.as_str(),
-            "6" | "7" | "8" | "9" | "10" | "11" | "12" | "13"
-        ) {
-            sqlx::raw_sql(include_str!("schema-v6.sql"))
-                .execute(&mut *tx)
-                .await
-                .map_err(db)?;
-        }
-        if !matches!(
-            version.as_str(),
-            "7" | "8" | "9" | "10" | "11" | "12" | "13"
-        ) {
-            sqlx::raw_sql(include_str!("schema-v7.sql"))
-                .execute(&mut *tx)
-                .await
-                .map_err(db)?;
-        }
-        if !matches!(version.as_str(), "8" | "9" | "10" | "11" | "12" | "13") {
-            sqlx::raw_sql(include_str!("schema-v8.sql"))
-                .execute(&mut *tx)
-                .await
-                .map_err(db)?;
-        }
-        if !matches!(version.as_str(), "9" | "10" | "11" | "12" | "13") {
-            sqlx::raw_sql(include_str!("schema-v9.sql"))
-                .execute(&mut *tx)
-                .await
-                .map_err(db)?;
-        }
-        if !matches!(version.as_str(), "10" | "11" | "12" | "13") {
-            sqlx::raw_sql(include_str!("schema-v10.sql"))
-                .execute(&mut *tx)
-                .await
-                .map_err(db)?;
-        }
-        if !matches!(version.as_str(), "11" | "12" | "13") {
-            sqlx::raw_sql(include_str!("schema-v11.sql"))
-                .execute(&mut *tx)
-                .await
-                .map_err(db)?;
-        }
-        if !matches!(version.as_str(), "12" | "13") {
-            sqlx::raw_sql(include_str!("schema-v12.sql"))
-                .execute(&mut *tx)
-                .await
-                .map_err(db)?;
-        }
-        if version != "13" {
-            sqlx::raw_sql(include_str!("schema-v13.sql"))
-                .execute(&mut *tx)
-                .await
-                .map_err(db)?;
+        let migrations = [
+            (2, include_str!("schema-v2.sql")),
+            (3, include_str!("schema-v3.sql")),
+            (4, include_str!("schema-v4.sql")),
+            (5, include_str!("schema-v5.sql")),
+            (6, include_str!("schema-v6.sql")),
+            (7, include_str!("schema-v7.sql")),
+            (8, include_str!("schema-v8.sql")),
+            (9, include_str!("schema-v9.sql")),
+            (10, include_str!("schema-v10.sql")),
+            (11, include_str!("schema-v11.sql")),
+            (12, include_str!("schema-v12.sql")),
+            (13, include_str!("schema-v13.sql")),
+            (14, include_str!("schema-v14.sql")),
+        ];
+        for (target, migration) in migrations {
+            if version < target {
+                sqlx::raw_sql(migration)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(db)?;
+            }
         }
         sqlx::query("INSERT OR IGNORE INTO meta(key,value) VALUES('installation_id',?)")
             .bind(Uuid::new_v4().to_string())
