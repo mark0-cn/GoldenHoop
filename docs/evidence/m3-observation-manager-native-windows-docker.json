@@ -1,0 +1,2633 @@
+{
+  "suite": "native-credential-redirect-readback",
+  "attempt": "a73d6872-86d1-42a6-8e72-883eaff646a0",
+  "timestamp": "2026-11-26T07:42:37.373274+00:00",
+  "result": "passed",
+  "cleanup": "complete",
+  "scope": "Private inet namespace, not transparent runtime acceptance",
+  "cases": [
+    "actual_v4_v6_native_redirect_matches_exact_owned_plan",
+    "changed_source_destination_order_extra_verdict_and_hook_are_refused",
+    "dns_transport_cannot_be_selected_as_credential_port",
+    "actual_manager_preserves_owned_redirect_across_install_apply_and_quarantine",
+    "actual_manager_refuses_redirect_removal_while_bridge_exists",
+    "actual_manager_removes_redirect_only_after_independent_bridge_absence"
+  ],
+  "commands": [
+    {
+      "argv": [
+        "docker",
+        "image",
+        "inspect",
+        "goldenhoop-credential-manager:current"
+      ],
+      "exit_code": 0,
+      "stdout": "[\n    {\n        \"Id\": \"sha256:b04a532af2768c580a35b8e229cd0153cf5f00969565991dcf12d6dd989c6e8e\",\n        \"RepoTags\": [\n            \"goldenhoop-credential-manager:current\"\n        ],\n        \"RepoDigests\": [\n            \"goldenhoop-credential-manager@sha256:b04a532af2768c580a35b8e229cd0153cf5f00969565991dcf12d6dd989c6e8e\"\n        ],\n        \"Comment\": \"buildkit.dockerfile.v0\",\n        \"Created\": \"2026-11-26T07:40:27.478851697Z\",\n        \"Config\": {\n            \"Env\": [\n                \"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\",\n                \"GOLDENHOOP_ISOLATED_AGENT=1\"\n            ],\n            \"Entrypoint\": [\n                \"/usr/local/bin/goldenhoop-agent\",\n                \"serve\"\n            ],\n            \"WorkingDir\": \"/workspace\",\n            \"Labels\": {\n                \"dev.goldenhoop.agent.libc\": \"musl\",\n                \"dev.goldenhoop.build\": \"policy-decisions\",\n                \"dev.goldenhoop.fixture\": \"network-interop\",\n                \"dev.goldenhoop.test\": \"credential-manager-fixture\"\n            }\n        },\n        \"Architecture\": \"amd64\",\n        \"Os\": \"linux\",\n        \"Size\": 394275256,\n        \"RootFS\": {\n            \"Type\": \"layers\",\n            \"Layers\": [\n                \"sha256:1d7b9dd8778ebc4d9bf2f64436dd358640718cb349f5640b33bebaea4ffd62c2\",\n                \"sha256:5f6ca671dee567bf40d9b744adc4cbfc17865088be41161e155dd176ebc36c81\",\n                \"sha256:8dd0c3c4e6ab57b71227d149968f2646bb329afb5a5b6cebf664c60970215762\",\n                \"sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef\",\n                \"sha256:fab8f1653ce9b2c9d77004993f3467d3b5a966233cf7fc61ead62d017ae97a33\",\n                \"sha256:c1899f463411454617da3210d65ae4fc86820e6d476541d79c0257c26e679cfb\",\n                \"sha256:98e13e824d54a3642fa4b7bdb761ae6e1d020b48b2f040bfed9c4ada3358e47c\"\n            ]\n        },\n        \"Metadata\": {\n            \"LastTagTime\": \"2026-11-26T07:40:40.371683402Z\"\n        },\n        \"Descriptor\": {\n            \"mediaType\": \"application/vnd.oci.image.index.v1+json\",\n            \"digest\": \"sha256:b04a532af2768c580a35b8e229cd0153cf5f00969565991dcf12d6dd989c6e8e\",\n            \"size\": 856\n        },\n        \"Identity\": {\n            \"Build\": [\n                {\n                    \"Ref\": \"gj6tkqpugdclu03q32f5uuinr\",\n                    \"CreatedAt\": \"2026-11-26T07:40:42.017818134Z\"\n                }\n            ]\n        }\n    }\n]\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "docker",
+        "create",
+        "--name",
+        "goldenhoop-credential-readback-a73d6872",
+        "--network",
+        "none",
+        "--read-only",
+        "--cap-drop",
+        "ALL",
+        "--cap-add",
+        "NET_ADMIN",
+        "--security-opt",
+        "no-new-privileges:true",
+        "--cpus",
+        "1",
+        "--memory",
+        "64m",
+        "--pids-limit",
+        "32",
+        "--label",
+        "dev.goldenhoop.test=credential-redirect-readback",
+        "--label",
+        "dev.goldenhoop.attempt=a73d6872-86d1-42a6-8e72-883eaff646a0",
+        "--entrypoint",
+        "/bin/sleep",
+        "sha256:b04a532af2768c580a35b8e229cd0153cf5f00969565991dcf12d6dd989c6e8e",
+        "600"
+      ],
+      "exit_code": 0,
+      "stdout": "7180ddb7a05bb6adc9b5dc96b90203f90dd502b8c52f0b6a03d1724bba08272d\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "docker",
+        "start",
+        "7180ddb7a05bb6adc9b5dc96b90203f90dd502b8c52f0b6a03d1724bba08272d"
+      ],
+      "exit_code": 0,
+      "stdout": "7180ddb7a05bb6adc9b5dc96b90203f90dd502b8c52f0b6a03d1724bba08272d\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "docker",
+        "exec",
+        "7180ddb7a05bb6adc9b5dc96b90203f90dd502b8c52f0b6a03d1724bba08272d",
+        "ip",
+        "link",
+        "add",
+        "ghndc5fa44a9b00",
+        "type",
+        "bridge"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "docker",
+        "exec",
+        "7180ddb7a05bb6adc9b5dc96b90203f90dd502b8c52f0b6a03d1724bba08272d",
+        "cat",
+        "/sys/class/net/ghndc5fa44a9b00/ifindex"
+      ],
+      "exit_code": 0,
+      "stdout": "2\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "C:/Users/75741/Documents/Codex/2026-11-24/sh/work/goldenhoop-target-windows/debug/examples/credential_redirect.exe"
+      ],
+      "exit_code": 0,
+      "stdout": "{\"script\":\"add table inet gh_c_dc5fa44a9b0049989de7776540d3ac21\\nadd chain inet gh_c_dc5fa44a9b0049989de7776540d3ac21 goldenhoop_61810146c428c07b5919b5af4e040c218e58f099fffb0a8156239f718a259999\\nadd chain inet gh_c_dc5fa44a9b0049989de7776540d3ac21 credential_redirect_1\\nadd chain inet gh_c_dc5fa44a9b0049989de7776540d3ac21 binding_cb625c3d742ba0cf785857395facdf2b4b7c7cba2acc7828501ba8f10764e542\\nadd chain inet gh_c_dc5fa44a9b0049989de7776540d3ac21 cfg_000_7b227634223a7b2261646472657373223a223139382e31392e302e31222c22706f7274223a34343030307d2c227636223a7b2261646472657373223a22666434\\nadd chain inet gh_c_dc5fa44a9b0049989de7776540d3ac21 cfg_001_323a3a31222c22706f7274223a34343030317d2c22706f727473223a7b223830223a2268747470222c22343433223a226874747073227d7d\\nadd chain inet gh_c_dc5fa44a9b0049989de7776540d3ac21 prerouting { type nat hook prerouting priority -105; policy accept; }\\nadd rule inet gh_c_dc5fa44a9b0049989de7776540d3ac21 prerouting iifname \\\"ghndc5fa44a9b00\\\" meta iif 2 meta nfproto 2 tcp dport 80 counter dnat ip to 198.19.0.1:44000\\nadd rule inet gh_c_dc5fa44a9b0049989de7776540d3ac21 prerouting iifname \\\"ghndc5fa44a9b00\\\" meta iif 2 meta nfproto 2 tcp dport 443 counter dnat ip to 198.19.0.1:44000\\nadd rule inet gh_c_dc5fa44a9b0049989de7776540d3ac21 prerouting iifname \\\"ghndc5fa44a9b00\\\" meta iif 2 meta nfproto 10 tcp dport 80 counter dnat ip6 to [fd42::1]:44001\\nadd rule inet gh_c_dc5fa44a9b0049989de7776540d3ac21 prerouting iifname \\\"ghndc5fa44a9b00\\\" meta iif 2 meta nfproto 10 tcp dport 443 counter dnat ip6 to [fd42::1]:44001\\n\"}\n",
+      "stderr": "",
+      "expected_refusal": false
+    },
+    {
+      "argv": [
+        "docker",
+        "exec",
+        "--interactive",
+        "7180ddb7a05bb6adc9b5dc96b90203f90dd502b8c52f0b6a03d1724bba08272d",
+        "/usr/sbin/nft",
+        "--file",
+        "-"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "docker",
+        "exec",
+        "7180ddb7a05bb6adc9b5dc96b90203f90dd502b8c52f0b6a03d1724bba08272d",
+        "/usr/sbin/nft",
+        "--json",
+        "--numeric",
+        "list",
+        "table",
+        "inet",
+        "gh_c_dc5fa44a9b0049989de7776540d3ac21"
+      ],
+      "exit_code": 0,
+      "stdout": "{\"nftables\": [{\"metainfo\": {\"version\": \"1.0.6\", \"release_name\": \"Lester Gooch #5\", \"json_schema_version\": 1}}, {\"table\": {\"family\": \"inet\", \"name\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"handle\": 1}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"name\": \"goldenhoop_61810146c428c07b5919b5af4e040c218e58f099fffb0a8156239f718a259999\", \"handle\": 1}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"name\": \"credential_redirect_1\", \"handle\": 2}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"name\": \"binding_cb625c3d742ba0cf785857395facdf2b4b7c7cba2acc7828501ba8f10764e542\", \"handle\": 3}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"name\": \"cfg_000_7b227634223a7b2261646472657373223a223139382e31392e302e31222c22706f7274223a34343030307d2c227636223a7b2261646472657373223a22666434\", \"handle\": 4}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"name\": \"cfg_001_323a3a31222c22706f7274223a34343030317d2c22706f727473223a7b223830223a2268747470222c22343433223a226874747073227d7d\", \"handle\": 5}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"name\": \"prerouting\", \"handle\": 6, \"type\": \"nat\", \"hook\": \"prerouting\", \"prio\": -105, \"policy\": \"accept\"}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"chain\": \"prerouting\", \"handle\": 7, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iif\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"nfproto\"}}, \"right\": 2}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"tcp\", \"field\": \"dport\"}}, \"right\": 80}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"dnat\": {\"family\": \"ip\", \"addr\": \"198.19.0.1\", \"port\": 44000}}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"chain\": \"prerouting\", \"handle\": 8, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iif\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"nfproto\"}}, \"right\": 2}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"tcp\", \"field\": \"dport\"}}, \"right\": 443}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"dnat\": {\"family\": \"ip\", \"addr\": \"198.19.0.1\", \"port\": 44000}}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"chain\": \"prerouting\", \"handle\": 9, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iif\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"nfproto\"}}, \"right\": 10}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"tcp\", \"field\": \"dport\"}}, \"right\": 80}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"dnat\": {\"family\": \"ip6\", \"addr\": \"fd42::1\", \"port\": 44001}}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"chain\": \"prerouting\", \"handle\": 10, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iif\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"nfproto\"}}, \"right\": 10}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"tcp\", \"field\": \"dport\"}}, \"right\": 443}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"dnat\": {\"family\": \"ip6\", \"addr\": \"fd42::1\", \"port\": 44001}}]}}]}\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "C:/Users/75741/Documents/Codex/2026-11-24/sh/work/goldenhoop-target-windows/debug/examples/credential_redirect.exe"
+      ],
+      "exit_code": 0,
+      "stdout": "{\"ready\":false,\"verified\":true}\n",
+      "stderr": "",
+      "expected_refusal": false
+    },
+    {
+      "argv": [
+        "C:/Users/75741/Documents/Codex/2026-11-24/sh/work/goldenhoop-target-windows/debug/examples/credential_redirect.exe"
+      ],
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: ApiError { code: Conflict, message: \"native credential redirect differs\", request_id: None, retryable: false }\n",
+      "expected_refusal": true
+    },
+    {
+      "argv": [
+        "C:/Users/75741/Documents/Codex/2026-11-24/sh/work/goldenhoop-target-windows/debug/examples/credential_redirect.exe"
+      ],
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: ApiError { code: Conflict, message: \"native credential redirect differs\", request_id: None, retryable: false }\n",
+      "expected_refusal": true
+    },
+    {
+      "argv": [
+        "C:/Users/75741/Documents/Codex/2026-11-24/sh/work/goldenhoop-target-windows/debug/examples/credential_redirect.exe"
+      ],
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: ApiError { code: Conflict, message: \"native credential redirect differs\", request_id: None, retryable: false }\n",
+      "expected_refusal": true
+    },
+    {
+      "argv": [
+        "C:/Users/75741/Documents/Codex/2026-11-24/sh/work/goldenhoop-target-windows/debug/examples/credential_redirect.exe"
+      ],
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: ApiError { code: Conflict, message: \"native credential redirect differs\", request_id: None, retryable: false }\n",
+      "expected_refusal": true
+    },
+    {
+      "argv": [
+        "C:/Users/75741/Documents/Codex/2026-11-24/sh/work/goldenhoop-target-windows/debug/examples/credential_redirect.exe"
+      ],
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: ApiError { code: Conflict, message: \"native credential redirect differs\", request_id: None, retryable: false }\n",
+      "expected_refusal": true
+    },
+    {
+      "argv": [
+        "C:/Users/75741/Documents/Codex/2026-11-24/sh/work/goldenhoop-target-windows/debug/examples/credential_redirect.exe"
+      ],
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: ApiError { code: Conflict, message: \"native credential redirect differs\", request_id: None, retryable: false }\n",
+      "expected_refusal": true
+    },
+    {
+      "argv": [
+        "C:/Users/75741/Documents/Codex/2026-11-24/sh/work/goldenhoop-target-windows/debug/examples/credential_redirect.exe"
+      ],
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: ApiError { code: InvalidRequest, message: \"invalid credential redirect ports\", request_id: None, retryable: false }\n",
+      "expected_refusal": true
+    },
+    {
+      "argv": [
+        "docker",
+        "exec",
+        "7180ddb7a05bb6adc9b5dc96b90203f90dd502b8c52f0b6a03d1724bba08272d",
+        "python3",
+        "-B",
+        "-c",
+        "\nimport datetime,json,pathlib,subprocess,sys,uuid\na=json.loads(sys.argv[1]);table='gh_c_'+a['generation'].replace('-','');events=[];captures=[];sequence=0;failure=None\np=subprocess.Popen(['/usr/local/libexec/goldenhoop-egress'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)\ndef rpc(operation,error=False,**fields):\n global sequence\n sequence+=1;request={'id':sequence,'command':dict(operation=operation,**fields)}\n p.stdin.write(json.dumps(request)+'\\n');p.stdin.flush();line=p.stdout.readline();assert line,'missing explicit manager reply'\n reply=json.loads(line);events.append(dict(request=request,reply=reply))\n assert reply['id']==sequence and ('error' in reply)==error,reply\n return reply.get('error' if error else 'result')\ndef nft(*args):\n r=subprocess.run(['nft',*args],capture_output=True,text=True,timeout=8);assert r.returncode==0,r.stderr;return json.loads(r.stdout)\ndef capture(phase,present=True):\n inventory=nft('--json','list','tables');found=any(r.get('table',{}).get('name')==table for r in inventory['nftables'])\n observed=nft('--json','list','table','inet',table) if found else None\n captures.append(dict(phase=phase,present=found,native=observed))\n assert found==present,(phase,'credential redirect presence differs')\ntry:\n native=dict(allocation=a,identity={**{k:a[k] for k in ('installation_id','sandbox_id','generation')},'profile':'local-runc-dev'},provisioning_token=str(uuid.uuid4()),expires_at=(datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(seconds=90)).isoformat())\n rpc('bind_native',plan=native);rpc('open',allocation=a);capture('before_install')\n rpc('install');capture('after_install')\n policy={'policies':[{'default_action':'deny','rules':[]}]}\n applied=rpc('apply',expected_revision=0,config=policy);assert applied['revision']==1 and not applied['uncertain'];capture('after_apply')\n rpc('quarantine',expected_revision=1);capture('after_quarantine')\n refused=rpc('remove',expected_revision=2,error=True);assert refused['code']=='conflict';capture('remove_refused_while_bridge_exists')\n removed=subprocess.run(['ip','link','delete',a['bridge']],capture_output=True,text=True,timeout=8);assert removed.returncode==0,removed.stderr\n assert not pathlib.Path('/sys/class/net',a['bridge']).exists()\n rpc('remove',expected_revision=2);capture('after_bridge_absence_and_remove',False)\nexcept BaseException as error:failure=repr(error)\nfinally:\n p.stdin.close()\n try:code=p.wait(timeout=5)\n except subprocess.TimeoutExpired:p.kill();p.wait(timeout=5);raise\n stderr=p.stderr.read()\nprint(json.dumps(dict(events=events,captures=captures,controller_exit_code=code,controller_stderr=stderr,error=failure,ready=False)))\nassert code==0 and failure is None,failure or stderr\n",
+        "{\"installation_id\": \"d2e9a322-a13a-4dab-a19b-04966964a239\", \"sandbox_id\": \"6564f6b9-b94c-4d0a-a96f-2285455b45ac\", \"generation\": \"dc5fa44a-9b00-4998-9de7-776540d3ac21\", \"bridge\": \"ghndc5fa44a9b00\", \"ifindex\": 2}"
+      ],
+      "exit_code": 0,
+      "stdout": "{\"events\": [{\"request\": {\"id\": 1, \"command\": {\"operation\": \"bind_native\", \"plan\": {\"allocation\": {\"installation_id\": \"d2e9a322-a13a-4dab-a19b-04966964a239\", \"sandbox_id\": \"6564f6b9-b94c-4d0a-a96f-2285455b45ac\", \"generation\": \"dc5fa44a-9b00-4998-9de7-776540d3ac21\", \"bridge\": \"ghndc5fa44a9b00\", \"ifindex\": 2}, \"identity\": {\"installation_id\": \"d2e9a322-a13a-4dab-a19b-04966964a239\", \"sandbox_id\": \"6564f6b9-b94c-4d0a-a96f-2285455b45ac\", \"generation\": \"dc5fa44a-9b00-4998-9de7-776540d3ac21\", \"profile\": \"local-runc-dev\"}, \"provisioning_token\": \"5bca58e2-2d9b-4988-a847-8e1c9ed9540d\", \"expires_at\": \"2026-11-26T07:44:11.237150+00:00\"}}}, \"reply\": {\"id\": 1, \"result\": {\"alias\": \"goldenhoop:61810146c428c07b5919b5af4e040c218e58f099fffb0a8156239f718a259999\", \"allocation\": {\"bridge\": \"ghndc5fa44a9b00\", \"generation\": \"dc5fa44a-9b00-4998-9de7-776540d3ac21\", \"ifindex\": 2, \"installation_id\": \"d2e9a322-a13a-4dab-a19b-04966964a239\", \"sandbox_id\": \"6564f6b9-b94c-4d0a-a96f-2285455b45ac\"}, \"changed\": true, \"identity_sha256\": \"d5284080472d338f837062528b022db3af9cd9467df63dfbd94ddc2d6e122a01\", \"provisioning_token\": \"5bca58e2-2d9b-4988-a847-8e1c9ed9540d\"}}}, {\"request\": {\"id\": 2, \"command\": {\"operation\": \"open\", \"allocation\": {\"installation_id\": \"d2e9a322-a13a-4dab-a19b-04966964a239\", \"sandbox_id\": \"6564f6b9-b94c-4d0a-a96f-2285455b45ac\", \"generation\": \"dc5fa44a-9b00-4998-9de7-776540d3ac21\", \"bridge\": \"ghndc5fa44a9b00\", \"ifindex\": 2}}}, \"reply\": {\"id\": 2, \"result\": {\"destination_binding_sha256\": null, \"destinations_guarded\": false, \"ethernet_guarded\": false, \"ethernet_sha256\": null, \"installed\": false, \"maximum_lease_seconds\": 10, \"revision\": null, \"source_binding_sha256\": null, \"source_guarded\": false, \"table_sha256\": null, \"uncertain\": false}}}, {\"request\": {\"id\": 3, \"command\": {\"operation\": \"install\"}}, \"reply\": {\"id\": 3, \"result\": {\"destination_binding_sha256\": null, \"destinations_guarded\": false, \"ethernet_guarded\": false, \"ethernet_sha256\": null, \"installed\": true, \"maximum_lease_seconds\": 10, \"revision\": 0, \"source_binding_sha256\": null, \"source_guarded\": false, \"table_sha256\": \"de6897877e901b03c73b6370e0a6dc5b7ffa8461a4a0b4604ad2e77cfb3064b9\", \"uncertain\": false}}}, {\"request\": {\"id\": 4, \"command\": {\"operation\": \"apply\", \"expected_revision\": 0, \"config\": {\"policies\": [{\"default_action\": \"deny\", \"rules\": []}]}}}, \"reply\": {\"id\": 4, \"result\": {\"destination_binding_sha256\": null, \"destinations_guarded\": false, \"ethernet_guarded\": false, \"ethernet_sha256\": null, \"installed\": true, \"maximum_lease_seconds\": 10, \"revision\": 1, \"source_binding_sha256\": null, \"source_guarded\": false, \"table_sha256\": \"f6dfc8628305998e86730efe0223fe486607a003fc7ae48c898908795f3ad655\", \"uncertain\": false}}}, {\"request\": {\"id\": 5, \"command\": {\"operation\": \"quarantine\", \"expected_revision\": 1}}, \"reply\": {\"id\": 5, \"result\": {\"destination_binding_sha256\": null, \"destinations_guarded\": false, \"ethernet_guarded\": false, \"ethernet_sha256\": null, \"installed\": true, \"maximum_lease_seconds\": 10, \"revision\": 2, \"source_binding_sha256\": null, \"source_guarded\": false, \"table_sha256\": \"dc0f0d797d050bbc54ab5d40e3b0d7b7ada7d522c54455fe5a68f106033af94d\", \"uncertain\": false}}}, {\"request\": {\"id\": 6, \"command\": {\"operation\": \"remove\", \"expected_revision\": 2}}, \"reply\": {\"error\": {\"code\": \"conflict\", \"message\": \"collect the bridge before removing its filter\", \"request_id\": null, \"retryable\": false}, \"id\": 6}}, {\"request\": {\"id\": 7, \"command\": {\"operation\": \"remove\", \"expected_revision\": 2}}, \"reply\": {\"id\": 7, \"result\": {\"destination_binding_sha256\": null, \"destinations_guarded\": false, \"ethernet_guarded\": false, \"ethernet_sha256\": null, \"installed\": false, \"maximum_lease_seconds\": 10, \"revision\": null, \"source_binding_sha256\": null, \"source_guarded\": false, \"table_sha256\": null, \"uncertain\": false}}}], \"captures\": [{\"phase\": \"before_install\", \"present\": true, \"native\": {\"nftables\": [{\"metainfo\": {\"version\": \"1.0.6\", \"release_name\": \"Lester Gooch #5\", \"json_schema_version\": 1}}, {\"table\": {\"family\": \"inet\", \"name\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"handle\": 1}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"name\": \"goldenhoop_61810146c428c07b5919b5af4e040c218e58f099fffb0a8156239f718a259999\", \"handle\": 1}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"name\": \"credential_redirect_1\", \"handle\": 2}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"name\": \"binding_cb625c3d742ba0cf785857395facdf2b4b7c7cba2acc7828501ba8f10764e542\", \"handle\": 3}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"name\": \"cfg_000_7b227634223a7b2261646472657373223a223139382e31392e302e31222c22706f7274223a34343030307d2c227636223a7b2261646472657373223a22666434\", \"handle\": 4}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"name\": \"cfg_001_323a3a31222c22706f7274223a34343030317d2c22706f727473223a7b223830223a2268747470222c22343433223a226874747073227d7d\", \"handle\": 5}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"name\": \"prerouting\", \"handle\": 6, \"type\": \"nat\", \"hook\": \"prerouting\", \"prio\": -105, \"policy\": \"accept\"}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"chain\": \"prerouting\", \"handle\": 7, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iif\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"nfproto\"}}, \"right\": \"ipv4\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"tcp\", \"field\": \"dport\"}}, \"right\": 80}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"dnat\": {\"family\": \"ip\", \"addr\": \"198.19.0.1\", \"port\": 44000}}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"chain\": \"prerouting\", \"handle\": 8, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iif\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"nfproto\"}}, \"right\": \"ipv4\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"tcp\", \"field\": \"dport\"}}, \"right\": 443}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"dnat\": {\"family\": \"ip\", \"addr\": \"198.19.0.1\", \"port\": 44000}}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"chain\": \"prerouting\", \"handle\": 9, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iif\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"nfproto\"}}, \"right\": \"ipv6\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"tcp\", \"field\": \"dport\"}}, \"right\": 80}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"dnat\": {\"family\": \"ip6\", \"addr\": \"fd42::1\", \"port\": 44001}}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"chain\": \"prerouting\", \"handle\": 10, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iif\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"nfproto\"}}, \"right\": \"ipv6\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"tcp\", \"field\": \"dport\"}}, \"right\": 443}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"dnat\": {\"family\": \"ip6\", \"addr\": \"fd42::1\", \"port\": 44001}}]}}]}}, {\"phase\": \"after_install\", \"present\": true, \"native\": {\"nftables\": [{\"metainfo\": {\"version\": \"1.0.6\", \"release_name\": \"Lester Gooch #5\", \"json_schema_version\": 1}}, {\"table\": {\"family\": \"inet\", \"name\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"handle\": 1}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"name\": \"goldenhoop_61810146c428c07b5919b5af4e040c218e58f099fffb0a8156239f718a259999\", \"handle\": 1}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"name\": \"credential_redirect_1\", \"handle\": 2}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"name\": \"binding_cb625c3d742ba0cf785857395facdf2b4b7c7cba2acc7828501ba8f10764e542\", \"handle\": 3}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"name\": \"cfg_000_7b227634223a7b2261646472657373223a223139382e31392e302e31222c22706f7274223a34343030307d2c227636223a7b2261646472657373223a22666434\", \"handle\": 4}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"name\": \"cfg_001_323a3a31222c22706f7274223a34343030317d2c22706f727473223a7b223830223a2268747470222c22343433223a226874747073227d7d\", \"handle\": 5}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"name\": \"prerouting\", \"handle\": 6, \"type\": \"nat\", \"hook\": \"prerouting\", \"prio\": -105, \"policy\": \"accept\"}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"chain\": \"prerouting\", \"handle\": 7, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iif\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"nfproto\"}}, \"right\": \"ipv4\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"tcp\", \"field\": \"dport\"}}, \"right\": 80}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"dnat\": {\"family\": \"ip\", \"addr\": \"198.19.0.1\", \"port\": 44000}}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"chain\": \"prerouting\", \"handle\": 8, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iif\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"nfproto\"}}, \"right\": \"ipv4\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"tcp\", \"field\": \"dport\"}}, \"right\": 443}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"dnat\": {\"family\": \"ip\", \"addr\": \"198.19.0.1\", \"port\": 44000}}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"chain\": \"prerouting\", \"handle\": 9, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iif\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"nfproto\"}}, \"right\": \"ipv6\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"tcp\", \"field\": \"dport\"}}, \"right\": 80}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"dnat\": {\"family\": \"ip6\", \"addr\": \"fd42::1\", \"port\": 44001}}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"chain\": \"prerouting\", \"handle\": 10, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iif\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"nfproto\"}}, \"right\": \"ipv6\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"tcp\", \"field\": \"dport\"}}, \"right\": 443}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"dnat\": {\"family\": \"ip6\", \"addr\": \"fd42::1\", \"port\": 44001}}]}}]}}, {\"phase\": \"after_apply\", \"present\": true, \"native\": {\"nftables\": [{\"metainfo\": {\"version\": \"1.0.6\", \"release_name\": \"Lester Gooch #5\", \"json_schema_version\": 1}}, {\"table\": {\"family\": \"inet\", \"name\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"handle\": 1}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"name\": \"goldenhoop_61810146c428c07b5919b5af4e040c218e58f099fffb0a8156239f718a259999\", \"handle\": 1}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"name\": \"credential_redirect_1\", \"handle\": 2}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"name\": \"binding_cb625c3d742ba0cf785857395facdf2b4b7c7cba2acc7828501ba8f10764e542\", \"handle\": 3}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"name\": \"cfg_000_7b227634223a7b2261646472657373223a223139382e31392e302e31222c22706f7274223a34343030307d2c227636223a7b2261646472657373223a22666434\", \"handle\": 4}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"name\": \"cfg_001_323a3a31222c22706f7274223a34343030317d2c22706f727473223a7b223830223a2268747470222c22343433223a226874747073227d7d\", \"handle\": 5}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"name\": \"prerouting\", \"handle\": 6, \"type\": \"nat\", \"hook\": \"prerouting\", \"prio\": -105, \"policy\": \"accept\"}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"chain\": \"prerouting\", \"handle\": 7, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iif\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"nfproto\"}}, \"right\": \"ipv4\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"tcp\", \"field\": \"dport\"}}, \"right\": 80}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"dnat\": {\"family\": \"ip\", \"addr\": \"198.19.0.1\", \"port\": 44000}}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"chain\": \"prerouting\", \"handle\": 8, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iif\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"nfproto\"}}, \"right\": \"ipv4\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"tcp\", \"field\": \"dport\"}}, \"right\": 443}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"dnat\": {\"family\": \"ip\", \"addr\": \"198.19.0.1\", \"port\": 44000}}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"chain\": \"prerouting\", \"handle\": 9, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iif\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"nfproto\"}}, \"right\": \"ipv6\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"tcp\", \"field\": \"dport\"}}, \"right\": 80}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"dnat\": {\"family\": \"ip6\", \"addr\": \"fd42::1\", \"port\": 44001}}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"chain\": \"prerouting\", \"handle\": 10, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iif\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"nfproto\"}}, \"right\": \"ipv6\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"tcp\", \"field\": \"dport\"}}, \"right\": 443}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"dnat\": {\"family\": \"ip6\", \"addr\": \"fd42::1\", \"port\": 44001}}]}}]}}, {\"phase\": \"after_quarantine\", \"present\": true, \"native\": {\"nftables\": [{\"metainfo\": {\"version\": \"1.0.6\", \"release_name\": \"Lester Gooch #5\", \"json_schema_version\": 1}}, {\"table\": {\"family\": \"inet\", \"name\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"handle\": 1}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"name\": \"goldenhoop_61810146c428c07b5919b5af4e040c218e58f099fffb0a8156239f718a259999\", \"handle\": 1}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"name\": \"credential_redirect_1\", \"handle\": 2}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"name\": \"binding_cb625c3d742ba0cf785857395facdf2b4b7c7cba2acc7828501ba8f10764e542\", \"handle\": 3}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"name\": \"cfg_000_7b227634223a7b2261646472657373223a223139382e31392e302e31222c22706f7274223a34343030307d2c227636223a7b2261646472657373223a22666434\", \"handle\": 4}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"name\": \"cfg_001_323a3a31222c22706f7274223a34343030317d2c22706f727473223a7b223830223a2268747470222c22343433223a226874747073227d7d\", \"handle\": 5}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"name\": \"prerouting\", \"handle\": 6, \"type\": \"nat\", \"hook\": \"prerouting\", \"prio\": -105, \"policy\": \"accept\"}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"chain\": \"prerouting\", \"handle\": 7, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iif\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"nfproto\"}}, \"right\": \"ipv4\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"tcp\", \"field\": \"dport\"}}, \"right\": 80}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"dnat\": {\"family\": \"ip\", \"addr\": \"198.19.0.1\", \"port\": 44000}}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"chain\": \"prerouting\", \"handle\": 8, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iif\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"nfproto\"}}, \"right\": \"ipv4\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"tcp\", \"field\": \"dport\"}}, \"right\": 443}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"dnat\": {\"family\": \"ip\", \"addr\": \"198.19.0.1\", \"port\": 44000}}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"chain\": \"prerouting\", \"handle\": 9, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iif\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"nfproto\"}}, \"right\": \"ipv6\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"tcp\", \"field\": \"dport\"}}, \"right\": 80}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"dnat\": {\"family\": \"ip6\", \"addr\": \"fd42::1\", \"port\": 44001}}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"chain\": \"prerouting\", \"handle\": 10, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iif\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"nfproto\"}}, \"right\": \"ipv6\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"tcp\", \"field\": \"dport\"}}, \"right\": 443}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"dnat\": {\"family\": \"ip6\", \"addr\": \"fd42::1\", \"port\": 44001}}]}}]}}, {\"phase\": \"remove_refused_while_bridge_exists\", \"present\": true, \"native\": {\"nftables\": [{\"metainfo\": {\"version\": \"1.0.6\", \"release_name\": \"Lester Gooch #5\", \"json_schema_version\": 1}}, {\"table\": {\"family\": \"inet\", \"name\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"handle\": 1}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"name\": \"goldenhoop_61810146c428c07b5919b5af4e040c218e58f099fffb0a8156239f718a259999\", \"handle\": 1}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"name\": \"credential_redirect_1\", \"handle\": 2}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"name\": \"binding_cb625c3d742ba0cf785857395facdf2b4b7c7cba2acc7828501ba8f10764e542\", \"handle\": 3}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"name\": \"cfg_000_7b227634223a7b2261646472657373223a223139382e31392e302e31222c22706f7274223a34343030307d2c227636223a7b2261646472657373223a22666434\", \"handle\": 4}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"name\": \"cfg_001_323a3a31222c22706f7274223a34343030317d2c22706f727473223a7b223830223a2268747470222c22343433223a226874747073227d7d\", \"handle\": 5}}, {\"chain\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"name\": \"prerouting\", \"handle\": 6, \"type\": \"nat\", \"hook\": \"prerouting\", \"prio\": -105, \"policy\": \"accept\"}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"chain\": \"prerouting\", \"handle\": 7, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iif\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"nfproto\"}}, \"right\": \"ipv4\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"tcp\", \"field\": \"dport\"}}, \"right\": 80}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"dnat\": {\"family\": \"ip\", \"addr\": \"198.19.0.1\", \"port\": 44000}}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"chain\": \"prerouting\", \"handle\": 8, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iif\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"nfproto\"}}, \"right\": \"ipv4\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"tcp\", \"field\": \"dport\"}}, \"right\": 443}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"dnat\": {\"family\": \"ip\", \"addr\": \"198.19.0.1\", \"port\": 44000}}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"chain\": \"prerouting\", \"handle\": 9, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iif\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"nfproto\"}}, \"right\": \"ipv6\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"tcp\", \"field\": \"dport\"}}, \"right\": 80}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"dnat\": {\"family\": \"ip6\", \"addr\": \"fd42::1\", \"port\": 44001}}]}}, {\"rule\": {\"family\": \"inet\", \"table\": \"gh_c_dc5fa44a9b0049989de7776540d3ac21\", \"chain\": \"prerouting\", \"handle\": 10, \"expr\": [{\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iifname\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"iif\"}}, \"right\": \"ghndc5fa44a9b00\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"meta\": {\"key\": \"nfproto\"}}, \"right\": \"ipv6\"}}, {\"match\": {\"op\": \"==\", \"left\": {\"payload\": {\"protocol\": \"tcp\", \"field\": \"dport\"}}, \"right\": 443}}, {\"counter\": {\"packets\": 0, \"bytes\": 0}}, {\"dnat\": {\"family\": \"ip6\", \"addr\": \"fd42::1\", \"port\": 44001}}]}}]}}, {\"phase\": \"after_bridge_absence_and_remove\", \"present\": false, \"native\": null}], \"controller_exit_code\": 0, \"controller_stderr\": \"\", \"error\": null, \"ready\": false}\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "docker",
+        "inspect",
+        "7180ddb7a05bb6adc9b5dc96b90203f90dd502b8c52f0b6a03d1724bba08272d"
+      ],
+      "exit_code": 0,
+      "stdout": "[\n    {\n        \"Id\": \"7180ddb7a05bb6adc9b5dc96b90203f90dd502b8c52f0b6a03d1724bba08272d\",\n        \"Created\": \"2026-11-26T07:42:37.910701467Z\",\n        \"Path\": \"/bin/sleep\",\n        \"Args\": [\n            \"600\"\n        ],\n        \"State\": {\n            \"Status\": \"running\",\n            \"Running\": true,\n            \"Paused\": false,\n            \"Restarting\": false,\n            \"OOMKilled\": false,\n            \"Dead\": false,\n            \"Pid\": 18868,\n            \"ExitCode\": 0,\n            \"Error\": \"\",\n            \"StartedAt\": \"2026-11-26T07:42:38.465208829Z\",\n            \"FinishedAt\": \"0001-01-01T00:00:00Z\"\n        },\n        \"Image\": \"sha256:b04a532af2768c580a35b8e229cd0153cf5f00969565991dcf12d6dd989c6e8e\",\n        \"ResolvConfPath\": \"/var/lib/docker/containers/7180ddb7a05bb6adc9b5dc96b90203f90dd502b8c52f0b6a03d1724bba08272d/resolv.conf\",\n        \"HostnamePath\": \"/var/lib/docker/containers/7180ddb7a05bb6adc9b5dc96b90203f90dd502b8c52f0b6a03d1724bba08272d/hostname\",\n        \"HostsPath\": \"/var/lib/docker/containers/7180ddb7a05bb6adc9b5dc96b90203f90dd502b8c52f0b6a03d1724bba08272d/hosts\",\n        \"LogPath\": \"\",\n        \"Name\": \"/goldenhoop-credential-readback-a73d6872\",\n        \"RestartCount\": 0,\n        \"Driver\": \"overlayfs\",\n        \"Platform\": \"linux\",\n        \"MountLabel\": \"\",\n        \"ProcessLabel\": \"\",\n        \"AppArmorProfile\": \"\",\n        \"ExecIDs\": null,\n        \"HostConfig\": {\n            \"Binds\": null,\n            \"ContainerIDFile\": \"\",\n            \"LogConfig\": {\n                \"Type\": \"local\",\n                \"Config\": {}\n            },\n            \"NetworkMode\": \"none\",\n            \"PortBindings\": {},\n            \"RestartPolicy\": {\n                \"Name\": \"no\",\n                \"MaximumRetryCount\": 0\n            },\n            \"AutoRemove\": false,\n            \"VolumeDriver\": \"\",\n            \"VolumesFrom\": null,\n            \"ConsoleSize\": [\n                0,\n                0\n            ],\n            \"CapAdd\": [\n                \"CAP_NET_ADMIN\"\n            ],\n            \"CapDrop\": [\n                \"ALL\"\n            ],\n            \"CgroupnsMode\": \"private\",\n            \"Dns\": null,\n            \"DnsOptions\": [],\n            \"DnsSearch\": [],\n            \"ExtraHosts\": null,\n            \"GroupAdd\": null,\n            \"IpcMode\": \"private\",\n            \"Cgroup\": \"\",\n            \"Links\": null,\n            \"OomScoreAdj\": 0,\n            \"PidMode\": \"\",\n            \"Privileged\": false,\n            \"PublishAllPorts\": false,\n            \"ReadonlyRootfs\": true,\n            \"SecurityOpt\": [\n                \"no-new-privileges:true\"\n            ],\n            \"UTSMode\": \"\",\n            \"UsernsMode\": \"\",\n            \"ShmSize\": 67108864,\n            \"Runtime\": \"runc\",\n            \"Isolation\": \"\",\n            \"CpuShares\": 0,\n            \"Memory\": 67108864,\n            \"NanoCpus\": 1000000000,\n            \"CgroupParent\": \"\",\n            \"BlkioWeight\": 0,\n            \"BlkioWeightDevice\": [],\n            \"BlkioDeviceReadBps\": [],\n            \"BlkioDeviceWriteBps\": [],\n            \"BlkioDeviceReadIOps\": [],\n            \"BlkioDeviceWriteIOps\": [],\n            \"CpuPeriod\": 0,\n            \"CpuQuota\": 0,\n            \"CpuRealtimePeriod\": 0,\n            \"CpuRealtimeRuntime\": 0,\n            \"CpusetCpus\": \"\",\n            \"CpusetMems\": \"\",\n            \"Devices\": [],\n            \"DeviceCgroupRules\": null,\n            \"DeviceRequests\": null,\n            \"MemoryReservation\": 0,\n            \"MemorySwap\": 134217728,\n            \"MemorySwappiness\": null,\n            \"OomKillDisable\": null,\n            \"PidsLimit\": 32,\n            \"Ulimits\": null,\n            \"CpuCount\": 0,\n            \"CpuPercent\": 0,\n            \"IOMaximumIOps\": 0,\n            \"IOMaximumBandwidth\": 0,\n            \"MaskedPaths\": [\n                \"/proc/acpi\",\n                \"/proc/asound\",\n                \"/proc/interrupts\",\n                \"/proc/kcore\",\n                \"/proc/keys\",\n                \"/proc/latency_stats\",\n                \"/proc/sched_debug\",\n                \"/proc/scsi\",\n                \"/proc/timer_list\",\n                \"/proc/timer_stats\",\n                \"/sys/devices/virtual/powercap\",\n                \"/sys/firmware\"\n            ],\n            \"ReadonlyPaths\": [\n                \"/proc/bus\",\n                \"/proc/fs\",\n                \"/proc/irq\",\n                \"/proc/sys\",\n                \"/proc/sysrq-trigger\"\n            ]\n        },\n        \"Storage\": {\n            \"RootFS\": {\n                \"Snapshot\": {\n                    \"Name\": \"overlayfs\"\n                }\n            }\n        },\n        \"Mounts\": [],\n        \"Config\": {\n            \"Hostname\": \"7180ddb7a05b\",\n            \"Domainname\": \"\",\n            \"User\": \"\",\n            \"AttachStdin\": false,\n            \"AttachStdout\": true,\n            \"AttachStderr\": true,\n            \"Tty\": false,\n            \"OpenStdin\": false,\n            \"StdinOnce\": false,\n            \"Env\": [\n                \"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\",\n                \"GOLDENHOOP_ISOLATED_AGENT=1\"\n            ],\n            \"Cmd\": [\n                \"600\"\n            ],\n            \"Image\": \"sha256:b04a532af2768c580a35b8e229cd0153cf5f00969565991dcf12d6dd989c6e8e\",\n            \"Volumes\": null,\n            \"WorkingDir\": \"/workspace\",\n            \"Entrypoint\": [\n                \"/bin/sleep\"\n            ],\n            \"Labels\": {\n                \"dev.goldenhoop.agent.libc\": \"musl\",\n                \"dev.goldenhoop.attempt\": \"a73d6872-86d1-42a6-8e72-883eaff646a0\",\n                \"dev.goldenhoop.build\": \"policy-decisions\",\n                \"dev.goldenhoop.fixture\": \"network-interop\",\n                \"dev.goldenhoop.test\": \"credential-redirect-readback\"\n            }\n        },\n        \"NetworkSettings\": {\n            \"SandboxID\": \"cf4a895c6c5f4300077bdfaeacf3eb7b24c64b4bec5783950b7cb7b6752e367a\",\n            \"SandboxKey\": \"/var/run/docker/netns/cf4a895c6c5f\",\n            \"Ports\": {},\n            \"Networks\": {\n                \"none\": {\n                    \"IPAMConfig\": null,\n                    \"Links\": null,\n                    \"Aliases\": null,\n                    \"DriverOpts\": null,\n                    \"GwPriority\": 0,\n                    \"NetworkID\": \"991bdf43662c4620cf46329df571655377f003b5cc87b299f41ac48e695efbac\",\n                    \"EndpointID\": \"844c7884cce854bb907c55ec3984f2cdb2cbbd5fc977f910089998351b8f2f4d\",\n                    \"Gateway\": \"\",\n                    \"IPAddress\": \"\",\n                    \"MacAddress\": \"\",\n                    \"IPPrefixLen\": 0,\n                    \"IPv6Gateway\": \"\",\n                    \"GlobalIPv6Address\": \"\",\n                    \"GlobalIPv6PrefixLen\": 0,\n                    \"DNSNames\": null\n                }\n            }\n        },\n        \"ImageManifestDescriptor\": {\n            \"mediaType\": \"application/vnd.oci.image.manifest.v1+json\",\n            \"digest\": \"sha256:4a296c0c3bf7b4cd2897537f6b7154cc81e98d83bdc6ba0bceb3640e72947fbe\",\n            \"size\": 1631,\n            \"platform\": {\n                \"architecture\": \"amd64\",\n                \"os\": \"linux\"\n            }\n        }\n    }\n]\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "docker",
+        "rm",
+        "--force",
+        "7180ddb7a05bb6adc9b5dc96b90203f90dd502b8c52f0b6a03d1724bba08272d"
+      ],
+      "exit_code": 0,
+      "stdout": "7180ddb7a05bb6adc9b5dc96b90203f90dd502b8c52f0b6a03d1724bba08272d\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "docker",
+        "inspect",
+        "7180ddb7a05bb6adc9b5dc96b90203f90dd502b8c52f0b6a03d1724bba08272d"
+      ],
+      "exit_code": 1,
+      "stdout": "[]\n",
+      "stderr": "error: no such object: 7180ddb7a05bb6adc9b5dc96b90203f90dd502b8c52f0b6a03d1724bba08272d\n"
+    },
+    {
+      "argv": [
+        "docker",
+        "ps",
+        "-a",
+        "--filter",
+        "label=dev.goldenhoop.attempt=a73d6872-86d1-42a6-8e72-883eaff646a0",
+        "--format",
+        "{{.ID}}"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "source_files_sha256": {
+    "tests/credential_redirect_contract.py": "178b1af60a574bf63d11fb4850aae0c8c9730b8bba94aa04944f0d705cad541a",
+    "Cargo.lock": "46bf7a1abb9ac707e965ed503c8b9afb5d59aed42bb39e06cf978ad86b2250c2",
+    "crates/egress/Cargo.toml": "d535b0c670b97c22036a4533c987fb14e672e00856d56e857d3af00d7b46d532",
+    "crates/egress/src/binding.rs": "d427de7bba2dc6a5ba3be21c83e8d3e36ab6d3da4000ec29cbe9b983d7a71a93",
+    "crates/egress/src/collection.rs": "3275729411a800295c9a4502d847e72786b64a68c011299fa736e5e634496a7a",
+    "crates/egress/src/controller.rs": "ff24073bf591de68fd7a3568b2fb3e12356cfeb8b48b570278d8033a567b2b94",
+    "crates/egress/src/controller_plan.rs": "2496a0f58d207c75dcd508e39902d3e62c54ee137edbdf8856b3e126f7d3eaf3",
+    "crates/egress/src/credential_audit.rs": "d4f25e8ff75075fc81ae0352967e8fb1f91c4864168e00fcc9e5d46e3da7d695",
+    "crates/egress/src/credential_packets.rs": "eb824eb9bbabd61fbb28d7cf413cebaf26683e67468134e6dcd0b86bfd61e09c",
+    "crates/egress/src/credential_redirect.rs": "39da3f650ef60d4c74c7604614ff629531b0619f13ff4933c23c258f8c55d1b6",
+    "crates/egress/src/credential_runtime.rs": "d2f78a5973aeff44e1bc13ae22b0c19f69a08cb199e5103611ea915c021e2ea7",
+    "crates/egress/src/destinations.rs": "f5224d85c1cdc26ef82b1e73ed1b5baeb2cc5473af459e0580895ed776c9989f",
+    "crates/egress/src/destination_plan.rs": "5ba66aa0e611482966e184984f5790696a0c0ba6b6b71e5f30e9840b2a314b71",
+    "crates/egress/src/dns.rs": "5f69b3e2efab11d376a5b07e1c98a50f469c284701751a2b4cadb2cb846a4cfa",
+    "crates/egress/src/ethernet.rs": "0b1b1330d1b606cced4c0c33b424f6aa01de45f5592817895c4d439776912f1e",
+    "crates/egress/src/frontend.rs": "6b6b09f326eab0cadf0a030dd6856e29aa7d2b03fa2f2c17cb065f18d28686a9",
+    "crates/egress/src/host.rs": "3fed0aead49a0f6bf5ebfb17b023ec364a692633d03f6f9e9370005e66877595",
+    "crates/egress/src/identity.rs": "747960bfc4eda6773363b517d9f615c0dbe27b176db8b13c119c63bae7a24c5e",
+    "crates/egress/src/lib.rs": "89c5cdb1a96624fbbf262f25ba4eac230f118a1646a16a6736dcf19e0ca223ea",
+    "crates/egress/src/main.rs": "1162c68c1c7571f9581bda84d5a20ffcf815c2bbdf907427f75dfc256eb5b42e",
+    "crates/egress/src/manager.rs": "3e09a95b86eb9194bd02c26cf6faa023da9145fbba3a743ad9a1626cdbc9c96a",
+    "crates/egress/src/native.rs": "cf2aa1a17d5aec932aa8861fb3739adcd1aaf1fb7349b05b0c28bbca2ff72386",
+    "crates/egress/src/plan.rs": "c0b392035afad53db46f92758c223d86c5bd06fc1acf41c842197f3392c29686",
+    "crates/egress/src/policy_binding.rs": "acefed91e8bae590813afe573dae876a12acbdd79817b02b92eec29099112ba8",
+    "crates/egress/src/policy_readback.rs": "6970dd7c5e1863a26ca797071f12591a87d28dbecc3dfd8c46828c4f43da7221",
+    "crates/egress/src/probe.rs": "bf596877e3949476ea0b3ea812001f92bc60e252dd515594abf46e5ab25fda6d",
+    "crates/egress/src/quarantine.rs": "4acb605493e8d0f4f6248db25f4b3f027a8138ebdaa1a782f680fee3fb16f6a6",
+    "crates/egress/src/snapshot.rs": "3090a167bef945fd772fc1c58228d80f0e5fdd060e4a383ce77bd153856ca5f1",
+    "crates/egress/src/source.rs": "fa4d70f97f0fbf717dd736f79c45266815597f6526d6811bbc1013505a0275b1",
+    "crates/egress/src/dns/leases.rs": "0a3077aaca6af4f64d4a9020fe97c234483fa40a238260f640e73e64ecc29161",
+    "crates/egress/src/dns/probe.rs": "bfc371e1320565bcd1a2d65df734bff1b5f948e0eacb806bc0492faf42989c32",
+    "crates/egress/src/dns/sets.rs": "e98a86f4232938a9f9907e0fe2ce25fe68656af6d3b0a51b57579bba6ca8f219",
+    "crates/egress/src/dns/upstream.rs": "1b131e36bc45571a71406ce9c062394bb0ee45532dcaa0dee47a3da2e5c145be",
+    "crates/egress/src/manager/binding.rs": "dddcb9650c25993bbec5ba2c9d3fccea33fa2491bb169ec22fd3708d6d70f93c",
+    "crates/egress/src/manager/credentials.rs": "899166b7240e30e7675db39bbd028f12e51a4c326ed883dbf9f43264eab6979b",
+    "crates/egress/src/manager/destinations.rs": "9ceee57c112f4dacbde54ba287ca4516b771eef67dbd2d1dd7eb549f22155014",
+    "crates/egress/src/manager/effective.rs": "f2d6d4f561fbb47459bac902682e4910d9c8723b17136c980ba69f8913e40427",
+    "crates/egress/src/manager/observation.rs": "6653d38b0ea0ff15f9e80ceb3b7325622e7f4616fc22d94caf6e3fb7a1b3ff8f",
+    "crates/egress/src/manager/resolver.rs": "3dc881828e39135962c3fc269c4c71872cc30a4c5c65f8843bd3098903442571",
+    "crates/egress/src/manager/snapshot.rs": "b54f9e1067715d9426c462dc7af6a463dd5b580495cc4fb48fe9bc37df995f6c",
+    "crates/egress/src/manager/source.rs": "7a41dfa36fda23a7cce162c01cdcdb82f392af9e340edd59865c8f65cbf60103",
+    "crates/egress/src/manager/source/port.rs": "32faaf949d61fd3e4b30dc504d5a521b001455ec01f5bf146f3ef0d139b25851",
+    "crates/egress/src/manager/source/port/tests.rs": "d4bc9f3785a9781d728fb1a72e5fc7618f491979f785228a9d47f7b8f7ba1780",
+    "crates/egress/src/native/linux.rs": "6f583eb0b62509193d282cde3c32f16f3f7ef118a7674c0ca4a6e2fbf318c7f3",
+    "crates/egress/src/policy_readback/lease.rs": "65687bf46cd661f9799d38d323300797be13367724f3d1e2aecb1f9cd5c4f49b",
+    "crates/egress/src/policy_readback/rules.rs": "8a7b54555485183b3770a570f3d89e655dcf08ed29944ad93270702d0305c95a",
+    "crates/egress/src/probe/linux.rs": "401c0274cedf11a04533d5c8292de3da01a24988bb83287d3c20b3fa4a6ec700",
+    "crates/egress/examples/credential_redirect.rs": "b2c278eefd0fb32b141377e9ce46b7ada39dbad9a7365afbc7b86f9621b0410a"
+  },
+  "binary_sha256": "0e2dc8ffc8a22f065da99d641d3c675012addd2c1b5905683cd92755a3b1fc3c",
+  "image_id": "sha256:b04a532af2768c580a35b8e229cd0153cf5f00969565991dcf12d6dd989c6e8e",
+  "container_id": "7180ddb7a05bb6adc9b5dc96b90203f90dd502b8c52f0b6a03d1724bba08272d",
+  "input": {
+    "allocation": {
+      "installation_id": "d2e9a322-a13a-4dab-a19b-04966964a239",
+      "sandbox_id": "6564f6b9-b94c-4d0a-a96f-2285455b45ac",
+      "generation": "dc5fa44a-9b00-4998-9de7-776540d3ac21",
+      "bridge": "ghndc5fa44a9b00",
+      "ifindex": 2
+    },
+    "definition": {
+      "v4": {
+        "address": "198.19.0.1",
+        "port": 44000
+      },
+      "v6": {
+        "address": "fd42::1",
+        "port": 44001
+      },
+      "ports": {
+        "80": "http",
+        "443": "https"
+      }
+    }
+  },
+  "native": {
+    "nftables": [
+      {
+        "metainfo": {
+          "version": "1.0.6",
+          "release_name": "Lester Gooch #5",
+          "json_schema_version": 1
+        }
+      },
+      {
+        "table": {
+          "family": "inet",
+          "name": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+          "handle": 1
+        }
+      },
+      {
+        "chain": {
+          "family": "inet",
+          "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+          "name": "goldenhoop_61810146c428c07b5919b5af4e040c218e58f099fffb0a8156239f718a259999",
+          "handle": 1
+        }
+      },
+      {
+        "chain": {
+          "family": "inet",
+          "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+          "name": "credential_redirect_1",
+          "handle": 2
+        }
+      },
+      {
+        "chain": {
+          "family": "inet",
+          "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+          "name": "binding_cb625c3d742ba0cf785857395facdf2b4b7c7cba2acc7828501ba8f10764e542",
+          "handle": 3
+        }
+      },
+      {
+        "chain": {
+          "family": "inet",
+          "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+          "name": "cfg_000_7b227634223a7b2261646472657373223a223139382e31392e302e31222c22706f7274223a34343030307d2c227636223a7b2261646472657373223a22666434",
+          "handle": 4
+        }
+      },
+      {
+        "chain": {
+          "family": "inet",
+          "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+          "name": "cfg_001_323a3a31222c22706f7274223a34343030317d2c22706f727473223a7b223830223a2268747470222c22343433223a226874747073227d7d",
+          "handle": 5
+        }
+      },
+      {
+        "chain": {
+          "family": "inet",
+          "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+          "name": "prerouting",
+          "handle": 6,
+          "type": "nat",
+          "hook": "prerouting",
+          "prio": -105,
+          "policy": "accept"
+        }
+      },
+      {
+        "rule": {
+          "family": "inet",
+          "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+          "chain": "prerouting",
+          "handle": 7,
+          "expr": [
+            {
+              "match": {
+                "op": "==",
+                "left": {
+                  "meta": {
+                    "key": "iifname"
+                  }
+                },
+                "right": "ghndc5fa44a9b00"
+              }
+            },
+            {
+              "match": {
+                "op": "==",
+                "left": {
+                  "meta": {
+                    "key": "iif"
+                  }
+                },
+                "right": "ghndc5fa44a9b00"
+              }
+            },
+            {
+              "match": {
+                "op": "==",
+                "left": {
+                  "meta": {
+                    "key": "nfproto"
+                  }
+                },
+                "right": 2
+              }
+            },
+            {
+              "match": {
+                "op": "==",
+                "left": {
+                  "payload": {
+                    "protocol": "tcp",
+                    "field": "dport"
+                  }
+                },
+                "right": 80
+              }
+            },
+            {
+              "counter": {
+                "packets": 0,
+                "bytes": 0
+              }
+            },
+            {
+              "dnat": {
+                "family": "ip",
+                "addr": "198.19.0.1",
+                "port": 44000
+              }
+            }
+          ]
+        }
+      },
+      {
+        "rule": {
+          "family": "inet",
+          "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+          "chain": "prerouting",
+          "handle": 8,
+          "expr": [
+            {
+              "match": {
+                "op": "==",
+                "left": {
+                  "meta": {
+                    "key": "iifname"
+                  }
+                },
+                "right": "ghndc5fa44a9b00"
+              }
+            },
+            {
+              "match": {
+                "op": "==",
+                "left": {
+                  "meta": {
+                    "key": "iif"
+                  }
+                },
+                "right": "ghndc5fa44a9b00"
+              }
+            },
+            {
+              "match": {
+                "op": "==",
+                "left": {
+                  "meta": {
+                    "key": "nfproto"
+                  }
+                },
+                "right": 2
+              }
+            },
+            {
+              "match": {
+                "op": "==",
+                "left": {
+                  "payload": {
+                    "protocol": "tcp",
+                    "field": "dport"
+                  }
+                },
+                "right": 443
+              }
+            },
+            {
+              "counter": {
+                "packets": 0,
+                "bytes": 0
+              }
+            },
+            {
+              "dnat": {
+                "family": "ip",
+                "addr": "198.19.0.1",
+                "port": 44000
+              }
+            }
+          ]
+        }
+      },
+      {
+        "rule": {
+          "family": "inet",
+          "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+          "chain": "prerouting",
+          "handle": 9,
+          "expr": [
+            {
+              "match": {
+                "op": "==",
+                "left": {
+                  "meta": {
+                    "key": "iifname"
+                  }
+                },
+                "right": "ghndc5fa44a9b00"
+              }
+            },
+            {
+              "match": {
+                "op": "==",
+                "left": {
+                  "meta": {
+                    "key": "iif"
+                  }
+                },
+                "right": "ghndc5fa44a9b00"
+              }
+            },
+            {
+              "match": {
+                "op": "==",
+                "left": {
+                  "meta": {
+                    "key": "nfproto"
+                  }
+                },
+                "right": 10
+              }
+            },
+            {
+              "match": {
+                "op": "==",
+                "left": {
+                  "payload": {
+                    "protocol": "tcp",
+                    "field": "dport"
+                  }
+                },
+                "right": 80
+              }
+            },
+            {
+              "counter": {
+                "packets": 0,
+                "bytes": 0
+              }
+            },
+            {
+              "dnat": {
+                "family": "ip6",
+                "addr": "fd42::1",
+                "port": 44001
+              }
+            }
+          ]
+        }
+      },
+      {
+        "rule": {
+          "family": "inet",
+          "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+          "chain": "prerouting",
+          "handle": 10,
+          "expr": [
+            {
+              "match": {
+                "op": "==",
+                "left": {
+                  "meta": {
+                    "key": "iifname"
+                  }
+                },
+                "right": "ghndc5fa44a9b00"
+              }
+            },
+            {
+              "match": {
+                "op": "==",
+                "left": {
+                  "meta": {
+                    "key": "iif"
+                  }
+                },
+                "right": "ghndc5fa44a9b00"
+              }
+            },
+            {
+              "match": {
+                "op": "==",
+                "left": {
+                  "meta": {
+                    "key": "nfproto"
+                  }
+                },
+                "right": 10
+              }
+            },
+            {
+              "match": {
+                "op": "==",
+                "left": {
+                  "payload": {
+                    "protocol": "tcp",
+                    "field": "dport"
+                  }
+                },
+                "right": 443
+              }
+            },
+            {
+              "counter": {
+                "packets": 0,
+                "bytes": 0
+              }
+            },
+            {
+              "dnat": {
+                "family": "ip6",
+                "addr": "fd42::1",
+                "port": 44001
+              }
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "actual_manager_lifecycle": {
+    "events": [
+      {
+        "request": {
+          "id": 1,
+          "command": {
+            "operation": "bind_native",
+            "plan": {
+              "allocation": {
+                "installation_id": "d2e9a322-a13a-4dab-a19b-04966964a239",
+                "sandbox_id": "6564f6b9-b94c-4d0a-a96f-2285455b45ac",
+                "generation": "dc5fa44a-9b00-4998-9de7-776540d3ac21",
+                "bridge": "ghndc5fa44a9b00",
+                "ifindex": 2
+              },
+              "identity": {
+                "installation_id": "d2e9a322-a13a-4dab-a19b-04966964a239",
+                "sandbox_id": "6564f6b9-b94c-4d0a-a96f-2285455b45ac",
+                "generation": "dc5fa44a-9b00-4998-9de7-776540d3ac21",
+                "profile": "local-runc-dev"
+              },
+              "provisioning_token": "5bca58e2-2d9b-4988-a847-8e1c9ed9540d",
+              "expires_at": "2026-11-26T07:44:11.237150+00:00"
+            }
+          }
+        },
+        "reply": {
+          "id": 1,
+          "result": {
+            "alias": "goldenhoop:61810146c428c07b5919b5af4e040c218e58f099fffb0a8156239f718a259999",
+            "allocation": {
+              "bridge": "ghndc5fa44a9b00",
+              "generation": "dc5fa44a-9b00-4998-9de7-776540d3ac21",
+              "ifindex": 2,
+              "installation_id": "d2e9a322-a13a-4dab-a19b-04966964a239",
+              "sandbox_id": "6564f6b9-b94c-4d0a-a96f-2285455b45ac"
+            },
+            "changed": true,
+            "identity_sha256": "d5284080472d338f837062528b022db3af9cd9467df63dfbd94ddc2d6e122a01",
+            "provisioning_token": "5bca58e2-2d9b-4988-a847-8e1c9ed9540d"
+          }
+        }
+      },
+      {
+        "request": {
+          "id": 2,
+          "command": {
+            "operation": "open",
+            "allocation": {
+              "installation_id": "d2e9a322-a13a-4dab-a19b-04966964a239",
+              "sandbox_id": "6564f6b9-b94c-4d0a-a96f-2285455b45ac",
+              "generation": "dc5fa44a-9b00-4998-9de7-776540d3ac21",
+              "bridge": "ghndc5fa44a9b00",
+              "ifindex": 2
+            }
+          }
+        },
+        "reply": {
+          "id": 2,
+          "result": {
+            "destination_binding_sha256": null,
+            "destinations_guarded": false,
+            "ethernet_guarded": false,
+            "ethernet_sha256": null,
+            "installed": false,
+            "maximum_lease_seconds": 10,
+            "revision": null,
+            "source_binding_sha256": null,
+            "source_guarded": false,
+            "table_sha256": null,
+            "uncertain": false
+          }
+        }
+      },
+      {
+        "request": {
+          "id": 3,
+          "command": {
+            "operation": "install"
+          }
+        },
+        "reply": {
+          "id": 3,
+          "result": {
+            "destination_binding_sha256": null,
+            "destinations_guarded": false,
+            "ethernet_guarded": false,
+            "ethernet_sha256": null,
+            "installed": true,
+            "maximum_lease_seconds": 10,
+            "revision": 0,
+            "source_binding_sha256": null,
+            "source_guarded": false,
+            "table_sha256": "de6897877e901b03c73b6370e0a6dc5b7ffa8461a4a0b4604ad2e77cfb3064b9",
+            "uncertain": false
+          }
+        }
+      },
+      {
+        "request": {
+          "id": 4,
+          "command": {
+            "operation": "apply",
+            "expected_revision": 0,
+            "config": {
+              "policies": [
+                {
+                  "default_action": "deny",
+                  "rules": []
+                }
+              ]
+            }
+          }
+        },
+        "reply": {
+          "id": 4,
+          "result": {
+            "destination_binding_sha256": null,
+            "destinations_guarded": false,
+            "ethernet_guarded": false,
+            "ethernet_sha256": null,
+            "installed": true,
+            "maximum_lease_seconds": 10,
+            "revision": 1,
+            "source_binding_sha256": null,
+            "source_guarded": false,
+            "table_sha256": "f6dfc8628305998e86730efe0223fe486607a003fc7ae48c898908795f3ad655",
+            "uncertain": false
+          }
+        }
+      },
+      {
+        "request": {
+          "id": 5,
+          "command": {
+            "operation": "quarantine",
+            "expected_revision": 1
+          }
+        },
+        "reply": {
+          "id": 5,
+          "result": {
+            "destination_binding_sha256": null,
+            "destinations_guarded": false,
+            "ethernet_guarded": false,
+            "ethernet_sha256": null,
+            "installed": true,
+            "maximum_lease_seconds": 10,
+            "revision": 2,
+            "source_binding_sha256": null,
+            "source_guarded": false,
+            "table_sha256": "dc0f0d797d050bbc54ab5d40e3b0d7b7ada7d522c54455fe5a68f106033af94d",
+            "uncertain": false
+          }
+        }
+      },
+      {
+        "request": {
+          "id": 6,
+          "command": {
+            "operation": "remove",
+            "expected_revision": 2
+          }
+        },
+        "reply": {
+          "error": {
+            "code": "conflict",
+            "message": "collect the bridge before removing its filter",
+            "request_id": null,
+            "retryable": false
+          },
+          "id": 6
+        }
+      },
+      {
+        "request": {
+          "id": 7,
+          "command": {
+            "operation": "remove",
+            "expected_revision": 2
+          }
+        },
+        "reply": {
+          "id": 7,
+          "result": {
+            "destination_binding_sha256": null,
+            "destinations_guarded": false,
+            "ethernet_guarded": false,
+            "ethernet_sha256": null,
+            "installed": false,
+            "maximum_lease_seconds": 10,
+            "revision": null,
+            "source_binding_sha256": null,
+            "source_guarded": false,
+            "table_sha256": null,
+            "uncertain": false
+          }
+        }
+      }
+    ],
+    "captures": [
+      {
+        "phase": "before_install",
+        "present": true,
+        "native": {
+          "nftables": [
+            {
+              "metainfo": {
+                "version": "1.0.6",
+                "release_name": "Lester Gooch #5",
+                "json_schema_version": 1
+              }
+            },
+            {
+              "table": {
+                "family": "inet",
+                "name": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "handle": 1
+              }
+            },
+            {
+              "chain": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "name": "goldenhoop_61810146c428c07b5919b5af4e040c218e58f099fffb0a8156239f718a259999",
+                "handle": 1
+              }
+            },
+            {
+              "chain": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "name": "credential_redirect_1",
+                "handle": 2
+              }
+            },
+            {
+              "chain": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "name": "binding_cb625c3d742ba0cf785857395facdf2b4b7c7cba2acc7828501ba8f10764e542",
+                "handle": 3
+              }
+            },
+            {
+              "chain": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "name": "cfg_000_7b227634223a7b2261646472657373223a223139382e31392e302e31222c22706f7274223a34343030307d2c227636223a7b2261646472657373223a22666434",
+                "handle": 4
+              }
+            },
+            {
+              "chain": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "name": "cfg_001_323a3a31222c22706f7274223a34343030317d2c22706f727473223a7b223830223a2268747470222c22343433223a226874747073227d7d",
+                "handle": 5
+              }
+            },
+            {
+              "chain": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "name": "prerouting",
+                "handle": 6,
+                "type": "nat",
+                "hook": "prerouting",
+                "prio": -105,
+                "policy": "accept"
+              }
+            },
+            {
+              "rule": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "chain": "prerouting",
+                "handle": 7,
+                "expr": [
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "iifname"
+                        }
+                      },
+                      "right": "ghndc5fa44a9b00"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "iif"
+                        }
+                      },
+                      "right": "ghndc5fa44a9b00"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "nfproto"
+                        }
+                      },
+                      "right": "ipv4"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "payload": {
+                          "protocol": "tcp",
+                          "field": "dport"
+                        }
+                      },
+                      "right": 80
+                    }
+                  },
+                  {
+                    "counter": {
+                      "packets": 0,
+                      "bytes": 0
+                    }
+                  },
+                  {
+                    "dnat": {
+                      "family": "ip",
+                      "addr": "198.19.0.1",
+                      "port": 44000
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "rule": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "chain": "prerouting",
+                "handle": 8,
+                "expr": [
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "iifname"
+                        }
+                      },
+                      "right": "ghndc5fa44a9b00"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "iif"
+                        }
+                      },
+                      "right": "ghndc5fa44a9b00"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "nfproto"
+                        }
+                      },
+                      "right": "ipv4"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "payload": {
+                          "protocol": "tcp",
+                          "field": "dport"
+                        }
+                      },
+                      "right": 443
+                    }
+                  },
+                  {
+                    "counter": {
+                      "packets": 0,
+                      "bytes": 0
+                    }
+                  },
+                  {
+                    "dnat": {
+                      "family": "ip",
+                      "addr": "198.19.0.1",
+                      "port": 44000
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "rule": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "chain": "prerouting",
+                "handle": 9,
+                "expr": [
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "iifname"
+                        }
+                      },
+                      "right": "ghndc5fa44a9b00"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "iif"
+                        }
+                      },
+                      "right": "ghndc5fa44a9b00"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "nfproto"
+                        }
+                      },
+                      "right": "ipv6"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "payload": {
+                          "protocol": "tcp",
+                          "field": "dport"
+                        }
+                      },
+                      "right": 80
+                    }
+                  },
+                  {
+                    "counter": {
+                      "packets": 0,
+                      "bytes": 0
+                    }
+                  },
+                  {
+                    "dnat": {
+                      "family": "ip6",
+                      "addr": "fd42::1",
+                      "port": 44001
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "rule": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "chain": "prerouting",
+                "handle": 10,
+                "expr": [
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "iifname"
+                        }
+                      },
+                      "right": "ghndc5fa44a9b00"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "iif"
+                        }
+                      },
+                      "right": "ghndc5fa44a9b00"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "nfproto"
+                        }
+                      },
+                      "right": "ipv6"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "payload": {
+                          "protocol": "tcp",
+                          "field": "dport"
+                        }
+                      },
+                      "right": 443
+                    }
+                  },
+                  {
+                    "counter": {
+                      "packets": 0,
+                      "bytes": 0
+                    }
+                  },
+                  {
+                    "dnat": {
+                      "family": "ip6",
+                      "addr": "fd42::1",
+                      "port": 44001
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "phase": "after_install",
+        "present": true,
+        "native": {
+          "nftables": [
+            {
+              "metainfo": {
+                "version": "1.0.6",
+                "release_name": "Lester Gooch #5",
+                "json_schema_version": 1
+              }
+            },
+            {
+              "table": {
+                "family": "inet",
+                "name": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "handle": 1
+              }
+            },
+            {
+              "chain": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "name": "goldenhoop_61810146c428c07b5919b5af4e040c218e58f099fffb0a8156239f718a259999",
+                "handle": 1
+              }
+            },
+            {
+              "chain": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "name": "credential_redirect_1",
+                "handle": 2
+              }
+            },
+            {
+              "chain": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "name": "binding_cb625c3d742ba0cf785857395facdf2b4b7c7cba2acc7828501ba8f10764e542",
+                "handle": 3
+              }
+            },
+            {
+              "chain": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "name": "cfg_000_7b227634223a7b2261646472657373223a223139382e31392e302e31222c22706f7274223a34343030307d2c227636223a7b2261646472657373223a22666434",
+                "handle": 4
+              }
+            },
+            {
+              "chain": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "name": "cfg_001_323a3a31222c22706f7274223a34343030317d2c22706f727473223a7b223830223a2268747470222c22343433223a226874747073227d7d",
+                "handle": 5
+              }
+            },
+            {
+              "chain": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "name": "prerouting",
+                "handle": 6,
+                "type": "nat",
+                "hook": "prerouting",
+                "prio": -105,
+                "policy": "accept"
+              }
+            },
+            {
+              "rule": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "chain": "prerouting",
+                "handle": 7,
+                "expr": [
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "iifname"
+                        }
+                      },
+                      "right": "ghndc5fa44a9b00"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "iif"
+                        }
+                      },
+                      "right": "ghndc5fa44a9b00"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "nfproto"
+                        }
+                      },
+                      "right": "ipv4"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "payload": {
+                          "protocol": "tcp",
+                          "field": "dport"
+                        }
+                      },
+                      "right": 80
+                    }
+                  },
+                  {
+                    "counter": {
+                      "packets": 0,
+                      "bytes": 0
+                    }
+                  },
+                  {
+                    "dnat": {
+                      "family": "ip",
+                      "addr": "198.19.0.1",
+                      "port": 44000
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "rule": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "chain": "prerouting",
+                "handle": 8,
+                "expr": [
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "iifname"
+                        }
+                      },
+                      "right": "ghndc5fa44a9b00"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "iif"
+                        }
+                      },
+                      "right": "ghndc5fa44a9b00"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "nfproto"
+                        }
+                      },
+                      "right": "ipv4"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "payload": {
+                          "protocol": "tcp",
+                          "field": "dport"
+                        }
+                      },
+                      "right": 443
+                    }
+                  },
+                  {
+                    "counter": {
+                      "packets": 0,
+                      "bytes": 0
+                    }
+                  },
+                  {
+                    "dnat": {
+                      "family": "ip",
+                      "addr": "198.19.0.1",
+                      "port": 44000
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "rule": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "chain": "prerouting",
+                "handle": 9,
+                "expr": [
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "iifname"
+                        }
+                      },
+                      "right": "ghndc5fa44a9b00"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "iif"
+                        }
+                      },
+                      "right": "ghndc5fa44a9b00"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "nfproto"
+                        }
+                      },
+                      "right": "ipv6"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "payload": {
+                          "protocol": "tcp",
+                          "field": "dport"
+                        }
+                      },
+                      "right": 80
+                    }
+                  },
+                  {
+                    "counter": {
+                      "packets": 0,
+                      "bytes": 0
+                    }
+                  },
+                  {
+                    "dnat": {
+                      "family": "ip6",
+                      "addr": "fd42::1",
+                      "port": 44001
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "rule": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "chain": "prerouting",
+                "handle": 10,
+                "expr": [
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "iifname"
+                        }
+                      },
+                      "right": "ghndc5fa44a9b00"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "iif"
+                        }
+                      },
+                      "right": "ghndc5fa44a9b00"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "nfproto"
+                        }
+                      },
+                      "right": "ipv6"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "payload": {
+                          "protocol": "tcp",
+                          "field": "dport"
+                        }
+                      },
+                      "right": 443
+                    }
+                  },
+                  {
+                    "counter": {
+                      "packets": 0,
+                      "bytes": 0
+                    }
+                  },
+                  {
+                    "dnat": {
+                      "family": "ip6",
+                      "addr": "fd42::1",
+                      "port": 44001
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "phase": "after_apply",
+        "present": true,
+        "native": {
+          "nftables": [
+            {
+              "metainfo": {
+                "version": "1.0.6",
+                "release_name": "Lester Gooch #5",
+                "json_schema_version": 1
+              }
+            },
+            {
+              "table": {
+                "family": "inet",
+                "name": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "handle": 1
+              }
+            },
+            {
+              "chain": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "name": "goldenhoop_61810146c428c07b5919b5af4e040c218e58f099fffb0a8156239f718a259999",
+                "handle": 1
+              }
+            },
+            {
+              "chain": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "name": "credential_redirect_1",
+                "handle": 2
+              }
+            },
+            {
+              "chain": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "name": "binding_cb625c3d742ba0cf785857395facdf2b4b7c7cba2acc7828501ba8f10764e542",
+                "handle": 3
+              }
+            },
+            {
+              "chain": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "name": "cfg_000_7b227634223a7b2261646472657373223a223139382e31392e302e31222c22706f7274223a34343030307d2c227636223a7b2261646472657373223a22666434",
+                "handle": 4
+              }
+            },
+            {
+              "chain": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "name": "cfg_001_323a3a31222c22706f7274223a34343030317d2c22706f727473223a7b223830223a2268747470222c22343433223a226874747073227d7d",
+                "handle": 5
+              }
+            },
+            {
+              "chain": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "name": "prerouting",
+                "handle": 6,
+                "type": "nat",
+                "hook": "prerouting",
+                "prio": -105,
+                "policy": "accept"
+              }
+            },
+            {
+              "rule": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "chain": "prerouting",
+                "handle": 7,
+                "expr": [
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "iifname"
+                        }
+                      },
+                      "right": "ghndc5fa44a9b00"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "iif"
+                        }
+                      },
+                      "right": "ghndc5fa44a9b00"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "nfproto"
+                        }
+                      },
+                      "right": "ipv4"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "payload": {
+                          "protocol": "tcp",
+                          "field": "dport"
+                        }
+                      },
+                      "right": 80
+                    }
+                  },
+                  {
+                    "counter": {
+                      "packets": 0,
+                      "bytes": 0
+                    }
+                  },
+                  {
+                    "dnat": {
+                      "family": "ip",
+                      "addr": "198.19.0.1",
+                      "port": 44000
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "rule": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "chain": "prerouting",
+                "handle": 8,
+                "expr": [
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "iifname"
+                        }
+                      },
+                      "right": "ghndc5fa44a9b00"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "iif"
+                        }
+                      },
+                      "right": "ghndc5fa44a9b00"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "nfproto"
+                        }
+                      },
+                      "right": "ipv4"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "payload": {
+                          "protocol": "tcp",
+                          "field": "dport"
+                        }
+                      },
+                      "right": 443
+                    }
+                  },
+                  {
+                    "counter": {
+                      "packets": 0,
+                      "bytes": 0
+                    }
+                  },
+                  {
+                    "dnat": {
+                      "family": "ip",
+                      "addr": "198.19.0.1",
+                      "port": 44000
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "rule": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "chain": "prerouting",
+                "handle": 9,
+                "expr": [
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "iifname"
+                        }
+                      },
+                      "right": "ghndc5fa44a9b00"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "iif"
+                        }
+                      },
+                      "right": "ghndc5fa44a9b00"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "nfproto"
+                        }
+                      },
+                      "right": "ipv6"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "payload": {
+                          "protocol": "tcp",
+                          "field": "dport"
+                        }
+                      },
+                      "right": 80
+                    }
+                  },
+                  {
+                    "counter": {
+                      "packets": 0,
+                      "bytes": 0
+                    }
+                  },
+                  {
+                    "dnat": {
+                      "family": "ip6",
+                      "addr": "fd42::1",
+                      "port": 44001
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "rule": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "chain": "prerouting",
+                "handle": 10,
+                "expr": [
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "iifname"
+                        }
+                      },
+                      "right": "ghndc5fa44a9b00"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "iif"
+                        }
+                      },
+                      "right": "ghndc5fa44a9b00"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "nfproto"
+                        }
+                      },
+                      "right": "ipv6"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "payload": {
+                          "protocol": "tcp",
+                          "field": "dport"
+                        }
+                      },
+                      "right": 443
+                    }
+                  },
+                  {
+                    "counter": {
+                      "packets": 0,
+                      "bytes": 0
+                    }
+                  },
+                  {
+                    "dnat": {
+                      "family": "ip6",
+                      "addr": "fd42::1",
+                      "port": 44001
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "phase": "after_quarantine",
+        "present": true,
+        "native": {
+          "nftables": [
+            {
+              "metainfo": {
+                "version": "1.0.6",
+                "release_name": "Lester Gooch #5",
+                "json_schema_version": 1
+              }
+            },
+            {
+              "table": {
+                "family": "inet",
+                "name": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "handle": 1
+              }
+            },
+            {
+              "chain": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "name": "goldenhoop_61810146c428c07b5919b5af4e040c218e58f099fffb0a8156239f718a259999",
+                "handle": 1
+              }
+            },
+            {
+              "chain": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "name": "credential_redirect_1",
+                "handle": 2
+              }
+            },
+            {
+              "chain": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "name": "binding_cb625c3d742ba0cf785857395facdf2b4b7c7cba2acc7828501ba8f10764e542",
+                "handle": 3
+              }
+            },
+            {
+              "chain": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "name": "cfg_000_7b227634223a7b2261646472657373223a223139382e31392e302e31222c22706f7274223a34343030307d2c227636223a7b2261646472657373223a22666434",
+                "handle": 4
+              }
+            },
+            {
+              "chain": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "name": "cfg_001_323a3a31222c22706f7274223a34343030317d2c22706f727473223a7b223830223a2268747470222c22343433223a226874747073227d7d",
+                "handle": 5
+              }
+            },
+            {
+              "chain": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "name": "prerouting",
+                "handle": 6,
+                "type": "nat",
+                "hook": "prerouting",
+                "prio": -105,
+                "policy": "accept"
+              }
+            },
+            {
+              "rule": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "chain": "prerouting",
+                "handle": 7,
+                "expr": [
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "iifname"
+                        }
+                      },
+                      "right": "ghndc5fa44a9b00"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "iif"
+                        }
+                      },
+                      "right": "ghndc5fa44a9b00"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "nfproto"
+                        }
+                      },
+                      "right": "ipv4"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "payload": {
+                          "protocol": "tcp",
+                          "field": "dport"
+                        }
+                      },
+                      "right": 80
+                    }
+                  },
+                  {
+                    "counter": {
+                      "packets": 0,
+                      "bytes": 0
+                    }
+                  },
+                  {
+                    "dnat": {
+                      "family": "ip",
+                      "addr": "198.19.0.1",
+                      "port": 44000
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "rule": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "chain": "prerouting",
+                "handle": 8,
+                "expr": [
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "iifname"
+                        }
+                      },
+                      "right": "ghndc5fa44a9b00"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "iif"
+                        }
+                      },
+                      "right": "ghndc5fa44a9b00"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "nfproto"
+                        }
+                      },
+                      "right": "ipv4"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "payload": {
+                          "protocol": "tcp",
+                          "field": "dport"
+                        }
+                      },
+                      "right": 443
+                    }
+                  },
+                  {
+                    "counter": {
+                      "packets": 0,
+                      "bytes": 0
+                    }
+                  },
+                  {
+                    "dnat": {
+                      "family": "ip",
+                      "addr": "198.19.0.1",
+                      "port": 44000
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "rule": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "chain": "prerouting",
+                "handle": 9,
+                "expr": [
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "iifname"
+                        }
+                      },
+                      "right": "ghndc5fa44a9b00"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "iif"
+                        }
+                      },
+                      "right": "ghndc5fa44a9b00"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "nfproto"
+                        }
+                      },
+                      "right": "ipv6"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "payload": {
+                          "protocol": "tcp",
+                          "field": "dport"
+                        }
+                      },
+                      "right": 80
+                    }
+                  },
+                  {
+                    "counter": {
+                      "packets": 0,
+                      "bytes": 0
+                    }
+                  },
+                  {
+                    "dnat": {
+                      "family": "ip6",
+                      "addr": "fd42::1",
+                      "port": 44001
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "rule": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "chain": "prerouting",
+                "handle": 10,
+                "expr": [
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "iifname"
+                        }
+                      },
+                      "right": "ghndc5fa44a9b00"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "iif"
+                        }
+                      },
+                      "right": "ghndc5fa44a9b00"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "nfproto"
+                        }
+                      },
+                      "right": "ipv6"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "payload": {
+                          "protocol": "tcp",
+                          "field": "dport"
+                        }
+                      },
+                      "right": 443
+                    }
+                  },
+                  {
+                    "counter": {
+                      "packets": 0,
+                      "bytes": 0
+                    }
+                  },
+                  {
+                    "dnat": {
+                      "family": "ip6",
+                      "addr": "fd42::1",
+                      "port": 44001
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "phase": "remove_refused_while_bridge_exists",
+        "present": true,
+        "native": {
+          "nftables": [
+            {
+              "metainfo": {
+                "version": "1.0.6",
+                "release_name": "Lester Gooch #5",
+                "json_schema_version": 1
+              }
+            },
+            {
+              "table": {
+                "family": "inet",
+                "name": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "handle": 1
+              }
+            },
+            {
+              "chain": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "name": "goldenhoop_61810146c428c07b5919b5af4e040c218e58f099fffb0a8156239f718a259999",
+                "handle": 1
+              }
+            },
+            {
+              "chain": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "name": "credential_redirect_1",
+                "handle": 2
+              }
+            },
+            {
+              "chain": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "name": "binding_cb625c3d742ba0cf785857395facdf2b4b7c7cba2acc7828501ba8f10764e542",
+                "handle": 3
+              }
+            },
+            {
+              "chain": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "name": "cfg_000_7b227634223a7b2261646472657373223a223139382e31392e302e31222c22706f7274223a34343030307d2c227636223a7b2261646472657373223a22666434",
+                "handle": 4
+              }
+            },
+            {
+              "chain": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "name": "cfg_001_323a3a31222c22706f7274223a34343030317d2c22706f727473223a7b223830223a2268747470222c22343433223a226874747073227d7d",
+                "handle": 5
+              }
+            },
+            {
+              "chain": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "name": "prerouting",
+                "handle": 6,
+                "type": "nat",
+                "hook": "prerouting",
+                "prio": -105,
+                "policy": "accept"
+              }
+            },
+            {
+              "rule": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "chain": "prerouting",
+                "handle": 7,
+                "expr": [
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "iifname"
+                        }
+                      },
+                      "right": "ghndc5fa44a9b00"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "iif"
+                        }
+                      },
+                      "right": "ghndc5fa44a9b00"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "nfproto"
+                        }
+                      },
+                      "right": "ipv4"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "payload": {
+                          "protocol": "tcp",
+                          "field": "dport"
+                        }
+                      },
+                      "right": 80
+                    }
+                  },
+                  {
+                    "counter": {
+                      "packets": 0,
+                      "bytes": 0
+                    }
+                  },
+                  {
+                    "dnat": {
+                      "family": "ip",
+                      "addr": "198.19.0.1",
+                      "port": 44000
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "rule": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "chain": "prerouting",
+                "handle": 8,
+                "expr": [
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "iifname"
+                        }
+                      },
+                      "right": "ghndc5fa44a9b00"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "iif"
+                        }
+                      },
+                      "right": "ghndc5fa44a9b00"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "nfproto"
+                        }
+                      },
+                      "right": "ipv4"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "payload": {
+                          "protocol": "tcp",
+                          "field": "dport"
+                        }
+                      },
+                      "right": 443
+                    }
+                  },
+                  {
+                    "counter": {
+                      "packets": 0,
+                      "bytes": 0
+                    }
+                  },
+                  {
+                    "dnat": {
+                      "family": "ip",
+                      "addr": "198.19.0.1",
+                      "port": 44000
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "rule": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "chain": "prerouting",
+                "handle": 9,
+                "expr": [
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "iifname"
+                        }
+                      },
+                      "right": "ghndc5fa44a9b00"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "iif"
+                        }
+                      },
+                      "right": "ghndc5fa44a9b00"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "nfproto"
+                        }
+                      },
+                      "right": "ipv6"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "payload": {
+                          "protocol": "tcp",
+                          "field": "dport"
+                        }
+                      },
+                      "right": 80
+                    }
+                  },
+                  {
+                    "counter": {
+                      "packets": 0,
+                      "bytes": 0
+                    }
+                  },
+                  {
+                    "dnat": {
+                      "family": "ip6",
+                      "addr": "fd42::1",
+                      "port": 44001
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "rule": {
+                "family": "inet",
+                "table": "gh_c_dc5fa44a9b0049989de7776540d3ac21",
+                "chain": "prerouting",
+                "handle": 10,
+                "expr": [
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "iifname"
+                        }
+                      },
+                      "right": "ghndc5fa44a9b00"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "iif"
+                        }
+                      },
+                      "right": "ghndc5fa44a9b00"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "nfproto"
+                        }
+                      },
+                      "right": "ipv6"
+                    }
+                  },
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "payload": {
+                          "protocol": "tcp",
+                          "field": "dport"
+                        }
+                      },
+                      "right": 443
+                    }
+                  },
+                  {
+                    "counter": {
+                      "packets": 0,
+                      "bytes": 0
+                    }
+                  },
+                  {
+                    "dnat": {
+                      "family": "ip6",
+                      "addr": "fd42::1",
+                      "port": 44001
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "phase": "after_bridge_absence_and_remove",
+        "present": false,
+        "native": null
+      }
+    ],
+    "controller_exit_code": 0,
+    "controller_stderr": "",
+    "error": null,
+    "ready": false
+  }
+}

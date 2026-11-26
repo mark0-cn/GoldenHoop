@@ -12,6 +12,20 @@ pub struct ScopedKernelSnapshot {
 
 impl ScopedKernelSnapshot {
     pub fn parse(allocation: &Allocation, bytes: &[u8]) -> Result<Self, ApiError> {
+        Self::parse_inner(allocation, bytes, true)
+    }
+    /// Attachment/collection may legitimately have absent tables. This path
+    /// proves absence only from a successful complete native inventory; it
+    /// does not relax the fully protected snapshot contract above.
+    #[cfg(any(target_os = "linux", test))]
+    pub(crate) fn inventory(allocation: &Allocation, bytes: &[u8]) -> Result<Self, ApiError> {
+        Self::parse_inner(allocation, bytes, false)
+    }
+    fn parse_inner(
+        allocation: &Allocation,
+        bytes: &[u8],
+        complete: bool,
+    ) -> Result<Self, ApiError> {
         allocation.validate()?;
         let bad = || {
             error(
@@ -67,7 +81,10 @@ impl ScopedKernelSnapshot {
             }
             tables.get_mut(name).ok_or_else(bad)?.push(entry.clone());
         }
-        if required.keys().any(|name| counts.get(name) != Some(&1))
+        if (complete && required.keys().any(|name| counts.get(name) != Some(&1)))
+            || tables
+                .iter()
+                .any(|(name, entries)| !entries.is_empty() && counts.get(name) != Some(&1))
             || counts.values().any(|count| *count != 1)
         {
             return Err(bad());
@@ -84,5 +101,66 @@ impl ScopedKernelSnapshot {
         self.tables
             .get(name)
             .ok_or_else(|| error(ErrorCode::Conflict, "required scoped table is absent"))
+    }
+    #[cfg(any(target_os = "linux", test))]
+    pub(crate) fn observed_table(&self, name: &str) -> Option<&Value> {
+        self.tables.get(name)
+    }
+}
+
+#[cfg(test)]
+mod inventory_tests {
+    use super::*;
+
+    fn allocation() -> Allocation {
+        Allocation {
+            installation_id: uuid::Uuid::new_v4(),
+            sandbox_id: uuid::Uuid::new_v4(),
+            generation: uuid::Uuid::new_v4(),
+            bridge: "ghsnapshot".into(),
+            ifindex: 1,
+        }
+    }
+
+    #[test]
+    fn successful_foreign_inventory_proves_only_owned_absence() {
+        let a = allocation();
+        let bytes =
+            serde_json::to_vec(&json!({"nftables":[{"table":{"family":"inet","name":"foreign"}}]}))
+                .unwrap();
+        let observed = ScopedKernelSnapshot::inventory(&a, &bytes).unwrap();
+        assert!(observed.observed_table(&a.table()).is_none());
+        assert!(ScopedKernelSnapshot::parse(&a, &bytes).is_err());
+        assert!(ScopedKernelSnapshot::inventory(&a, b"{}").is_err());
+    }
+
+    #[test]
+    fn partial_attachment_inventory_is_never_a_protected_snapshot() {
+        let a = allocation();
+        let bytes =
+            serde_json::to_vec(&json!({"nftables":[{"table":{"family":"inet","name":a.table()}}]}))
+                .unwrap();
+        let observed = ScopedKernelSnapshot::inventory(&a, &bytes).unwrap();
+        assert!(observed.observed_table(&a.table()).is_some());
+        assert!(observed.observed_table(&a.source_table()).is_none());
+        assert!(ScopedKernelSnapshot::parse(&a, &bytes).is_err());
+    }
+
+    #[test]
+    fn ambiguous_or_unanchored_inventory_cannot_confirm_absence() {
+        let a = allocation();
+        for entries in [
+            json!([{"table":{"family":"inet","name":a.table()}},{"table":{"family":"inet","name":a.table()}}]),
+            json!([{"chain":{"family":"inet","table":a.table(),"name":"orphan"}}]),
+            json!([{"table":{"family":"bridge","name":a.table()}}]),
+        ] {
+            assert!(
+                ScopedKernelSnapshot::inventory(
+                    &a,
+                    &serde_json::to_vec(&json!({"nftables":entries})).unwrap()
+                )
+                .is_err()
+            );
+        }
     }
 }

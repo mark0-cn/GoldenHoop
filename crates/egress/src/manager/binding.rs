@@ -30,26 +30,28 @@ impl Manager {
             .binding
             .as_ref()
             .ok_or_else(|| error(ErrorCode::InvalidState, "DNS listeners are not bound"))?;
-        self.expected(expected).await?;
-        let (revision, table) = self
-            .table()
-            .await?
-            .ok_or_else(|| error(ErrorCode::Conflict, "quarantine table is absent"))?;
-        if revision != expected {
-            return Err(error(ErrorCode::Conflict, "quarantine revision changed"));
+        self.check_bridge()?;
+        // Verify both complete native samples with the original pure deny and
+        // floor predicates. Repeated per-table processes add no new authority.
+        let mut confirmed = None;
+        for _ in 0..2 {
+            let observed = self.observed_tables().await?;
+            self.expected_observation(expected, &observed)?;
+            let table = observed
+                .main_native
+                .as_ref()
+                .ok_or_else(|| error(ErrorCode::Conflict, "quarantine table is absent"))?;
+            crate::quarantine::verify(&self.allocation, expected, bindings, table)?;
+            confirmed = Some(observed);
         }
-        crate::quarantine::verify(&self.allocation, expected, bindings, &table)?;
-        let source = self
-            .source_guard()
-            .await?
+        let observed = confirmed
+            .ok_or_else(|| error(ErrorCode::Conflict, "quarantine observation is absent"))?;
+        let source = observed
+            .source
             .ok_or_else(|| error(ErrorCode::Conflict, "source guard is absent"))?;
-        let destinations = self
-            .destination_guard()
-            .await?
+        let destinations = observed
+            .destinations
             .ok_or_else(|| error(ErrorCode::Conflict, "destination guard is absent"))?;
-        if !self.source_matches(Some(&source)) || !self.destinations_match(Some(&destinations)) {
-            return Err(error(ErrorCode::Conflict, "immutable guard changed"));
-        }
         self.check_bridge()?;
         self.check_lifetime()?;
         let receipt = crate::ProtectedBindingReceipt {

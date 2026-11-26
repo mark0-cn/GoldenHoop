@@ -6,16 +6,24 @@ pub(super) async fn call(
     session: &mut ControllerSession,
     request: Request,
 ) -> Result<serde_json::Value, ApiError> {
+    let phase = match &request {
+        Request::Open { .. } => "controller open",
+        Request::BindNative { .. } => "native identity binding",
+        Request::RecoverDns { .. } => "DNS socket recovery",
+        Request::InspectBinding { .. } => "protected binding readback",
+        Request::Inspect { .. } => "controller inspection",
+        _ => "guarded controller exchange",
+    };
     match session
         .call(
             request,
             tokio::time::Instant::now() + Duration::from_secs(5),
         )
         .await
-        .map_err(|_| conflict())?
+        .map_err(|_| bootstrap_context(phase, conflict()))?
     {
         Reply::Result(value) => Ok(value),
-        Reply::Error(error) => Err(error),
+        Reply::Error(error) => Err(bootstrap_context(phase, error)),
     }
 }
 impl DockerDriver {

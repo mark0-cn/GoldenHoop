@@ -330,13 +330,36 @@ pub async fn authenticate(
         let stream = async_stream::stream! {
             let mut source=body.into_data_stream();
             loop {
-                if principal.check(&store).await.is_err() {
+                // An idle SSE body may be suspended inside a database read.
+                // Keep polling it while authorization waits for the same
+                // single-connection pool; hold at most one frame until the
+                // authorization result is known and never emit it on denial.
+                let (allowed,buffered)={
+                    let checking=principal.check(&store);
+                    tokio::pin!(checking);
+                    let mut buffered=None;
+                    let allowed=loop {
+                        tokio::select! {
+                            result=&mut checking=>break result.is_ok(),
+                            item=source.next(),if buffered.is_none()=>buffered=Some(item),
+                        }
+                    };
+                    (allowed,buffered)
+                };
+                if !allowed {
+                    // Release an unfinished source read before requesting the
+                    // bounded audit write, which uses that pool as well.
+                    drop(source);
                     let event=principal.event(action,AuditPhase::StreamRevoked,target,sandbox);
                     // A blocked audit writer must not retain a revoked
                     // observer indefinitely. The transport is fail-closed
                     // even when this separate observation cannot be stored.
                     let _=tokio::time::timeout(Duration::from_millis(500),store.append_audit(&event)).await;
                     break;
+                }
+                if let Some(item)=buffered {
+                    match item {Some(item)=>yield item,None=>break}
+                    continue;
                 }
                 tokio::select! {
                     item=source.next()=>match item {Some(item)=>yield item,None=>break},

@@ -249,7 +249,9 @@ async fn revocation_collects_an_already_polled_idle_sse_body_without_cancelling_
     .await;
     assert_eq!(response.status(), StatusCode::OK);
     let reading = tokio::spawn(to_bytes(response.into_body(), 16384));
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    // Remain open across repeated authorization checks before revocation.
+    // An unfinished idle body read must not pin the sole store connection.
+    tokio::time::sleep(Duration::from_millis(1300)).await;
     assert!(!reading.is_finished());
     let start = std::time::Instant::now();
     store

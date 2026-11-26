@@ -20,6 +20,7 @@ mod binding;
 mod credentials;
 mod destinations;
 mod effective;
+mod observation;
 mod resolver;
 mod snapshot;
 mod source;
@@ -144,17 +145,18 @@ impl Manager {
         };
         // Reconcile the immutable floor on attachment. A restart cannot forget
         // an existing owned guard and silently continue without it later.
-        manager.ethernet_required = manager.ethernet().await?.is_some();
-        if let Some(observed) = manager.source_guard().await? {
+        let observed = manager.observed_tables().await?;
+        manager.ethernet_required = observed.ethernet_sha256.is_some();
+        if let Some(observed) = observed.source {
             manager.uncertain = !observed.healthy || !manager.ethernet_required;
             manager.ethernet_required = true;
             manager.source_scope = Some(observed.scope);
         }
-        if let Some(observed) = manager.destination_guard().await? {
+        if let Some(observed) = observed.destinations {
             manager.uncertain |= !observed.healthy;
             manager.destinations = Some(observed.definition);
         }
-        if let Some(observed) = manager.credential_guard().await? {
+        if let Some(observed) = observed.credential {
             manager.credential_redirect = Some(observed);
             // A restarted process has no provider material or live packets.
             // Recovery must install a fresh broker snapshot under quarantine.
@@ -231,10 +233,11 @@ impl Manager {
     }
 
     pub async fn inspect(&self) -> Result<Observation, ApiError> {
-        let table = self.table().await?;
-        let ethernet = self.ethernet().await?;
-        let source = self.source_guard().await?;
-        let destinations = self.destination_guard().await?;
+        let observed = self.observed_tables().await?;
+        let table = observed.table;
+        let ethernet = observed.ethernet_sha256;
+        let source = observed.source;
+        let destinations = observed.destinations;
         Ok(Observation {
             installed: table.is_some(),
             revision: table.as_ref().map(|(r, _)| *r),
@@ -242,20 +245,10 @@ impl Manager {
                 || (self.ethernet_required && ethernet.is_none())
                 || !self.source_matches(source.as_ref())
                 || !self.destinations_match(destinations.as_ref()),
-            table_sha256: table.map(|(_, v)| {
-                format!(
-                    "{:x}",
-                    Sha256::digest(serde_json::to_vec(&v).expect("JSON value"))
-                )
-            }),
+            table_sha256: table.map(|(_, digest)| digest),
             maximum_lease_seconds: LEASE_SECONDS,
             ethernet_guarded: ethernet.is_some(),
-            ethernet_sha256: ethernet.map(|v| {
-                format!(
-                    "{:x}",
-                    Sha256::digest(serde_json::to_vec(&v).expect("JSON value"))
-                )
-            }),
+            ethernet_sha256: ethernet,
             source_guarded: source.as_ref().is_some_and(|s| s.healthy)
                 && self.source_matches(source.as_ref()),
             source_binding_sha256: source.map(|s| s.scope.digest()),
@@ -340,28 +333,9 @@ impl Manager {
 
     async fn expected(&self, expected: u64) -> Result<(), ApiError> {
         self.check_bridge()?;
-        if self.table().await?.map(|(r, _)| r) != Some(expected) {
-            return Err(error(ErrorCode::Conflict, "egress policy revision differs"));
-        }
-        if self.ethernet_required && self.ethernet().await?.is_none() {
-            return Err(error(
-                ErrorCode::Conflict,
-                "required Ethernet guard is unavailable",
-            ));
-        }
-        if !self.source_matches(self.source_guard().await?.as_ref()) {
-            return Err(error(
-                ErrorCode::Conflict,
-                "required source guard is unavailable or changed",
-            ));
-        }
-        if !self.destinations_match(self.destination_guard().await?.as_ref()) {
-            return Err(error(
-                ErrorCode::Conflict,
-                "required destination guard is unavailable or changed",
-            ));
-        }
-        self.verify_credential_guard().await?;
+        let observed = self.observed_tables().await?;
+        self.expected_observation(expected, &observed)?;
+        self.check_bridge()?;
         Ok(())
     }
 

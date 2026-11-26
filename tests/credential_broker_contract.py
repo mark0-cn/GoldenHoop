@@ -230,7 +230,7 @@ class Contract(NetworkContract):
         self.network_pending = True
         self.report['receiver_network_intent'] = dict(name=network_name, subnet=subnet, attempt=self.attempt)
         self.save()
-        self.receiver_network = docker('network', 'create', '--driver', 'bridge', '--ipv6', '--subnet', subnet,
+        self.receiver_network = docker('network', 'create', '--driver', 'bridge', '--internal', '--ipv6', '--subnet', subnet,
             '--label', 'dev.goldenhoop.test=credential-broker-fixture', '--label', 'dev.goldenhoop.attempt=' + self.attempt, network_name)
         assert len(self.receiver_network) == 64
         self.network_pending = False
@@ -259,6 +259,12 @@ class Contract(NetworkContract):
         self.control = json.loads(docker('exec', self.receiver, 'cat', '/tmp/credential-fixture/control.json'))
         self.private_values.extend(self.control['tokens'].values())
         endpoint = json.loads(docker('inspect', self.receiver))[0]['NetworkSettings']['Networks'][network_name]
+        assert json.loads(docker('network', 'inspect', self.receiver_network))[0]['Internal'] is True
+        actual_receiver = json.loads(docker('inspect', self.receiver))[0]
+        assert not actual_receiver['HostConfig']['PortBindings']
+        assert not actual_receiver['NetworkSettings']['Ports']
+        self.report['receiver_topology'] = dict(internal_network=True, published_host_ports=[],
+            scope='Guest TCP is intercepted before forwarding; the trusted host broker re-originates the receiver connection')
         assert endpoint['IPAddress'] == self.control['ipv4']
         assert ipaddress.ip_address(endpoint['GlobalIPv6Address']) == ipaddress.ip_address(self.control['ipv6'])
         dns_fixture = Path('tests/fixtures/credential_dns.py')

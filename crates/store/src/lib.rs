@@ -14,6 +14,8 @@ pub use network_policy_public::{NetworkOperatorPolicy, NetworkPolicyInputs, Netw
 mod networks;
 pub use network_policy::{NetworkPolicyControl, NetworkPolicyOwner, NetworkPolicyPhase};
 mod credentials;
+#[cfg(test)]
+mod pool_tests;
 mod security;
 mod sessions;
 pub use networks::{
@@ -226,7 +228,7 @@ impl Store {
             .synchronous(SqliteSynchronous::Full)
             .foreign_keys(true)
             .busy_timeout(Duration::from_secs(5));
-        Self::connect(options).await
+        Self::connect(options, false).await
     }
 
     pub async fn memory() -> Result<Self, ApiError> {
@@ -234,18 +236,26 @@ impl Store {
             SqliteConnectOptions::new()
                 .in_memory(true)
                 .foreign_keys(true),
+            true,
         )
         .await
     }
 
-    async fn connect(options: SqliteConnectOptions) -> Result<Self, ApiError> {
+    async fn connect(options: SqliteConnectOptions, in_memory: bool) -> Result<Self, ApiError> {
         // One connection per process keeps transactions predictable. SQLite WAL permits
         // the separate API and worker processes to read while the other writes.
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect_with(options)
-            .await
-            .map_err(db)?;
+        let mut pool = SqlitePoolOptions::new().max_connections(1);
+        if in_memory {
+            // Cancelling an acquire during its health-check await can drop
+            // the sole connection and destroy an in-memory database. SQLx
+            // documents this configuration for cancellation-safe acquisition.
+            // This ephemeral database must also live for the Store lifetime.
+            pool = pool
+                .test_before_acquire(false)
+                .idle_timeout(None)
+                .max_lifetime(None);
+        }
+        let pool = pool.connect_with(options).await.map_err(db)?;
         let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
         sqlx::raw_sql(include_str!("schema.sql"))
             .execute(&mut *tx)

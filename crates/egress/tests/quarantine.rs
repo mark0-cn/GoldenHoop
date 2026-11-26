@@ -52,6 +52,24 @@ fn actual_numeric_kernel_snapshot_and_resolved_interface_names_are_accepted() {
     quarantine::verify(&f.allocation, f.revision, &b, &numeric).unwrap();
 }
 #[test]
+fn symbolic_icmpv6_code_zero_keeps_the_exact_quarantine_predicate() {
+    let (f, b) = fixture();
+    for (code, accepted) in [
+        (json!("no-route"), true),
+        (json!(1), false),
+        (json!("admin-prohibited"), false),
+        (json!({"set":[0,1]}), false),
+    ] {
+        let mut native = f.native.clone();
+        row(&mut native, "rule", "input")["expr"][3]["match"]["right"] = code;
+        assert_eq!(
+            quarantine::verify(&f.allocation, f.revision, &b, &native).is_ok(),
+            accepted
+        );
+    }
+}
+
+#[test]
 fn changed_quarantine_rules_leases_owners_hooks_and_endpoints_are_refused() {
     let (f, b) = fixture();
     for case in 0..22 {

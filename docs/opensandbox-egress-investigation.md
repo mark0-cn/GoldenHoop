@@ -104,6 +104,19 @@ evidence for those tests, and changing runtime is not an acceptance shortcut.
 
 ## Current actions and verification boundary
 
+The owned counter probe subsequently confirmed the allocated bridge at the
+inet hook, so GoldenHoop keeps that interface match. Packet visibility at
+priority -400 but no arrival at -210 or DNAT is consistent with Docker's RAW
+direct-container filter. Moby's implementation explicitly skips that filter
+for internal networks and retains host access to its containers. The test
+receiver therefore uses a separate internal network with no published host
+ports; the guest packet must first reach the transparent proxy, whose trusted
+host process opens the actual receiver connection. This is a fixture topology
+correction, not a change to workload floors or their exact two receiver
+exceptions, and requires native HTTP/TLS verification.
+[Moby direct-access filter](https://github.com/moby/moby/blob/ef9054461f8e11d5e13e56806a70fc151759b205/daemon/libnetwork/drivers/bridge/internal/iptabler/endpoint.go#L35-L77),
+[Docker networking hardening](https://docs.docker.com/engine/release-notes/28/).
+
 - Retain exact ownership, source identity and original-target checks.
 - Reduce duplicate processes in protected renewal without changing deadlines.
 - Capture owned-generation native counters during the failing private

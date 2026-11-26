@@ -133,6 +133,14 @@ pub fn verify(
                     {
                         expression["match"]["right"] = json!(allocation.ifindex);
                     }
+                    // Symbolic dumps use this captured spelling for ICMPv6
+                    // code zero. No other code or broadened set is equivalent.
+                    if expression["match"]["left"]
+                        == json!({"payload":{"protocol":"icmpv6","field":"code"}})
+                        && expression["match"]["right"] == "no-route"
+                    {
+                        expression["match"]["right"] = json!(0);
+                    }
                     if expression["match"]["left"]
                         == json!({"payload":{"protocol":"icmpv6","field":"type"}})
                     {
