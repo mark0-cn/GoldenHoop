@@ -17,7 +17,7 @@ class DestinationCases:
     def __init__(self,args):
         super().__init__(args)
         self.evidence['suite']='rust-destination-component' if args.component_only else 'rust-composed-destination-floor'
-        self.evidence['scope']='actual protected/private targets, pre/post-DNAT, DNS grant refusal and immutable guard recovery; component-only omits bridge source/Ethernet; production journal/credentials remain incomplete'
+        self.evidence['scope']='actual protected/private targets, pre/post-DNAT, DNS grant refusal and immutable guard recovery; component-only omits bridge source/Ethernet; production journal/credential acceptance belongs to its separate gates'
         self.protected_bound=False;self.translation_attempted=False;self.private_stream=None
         self.extra_addresses=[];self.injected_rule=None
         root=Path(__file__).resolve().parents[1]
@@ -262,6 +262,18 @@ class DestinationCases:
         assert repeated['error']['code']=='invalid_state' and self.rpc('inspect')['result']['destination_binding_sha256']==self.destination_digest,repeated
         self.check('destination_scope_cannot_be_replaced_or_weakened_on_a_live_allocation')
         self.apply_config({'policies':[{'default_action':'allow','rules':[]}],'allow_always':[{'destination':'*','ports':[],'action':'allow'}]})
+        if not self.args.component_only:
+            renewed=self.rpc('renew',expected_revision=self.revision)['result']
+            assert all(renewed[key] for key in ('ethernet_guarded','source_guarded','destinations_guarded')) and not renewed['uncertain'],renewed
+            assert renewed['maximum_lease_seconds']==10 and 'binding' not in renewed and 'lease_remaining_milliseconds' not in renewed,renewed
+            self.check('relative_DNS_lifetime_basic_renewal_preserves_every_native_guard_without_minting_a_binding_receipt')
+            refused=self.rpc('renew_policy',expected_revision=self.revision,error=True)
+            assert refused['error']['code']=='invalid_state' and refused['error']['message']=='original DNS lifetime is absent',refused
+            assert self.rpc('inspect')['result']['uncertain']
+            assert self.rpc('renew',expected_revision=self.revision,error=True)['error']['code']=='invalid_state'
+            self.check('relative_DNS_lifetime_cannot_mint_a_public_policy_receipt_and_failed_projection_fences_renewal')
+            self.rpc('quarantine',expected_revision=self.revision)
+            self.apply_config({'policies':[{'default_action':'allow','rules':[]}],'allow_always':[{'destination':'*','ports':[],'action':'allow'}]})
         for address in (self.target_ip,self.target6):
             assert self.probe(self.guest,'tcp',address,19001);assert self.probe(self.guest,'udp',address,19002);self.rpc('renew',expected_revision=self.revision)
         self.check('administrator_private_exception_keeps_real_dualstack_tcp_udp_admission')

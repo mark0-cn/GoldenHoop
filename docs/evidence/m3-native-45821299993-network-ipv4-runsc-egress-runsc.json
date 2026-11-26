@@ -1,0 +1,3590 @@
+{
+  "suite": "rust-workload-ipv4-dns",
+  "runtime": "runsc",
+  "scope": "actual workload IPv4 DNS and private grant path; IPv6/L2/metadata/credentials/API integration incomplete",
+  "timestamp": "2026-11-26T12:56:42.514897+00:00",
+  "attempt": "697b34e8fca24203811dc60cbe13e421",
+  "receiver_publication": "routed",
+  "result": "passed",
+  "cleanup": "complete",
+  "cases": [
+    "allocation_alias_controller_lock_foreign_ownership_and_live_bridge_deletion_refuse",
+    "default_deny_is_installed_before_unprivileged_workload_start",
+    "stale_revision_and_unimplemented_name_policy_refuse_without_mutation",
+    "kernel_cidr_and_user_hierarchy_intersect_with_tcp_only_ports",
+    "kernel_user_deny_precedes_allow_in_both_orders",
+    "kernel_operator_deny_then_allow_precede_user_policy",
+    "kernel_tcp_cap_precedes_operator_allow_without_becoming_a_udp_cap",
+    "private_dns_answer_follows_confirmed_kernel_tcp_and_udp_grants",
+    "denied_domain_is_not_forwarded_to_the_owned_upstream",
+    "source_expiry_denies_packets_while_controller_and_target_remain_live",
+    "live_shared_ip_source_does_not_revive_the_expired_original_source",
+    "negative_aaaa_preserves_the_same_names_live_a_permission",
+    "dns_queries_cannot_renew_the_trusted_controller_lease",
+    "policy_replacement_clears_prior_dns_permissions",
+    "operator_domain_credit_precedes_user_address_denies",
+    "operator_address_deny_refuses_a_dns_answer_and_packet_grant",
+    "tcp_floor_precedes_dns_operator_permission",
+    "workload_dns_listener_is_on_the_verified_gateway_and_grants_real_packets",
+    "arbitrary_ipv4_udp_and_tcp_dns_destinations_are_transparently_intercepted",
+    "workload_denied_names_return_address_free_refused_without_upstream_queries",
+    "readonly_owned_resolver_uses_the_policy_resolver_and_libc_without_public_fallback",
+    "a_different_bridge_cannot_borrow_the_listener_identity",
+    "malformed_oversized_and_truncated_workload_dns_never_reaches_upstream_or_grants_an_answer",
+    "dns_activity_does_not_discard_or_expand_a_partial_control_frame",
+    "exact_routed_tcp_permission_does_not_grant_other_tcp_or_udp",
+    "host_input_is_denied_while_the_owned_host_service_is_live",
+    "controller_loss_expires_existing_and_new_flow_permission_in_kernel",
+    "restart_observation_cannot_renew_without_confirmed_quarantine",
+    "tightening_denies_packets_of_an_existing_connection",
+    "owned_filter_table_networks_and_containers_confirmed_absent"
+  ],
+  "resources": [
+    {
+      "role": "helper",
+      "container_id": "539b8eb9f7a3850fdd297ac22ba7e7673742d837242e26642f6d7f69b28cd6aa",
+      "boundary": {
+        "Runtime": "runc",
+        "NetworkMode": "host",
+        "ReadonlyRootfs": true,
+        "CapDrop": [
+          "ALL"
+        ],
+        "CapAdd": [
+          "CAP_NET_ADMIN"
+        ],
+        "SecurityOpt": [
+          "no-new-privileges:true"
+        ],
+        "Memory": 134217728,
+        "MemorySwap": 134217728,
+        "NanoCpus": 250000000,
+        "PidsLimit": 32
+      }
+    },
+    {
+      "role": "guest-net",
+      "network_id": "5d04ffb05d05415c466408fb15018ec59750c86ab15414df70694a07d3b8df15",
+      "options": {
+        "com.docker.network.bridge.enable_ip_masquerade": "true",
+        "com.docker.network.bridge.name": "ghnp697b34e8fca"
+      },
+      "ipam": {
+        "Driver": "default",
+        "Options": {},
+        "Config": [
+          {
+            "Subnet": "172.18.0.0/16",
+            "Gateway": "172.18.0.1"
+          }
+        ]
+      }
+    },
+    {
+      "role": "target-net",
+      "network_id": "bbe1e76772dc0daf8efa8d4e795032516d073030526a0cb7a42bb5fc84881c1e",
+      "options": {
+        "com.docker.network.bridge.gateway_mode_ipv4": "routed"
+      },
+      "ipam": {
+        "Driver": "default",
+        "Options": {},
+        "Config": [
+          {
+            "Subnet": "172.19.0.0/16",
+            "Gateway": "172.19.0.1"
+          }
+        ]
+      }
+    },
+    {
+      "role": "target",
+      "container_id": "03d0b154e53608e81bce6a34cdaa00513f6e347ea6cb9931b87e216e00bca9a0",
+      "boundary": {
+        "Runtime": "runc",
+        "NetworkMode": "bbe1e76772dc0daf8efa8d4e795032516d073030526a0cb7a42bb5fc84881c1e",
+        "ReadonlyRootfs": true,
+        "CapDrop": [
+          "ALL"
+        ],
+        "CapAdd": null,
+        "SecurityOpt": [
+          "no-new-privileges:true"
+        ],
+        "Memory": 134217728,
+        "MemorySwap": 134217728,
+        "NanoCpus": 250000000,
+        "PidsLimit": 32
+      }
+    },
+    {
+      "role": "dns-config",
+      "volume_name": "goldenhoop-network-697b34e8fca24203811dc60cbe13e421-dns-config"
+    },
+    {
+      "role": "guest",
+      "container_id": "64bb97b0acd008f36312474f3e44c66805c9adc4bfaf1c54b5a3fcb81dc82a07",
+      "boundary": {
+        "Runtime": "runsc",
+        "NetworkMode": "5d04ffb05d05415c466408fb15018ec59750c86ab15414df70694a07d3b8df15",
+        "ReadonlyRootfs": true,
+        "CapDrop": [
+          "ALL"
+        ],
+        "CapAdd": null,
+        "SecurityOpt": [
+          "no-new-privileges:true"
+        ],
+        "Memory": 1073741824,
+        "MemorySwap": 1073741824,
+        "NanoCpus": 1000000000,
+        "PidsLimit": 256
+      }
+    },
+    {
+      "role": "dns-target",
+      "container_id": "2099aaf4fa7ca2c83c9d9ae2921b54a99a0d254e5640938e7115358245bfffd4",
+      "boundary": {
+        "Runtime": "runc",
+        "NetworkMode": "bbe1e76772dc0daf8efa8d4e795032516d073030526a0cb7a42bb5fc84881c1e",
+        "ReadonlyRootfs": true,
+        "CapDrop": [
+          "ALL"
+        ],
+        "CapAdd": null,
+        "SecurityOpt": [
+          "no-new-privileges:true"
+        ],
+        "Memory": 134217728,
+        "MemorySwap": 134217728,
+        "NanoCpus": 250000000,
+        "PidsLimit": 32
+      }
+    }
+  ],
+  "observations": [
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.18.0.1",
+      "port": 37319,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": false,
+      "error": "TimeoutError"
+    },
+    {
+      "origin": "workload",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": false,
+      "error": "TimeoutError"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.18.0.1",
+      "port": 37319,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": false,
+      "error": "TimeoutError"
+    },
+    {
+      "origin": "workload",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": false,
+      "error": "TimeoutError"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.18.0.1",
+      "port": 37319,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": false,
+      "error": "TimeoutError"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.18.0.1",
+      "port": 37319,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": false,
+      "error": "TimeoutError"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.18.0.1",
+      "port": 37319,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": false,
+      "error": "TimeoutError"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.18.0.1",
+      "port": 37319,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": false,
+      "error": "TimeoutError"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.18.0.1",
+      "port": 37319,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": false,
+      "error": "TimeoutError"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "workload",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.18.0.1",
+      "port": 37319,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": false,
+      "error": "TimeoutError"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "workload",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": false,
+      "error": "TimeoutError"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.18.0.1",
+      "port": 37319,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": false,
+      "error": "TimeoutError"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": false,
+      "error": "TimeoutError"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.18.0.1",
+      "port": 37319,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": false,
+      "error": "TimeoutError"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.18.0.1",
+      "port": 37319,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": false,
+      "error": "TimeoutError"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "workload",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.18.0.1",
+      "port": 37319,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": false,
+      "error": "TimeoutError"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": false,
+      "error": "TimeoutError"
+    },
+    {
+      "origin": "workload",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": false,
+      "error": "TimeoutError"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.18.0.1",
+      "port": 37319,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.18.0.1",
+      "port": 37319,
+      "ok": false,
+      "error": "TimeoutError"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.18.0.1",
+      "port": 37319,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "workload",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": false,
+      "error": "TimeoutError"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.18.0.1",
+      "port": 37319,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19001,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.19.0.2",
+      "port": 19003,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "udp",
+      "address": "172.19.0.2",
+      "port": 19002,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    },
+    {
+      "origin": "trusted-control",
+      "transport": "tcp",
+      "address": "172.18.0.1",
+      "port": 37319,
+      "ok": true,
+      "reply_hex": "6f6b3a36393762333465386663613234323033383131646336306362653133653432310a"
+    }
+  ],
+  "source_files_sha256": {
+    "tests/network_contract.py": "7056f5306854f55e9f066400ee9dce118c5938aa6b74ceef48417a75ee974661",
+    "tests/network_samples.py": "a9cfb2ac915f9b24d8a871fd037dce738ae033606df66ee9e4575f9d332bf8d3",
+    "tests/fixtures/network.Dockerfile": "45bfbd0b787392e769782699abdbc35ca76f39ecd001114a468a5795a25076ab",
+    "tests/egress_contract.py": "7e9c67bd89551412d0280f9b1e8683ed054d642673699e7b6474f9a44a07ea15",
+    "images/agent/Dockerfile": "c9d074be69488977bb0065c93ee0fbd6f33c4f3da19849cafd939444c29751f2",
+    "Cargo.toml": "92d7313cfbbd6283dcc94530ad625912dca2d2c19d4cc315a1f75731551f6b86",
+    "Cargo.lock": "46bf7a1abb9ac707e965ed503c8b9afb5d59aed42bb39e06cf978ad86b2250c2",
+    "crates/egress/tests/quarantine.rs": "6172b77a56f0be120c9f711bf17a630cf4ac83d90040f34c75f2aa0b54c53d86",
+    "crates/egress/tests/credential_audit.rs": "6026ccb61eeddc6b94a558f1c33c589b32754fccb5f8bbb069b4add975272a2d",
+    "crates/egress/tests/admission.rs": "31fa9b78fa814f13e99ba0540cac6af658313e70a51f528ef3d014b54c5a0a69",
+    "crates/egress/tests/framing.rs": "39ad445d7df4e0d278927f3ecc70c6982999bd68c158d6376490e5c30fb3f83b",
+    "crates/egress/tests/source.rs": "85a3be8bcaf47c6efafc73e351b4f8beff2dd474bccece532923fab86790468a",
+    "crates/egress/tests/snapshot.rs": "bc0f81fc26e56478991f5d8366ab588c9ecc7cd843b2f95f98f6fa8f70db05b3",
+    "crates/egress/tests/probe.rs": "adba1a4205fe18162762795daac162f6c7f13ec1b8f78765847619d33e421463",
+    "crates/egress/tests/native_bridge_plan.rs": "a4946afc2cb5aba454c9e90d5081f554e537c575ee086c08efae6895ff15df51",
+    "crates/egress/tests/ethernet.rs": "180963909cb56b977feab70dc4a3b2874007e6a3bd30beb54e13c807c8b2cdbc",
+    "crates/egress/tests/destination_plan.rs": "4db69eb6f5ce0ca0d09d10a03250258c372901c768c8534534e5e97bd8749943",
+    "crates/egress/tests/dns.rs": "67cf82858f8c5c0611d77f9dc195a819dc0af42d7621847e7e27bd1704996046",
+    "crates/egress/tests/policy_readback.rs": "c00b1b0b1fd4e70bfbb7ef5b4c37785a881fc82d2db46fe38951e3db8552f849",
+    "crates/egress/tests/destinations.rs": "a1992f638b76cdc4261583cdbde1c1ad90e5380f00d54aaf35165773b670934c",
+    "crates/egress/tests/network_identity.rs": "8f48a51ad0350cd8ace1e8a294dc610117599a231bda204687bc96d81ca05782",
+    "crates/egress/tests/credential_redirect.rs": "29c611ef75f37d2276165d046f15b72f31f000edd0dc5f49b9b2820a3f59af88",
+    "crates/egress/tests/controller_transport.rs": "9985a2ac9379261251e6400e785956d3f0502c6383ee1e4a709f1293e5d9fda8",
+    "crates/egress/src/frontend.rs": "6b6b09f326eab0cadf0a030dd6856e29aa7d2b03fa2f2c17cb065f18d28686a9",
+    "crates/egress/src/quarantine.rs": "1eed175e4f2d84b7606ee1f06cd64e53372e39985bbc73e7b3d625864eaefd35",
+    "crates/egress/src/credential_audit.rs": "d4f25e8ff75075fc81ae0352967e8fb1f91c4864168e00fcc9e5d46e3da7d695",
+    "crates/egress/src/plan.rs": "c0b392035afad53db46f92758c223d86c5bd06fc1acf41c842197f3392c29686",
+    "crates/egress/src/controller_plan.rs": "2496a0f58d207c75dcd508e39902d3e62c54ee137edbdf8856b3e126f7d3eaf3",
+    "crates/egress/src/host.rs": "3fed0aead49a0f6bf5ebfb17b023ec364a692633d03f6f9e9370005e66877595",
+    "crates/egress/src/source.rs": "fa4d70f97f0fbf717dd736f79c45266815597f6526d6811bbc1013505a0275b1",
+    "crates/egress/src/manager.rs": "7737c7a88c5e37898b078e5658696dce13f58390d3bebc4ebc6bd2756847c117",
+    "crates/egress/src/snapshot.rs": "3090a167bef945fd772fc1c58228d80f0e5fdd060e4a383ce77bd153856ca5f1",
+    "crates/egress/src/main.rs": "0471d16be0e17209580c867b8cf40cba5642c3fc5b3f4fe06a7e61b2adffebbe",
+    "crates/egress/src/probe.rs": "bf596877e3949476ea0b3ea812001f92bc60e252dd515594abf46e5ab25fda6d",
+    "crates/egress/src/identity.rs": "747960bfc4eda6773363b517d9f615c0dbe27b176db8b13c119c63bae7a24c5e",
+    "crates/egress/src/credential_packets.rs": "eb824eb9bbabd61fbb28d7cf413cebaf26683e67468134e6dcd0b86bfd61e09c",
+    "crates/egress/src/credential_runtime.rs": "c0fbcbdcd5c5bf478323ee71e9b97c118cb0802590018515f14edd25e3f134e1",
+    "crates/egress/src/ethernet.rs": "0b1b1330d1b606cced4c0c33b424f6aa01de45f5592817895c4d439776912f1e",
+    "crates/egress/src/destination_plan.rs": "5ba66aa0e611482966e184984f5790696a0c0ba6b6b71e5f30e9840b2a314b71",
+    "crates/egress/src/dns.rs": "5f69b3e2efab11d376a5b07e1c98a50f469c284701751a2b4cadb2cb846a4cfa",
+    "crates/egress/src/policy_readback.rs": "6970dd7c5e1863a26ca797071f12591a87d28dbecc3dfd8c46828c4f43da7221",
+    "crates/egress/src/native.rs": "cf2aa1a17d5aec932aa8861fb3739adcd1aaf1fb7349b05b0c28bbca2ff72386",
+    "crates/egress/src/binding.rs": "d427de7bba2dc6a5ba3be21c83e8d3e36ab6d3da4000ec29cbe9b983d7a71a93",
+    "crates/egress/src/destinations.rs": "f5224d85c1cdc26ef82b1e73ed1b5baeb2cc5473af459e0580895ed776c9989f",
+    "crates/egress/src/policy_binding.rs": "acefed91e8bae590813afe573dae876a12acbdd79817b02b92eec29099112ba8",
+    "crates/egress/src/credential_redirect.rs": "39da3f650ef60d4c74c7604614ff629531b0619f13ff4933c23c258f8c55d1b6",
+    "crates/egress/src/collection.rs": "3275729411a800295c9a4502d847e72786b64a68c011299fa736e5e634496a7a",
+    "crates/egress/src/lib.rs": "89c5cdb1a96624fbbf262f25ba4eac230f118a1646a16a6736dcf19e0ca223ea",
+    "crates/egress/src/controller.rs": "5fa94af98537eb3c4aadf2cc1f5b26b979cb81b2fbc0a9ea99fb9669dc849c25",
+    "crates/egress/src/dns/sets.rs": "e98a86f4232938a9f9907e0fe2ce25fe68656af6d3b0a51b57579bba6ca8f219",
+    "crates/egress/src/dns/upstream.rs": "1b131e36bc45571a71406ce9c062394bb0ee45532dcaa0dee47a3da2e5c145be",
+    "crates/egress/src/dns/leases.rs": "0a3077aaca6af4f64d4a9020fe97c234483fa40a238260f640e73e64ecc29161",
+    "crates/egress/src/dns/probe.rs": "bfc371e1320565bcd1a2d65df734bff1b5f948e0eacb806bc0492faf42989c32",
+    "crates/egress/src/native/linux.rs": "6f583eb0b62509193d282cde3c32f16f3f7ef118a7674c0ca4a6e2fbf318c7f3",
+    "crates/egress/src/manager/observation.rs": "3926fde8f96ec9e57b03792ea8228f46f0ec3928023d487488c22f518957e934",
+    "crates/egress/src/manager/credentials.rs": "899166b7240e30e7675db39bbd028f12e51a4c326ed883dbf9f43264eab6979b",
+    "crates/egress/src/manager/source.rs": "7a41dfa36fda23a7cce162c01cdcdb82f392af9e340edd59865c8f65cbf60103",
+    "crates/egress/src/manager/snapshot.rs": "bb6f03139beb631baa0a30a9a753ef5f2552bebe5c9cbcd821a2d5a81c5f51ce",
+    "crates/egress/src/manager/effective.rs": "d999b9f75750a5e5b7ba36d1d392b70e0418dc72338dd8c95d38b471695473d2",
+    "crates/egress/src/manager/resolver.rs": "9b06342a91b5beea93acb5cb100505ebb4235771aeb7be6ecad8f08d32d42a48",
+    "crates/egress/src/manager/binding.rs": "bd0705f0dafc64d039d634a6f55bf4bbc1c8b8e3571b8e8d592129a386bb88f4",
+    "crates/egress/src/manager/destinations.rs": "9ceee57c112f4dacbde54ba287ca4516b771eef67dbd2d1dd7eb549f22155014",
+    "crates/egress/src/manager/source/port.rs": "32faaf949d61fd3e4b30dc504d5a521b001455ec01f5bf146f3ef0d139b25851",
+    "crates/egress/src/manager/source/port/tests.rs": "d4bc9f3785a9781d728fb1a72e5fc7618f491979f785228a9d47f7b8f7ba1780",
+    "crates/egress/src/probe/linux.rs": "401c0274cedf11a04533d5c8292de3da01a24988bb83287d3c20b3fa4a6ec700",
+    "crates/egress/src/policy_readback/rules.rs": "8a7b54555485183b3770a570f3d89e655dcf08ed29944ad93270702d0305c95a",
+    "crates/egress/src/policy_readback/lease.rs": "65687bf46cd661f9799d38d323300797be13367724f3d1e2aecb1f9cd5c4f49b",
+    "crates/egress/examples/quarantine_readback.rs": "61f8e7bb7a4f2e5d4fea18c661e03e90e521587a07af615514a34bd6a5e62224",
+    "crates/egress/examples/source_plan.rs": "7e39126f64fee1c7d948d3d7b41033290029baec4a930caaab5ebf9db98d95c4",
+    "crates/egress/examples/destination_plan.rs": "60d519dca91531157ff6c34f6b16c3e9003ea906bd00816bac5b5fcf8249c9a9",
+    "crates/egress/examples/policy_readback.rs": "9e7a65e4495e72622c807b88ab5f0d5b116f355d7f5771df7a1122df97ed4d36",
+    "crates/egress/examples/credential_redirect.rs": "b2c278eefd0fb32b141377e9ce46b7ada39dbad9a7365afbc7b86f9621b0410a",
+    "crates/egress/Cargo.toml": "d535b0c670b97c22036a4533c987fb14e672e00856d56e857d3af00d7b46d532",
+    "crates/policy/src/decision.rs": "e89ce9796904377a030f76d9e7593c2b5777b83d3e7322a1af9fea5d25e9c120",
+    "crates/policy/src/lib.rs": "4689666f161692d7424c0801055b37605e2c34ef71dac6e3ad1e3e4c033f8858",
+    "tests/dns_contract.py": "d829cc5f8680721384b24741743faf4961a3313073af3e87f583309e0d2e6e90",
+    "tests/dns_samples.py": "c673a00c37127bddd4697e2b1be8a001740571948d51d69a2321949421eb5b11",
+    "tests/frontend_contract.py": "1fa923c7c9ed9737454257ba50fbe0cb9efe066b6ea487c49717341c8a28c7e4",
+    "tests/frontend_samples.py": "1bbed83c2cd850a938fa412d2d18cd7bad5b380348ddd3c7d467a0a4f9205954"
+  },
+  "image_id": "sha256:216ddceadc9d3b1aa3473089906de7ba066f87ded6c6616839ee32ef14cc03e1",
+  "docker": {
+    "Platform": {
+      "Name": "Docker Engine - Community"
+    },
+    "Version": "29.4.2",
+    "ApiVersion": "1.54",
+    "MinAPIVersion": "1.40",
+    "Os": "linux",
+    "Arch": "amd64",
+    "Components": [
+      {
+        "Name": "Engine",
+        "Version": "29.4.2",
+        "Details": {
+          "ApiVersion": "1.54",
+          "Arch": "amd64",
+          "BuildTime": "Fri May  1 10:24:04 2026",
+          "Experimental": "false",
+          "GitCommit": "d329809",
+          "GoVersion": "go1.26.2",
+          "KernelVersion": "7.0.0-1020-azure",
+          "MinAPIVersion": "1.40",
+          "Module": "github.com/moby/moby/v2",
+          "ModuleVersion": "v2.0.0+unknown",
+          "Os": "linux"
+        }
+      },
+      {
+        "Name": "containerd",
+        "Version": "v2.4.2",
+        "Details": {
+          "GitCommit": "b7a25261e029d68978bbf290df0a62fc819b3c51"
+        }
+      },
+      {
+        "Name": "runc",
+        "Version": "1.5.3",
+        "Details": {
+          "GitCommit": "v1.5.3-0-g46365c62"
+        }
+      },
+      {
+        "Name": "docker-init",
+        "Version": "0.19.0",
+        "Details": {
+          "GitCommit": "de40ad0"
+        }
+      }
+    ],
+    "GitCommit": "d329809",
+    "GoVersion": "go1.26.2",
+    "KernelVersion": "7.0.0-1020-azure",
+    "BuildTime": "2026-05-01T10:24:04.000000000+00:00"
+  },
+  "target_port_bindings": {
+    "19001/tcp": [
+      {
+        "HostIp": "0.0.0.0",
+        "HostPort": ""
+      }
+    ],
+    "19002/udp": [
+      {
+        "HostIp": "0.0.0.0",
+        "HostPort": ""
+      }
+    ],
+    "19003/tcp": [
+      {
+        "HostIp": "0.0.0.0",
+        "HostPort": ""
+      }
+    ]
+  },
+  "controller_acknowledgements": [
+    {
+      "operation": "open",
+      "reply": {
+        "id": 1,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": false,
+          "maximum_lease_seconds": 10,
+          "revision": null,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": null,
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "install",
+      "reply": {
+        "error": {
+          "code": "conflict",
+          "message": "bridge allocation identity changed",
+          "request_id": null,
+          "retryable": false
+        },
+        "id": 2
+      }
+    },
+    {
+      "operation": "install",
+      "reply": {
+        "id": 3,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 0,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "6b9c7aa5187a5d6355b6b72369a78950f0264050db99d50036fffd819525370a",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "remove",
+      "reply": {
+        "error": {
+          "code": "conflict",
+          "message": "collect the bridge before removing its filter",
+          "request_id": null,
+          "retryable": false
+        },
+        "id": 4
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "error": {
+          "code": "invalid_state",
+          "message": "egress lease is not renewable",
+          "request_id": null,
+          "retryable": false
+        },
+        "id": 5
+      }
+    },
+    {
+      "operation": "apply",
+      "reply": {
+        "id": 6,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 1,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "b3568ba73c00967c9b9955df7153ad620ba2af3ddee1008930f82571baf273c2",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "apply",
+      "reply": {
+        "error": {
+          "code": "invalid_state",
+          "message": "quarantine is required before policy changes",
+          "request_id": null,
+          "retryable": false
+        },
+        "id": 7
+      }
+    },
+    {
+      "operation": "apply",
+      "reply": {
+        "error": {
+          "code": "unsupported_capability",
+          "message": "host adapter requires static address targets until DNS lease integration",
+          "request_id": null,
+          "retryable": false
+        },
+        "id": 8
+      }
+    },
+    {
+      "operation": "inspect",
+      "reply": {
+        "id": 9,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 1,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "b3568ba73c00967c9b9955df7153ad620ba2af3ddee1008930f82571baf273c2",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "apply",
+      "reply": {
+        "id": 10,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 2,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "0a72cf54b258a95868c27839e324d75756441ae5d613e0d2929b0be2f0cf9c99",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 11,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 2,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "06b63b0064b395dcd3a8c59e95248de63c571d982772441fe92299ec2cdcfb5a",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "apply",
+      "reply": {
+        "id": 12,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 3,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "33a49b499b58dd2fb2f8cb4a8330509933ac9e11406bd5adc3b1f99d9ee50f13",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 13,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 3,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "8332a1f6b37ed9400980dd6c2ce08030af6ff22673b71b0ebcea8b1b8d51ac0d",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "apply",
+      "reply": {
+        "id": 14,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 4,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "7cfa570df3533807aa528dc028460e2f4da2716529a962a24a245f5c0d0f70d1",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 15,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 4,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "90096691efa1eb1fff65cd6a2661f8fd867932e9a6160c2b6c9fa191c460451c",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "apply",
+      "reply": {
+        "id": 16,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 5,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "bc509c2aef96597971162f6fde6661f613b79516883745efaf49a6284723b341",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 17,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 5,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "24d3c064ece164398b5cca625edabdbe77ab3839cbcf3030d06a95b74736571a",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "apply",
+      "reply": {
+        "id": 18,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 6,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "c6255632df38646d93ce0c79ec709af03de6e176b462831c7d4c5584852b91e3",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 19,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 6,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "f8e89e4d08cb22ead9d59b6033499cff928218bf402d2c0b959b4c6a3d4691a6",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "apply",
+      "reply": {
+        "id": 20,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 7,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "1d230430bec66bbd6dcc4b0500a8bf11d5655817d577fe22743bb5b479a10793",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 21,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 7,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "9773dfdf7d63c047b451a9b9ccf8007d3eaf8cc49f4f92783dabbbf53476fc36",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "quarantine",
+      "reply": {
+        "id": 22,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 8,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "c25a8117e33eb8577ef81bf8898f68058b1b3ba31733f0ac467642aa027e0e01",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "enable_dns",
+      "reply": {
+        "id": 23,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 8,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "c25a8117e33eb8577ef81bf8898f68058b1b3ba31733f0ac467642aa027e0e01",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "listen_dns",
+      "reply": {
+        "id": 24,
+        "result": {
+          "binding": {
+            "address": "172.18.0.1",
+            "port": 46637
+          },
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 9,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "268faad00d74f3dab3bf5ca6a11bb7e246601ad23eb09face23ff53353446a40",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "apply",
+      "reply": {
+        "id": 25,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "d745e71ad5bab72decd95dbc5b30d2c7a508bd75e91dd6618b495bd7716934aa",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 26,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "d745e71ad5bab72decd95dbc5b30d2c7a508bd75e91dd6618b495bd7716934aa",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 27,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "37e7a12254bdd54f2bc6597b188475dd0b7c85ddcbc5dae81d233d0ecd362b9b",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "resolve",
+      "reply": {
+        "id": 28,
+        "result": {
+          "revision": 10,
+          "uncertain": false,
+          "wire": [
+            0,
+            71,
+            129,
+            128,
+            0,
+            1,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            5,
+            115,
+            104,
+            111,
+            114,
+            116,
+            4,
+            116,
+            101,
+            115,
+            116,
+            0,
+            0,
+            1,
+            0,
+            1,
+            192,
+            12,
+            0,
+            1,
+            0,
+            1,
+            0,
+            0,
+            0,
+            3,
+            0,
+            4,
+            172,
+            19,
+            0,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "operation": "resolve",
+      "reply": {
+        "error": {
+          "code": "forbidden",
+          "message": "DNS query is denied by policy",
+          "request_id": null,
+          "retryable": false
+        },
+        "id": 29
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 30,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "6914a54aaeeea71ee579ff6bddefb56e765b8b1a91d7c816c587e81b504f6ae9",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 31,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "3597108a6a9e570c94672c2c608d592b5920fa35f63103fcf6818fb8540b1461",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 32,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "53fa81965ac8b897342da9b3b7908330aae106e0b7ee51006ea8151b6608a083",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 33,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "825075cef0017bdf2f2f5d88671f91c6cc36677964e05462631ca5ac233a3659",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 34,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "1489c1357f2129bedd52646ce312e73501ef32fca6c81d1e27d34399fbbc9c31",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 35,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "1489c1357f2129bedd52646ce312e73501ef32fca6c81d1e27d34399fbbc9c31",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "dns_source",
+      "reply": {
+        "id": 36,
+        "result": {
+          "remaining_milliseconds": null,
+          "revision": 10,
+          "source_live": false,
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 37,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "dfcf97cfd949bcebc07d6215170a63d5236d0c4eaa436b0bca0230ee3ce0efa8",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 38,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "dfcf97cfd949bcebc07d6215170a63d5236d0c4eaa436b0bca0230ee3ce0efa8",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "resolve",
+      "reply": {
+        "id": 39,
+        "result": {
+          "revision": 10,
+          "uncertain": false,
+          "wire": [
+            0,
+            71,
+            129,
+            128,
+            0,
+            1,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            5,
+            115,
+            104,
+            111,
+            114,
+            116,
+            4,
+            116,
+            101,
+            115,
+            116,
+            0,
+            0,
+            1,
+            0,
+            1,
+            192,
+            12,
+            0,
+            1,
+            0,
+            1,
+            0,
+            0,
+            0,
+            3,
+            0,
+            4,
+            172,
+            19,
+            0,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 40,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "88f805920dbb07573be21c3d087eb8d3b12fbe8449f14ff6c3097df8033ef6e8",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "resolve",
+      "reply": {
+        "id": 41,
+        "result": {
+          "revision": 10,
+          "uncertain": false,
+          "wire": [
+            0,
+            71,
+            129,
+            128,
+            0,
+            1,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            4,
+            108,
+            111,
+            110,
+            103,
+            4,
+            116,
+            101,
+            115,
+            116,
+            0,
+            0,
+            1,
+            0,
+            1,
+            192,
+            12,
+            0,
+            1,
+            0,
+            1,
+            0,
+            0,
+            0,
+            9,
+            0,
+            4,
+            172,
+            19,
+            0,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 42,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "a95fba8f62e845ec7ff7f6eb001efe049f2f48c42ff704eed7498e243aa20918",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 43,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "6f6dfe1c19b8925ef9d4570a61bac4975ef3f7ea96f7425984381aba069042d0",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 44,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "610c73f1798b00e295ec5b0ccdad869cfca0465f4c4e0c845b0699dc661066ae",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 45,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "3d6e45782f634a77a2c92979dfcd73da3e84217afa69569a1e89a4176fd781b7",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 46,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "3d6e45782f634a77a2c92979dfcd73da3e84217afa69569a1e89a4176fd781b7",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 47,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "0df91ef8db77d1dcfe51a54b466544f83a7b8d005ae76cbe33b7b5f967a9834c",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "dns_source",
+      "reply": {
+        "id": 48,
+        "result": {
+          "remaining_milliseconds": null,
+          "revision": 10,
+          "source_live": false,
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "dns_source",
+      "reply": {
+        "id": 49,
+        "result": {
+          "remaining_milliseconds": 25193,
+          "revision": 10,
+          "source_live": true,
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 50,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "1acd0f23769ab01012d6e1f50e2bece291e6fa1e882afa509c20e1a774e5fbfe",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "resolve",
+      "reply": {
+        "id": 51,
+        "result": {
+          "revision": 10,
+          "uncertain": false,
+          "wire": [
+            0,
+            71,
+            129,
+            128,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4,
+            108,
+            111,
+            110,
+            103,
+            4,
+            116,
+            101,
+            115,
+            116,
+            0,
+            0,
+            28,
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "operation": "dns_source",
+      "reply": {
+        "id": 52,
+        "result": {
+          "remaining_milliseconds": 24587,
+          "revision": 10,
+          "source_live": true,
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "dns_source",
+      "reply": {
+        "id": 53,
+        "result": {
+          "remaining_milliseconds": null,
+          "revision": 10,
+          "source_live": false,
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 54,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 10,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "306be21caa5efe116669223218f55d6c998eb31d380892bfca57cbfb1bd30330",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "resolve",
+      "reply": {
+        "id": 55,
+        "result": {
+          "revision": 10,
+          "uncertain": false,
+          "wire": [
+            0,
+            71,
+            129,
+            128,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4,
+            108,
+            111,
+            110,
+            103,
+            4,
+            116,
+            101,
+            115,
+            116,
+            0,
+            0,
+            28,
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "operation": "resolve",
+      "reply": {
+        "id": 56,
+        "result": {
+          "revision": 10,
+          "uncertain": false,
+          "wire": [
+            0,
+            71,
+            129,
+            128,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4,
+            108,
+            111,
+            110,
+            103,
+            4,
+            116,
+            101,
+            115,
+            116,
+            0,
+            0,
+            28,
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "operation": "resolve",
+      "reply": {
+        "id": 57,
+        "result": {
+          "revision": 10,
+          "uncertain": false,
+          "wire": [
+            0,
+            71,
+            129,
+            128,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4,
+            108,
+            111,
+            110,
+            103,
+            4,
+            116,
+            101,
+            115,
+            116,
+            0,
+            0,
+            28,
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "operation": "resolve",
+      "reply": {
+        "id": 58,
+        "result": {
+          "revision": 10,
+          "uncertain": false,
+          "wire": [
+            0,
+            71,
+            129,
+            128,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4,
+            108,
+            111,
+            110,
+            103,
+            4,
+            116,
+            101,
+            115,
+            116,
+            0,
+            0,
+            28,
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "operation": "resolve",
+      "reply": {
+        "id": 59,
+        "result": {
+          "revision": 10,
+          "uncertain": false,
+          "wire": [
+            0,
+            71,
+            129,
+            128,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4,
+            108,
+            111,
+            110,
+            103,
+            4,
+            116,
+            101,
+            115,
+            116,
+            0,
+            0,
+            28,
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "operation": "resolve",
+      "reply": {
+        "id": 60,
+        "result": {
+          "revision": 10,
+          "uncertain": false,
+          "wire": [
+            0,
+            71,
+            129,
+            128,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4,
+            108,
+            111,
+            110,
+            103,
+            4,
+            116,
+            101,
+            115,
+            116,
+            0,
+            0,
+            28,
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "operation": "resolve",
+      "reply": {
+        "id": 61,
+        "result": {
+          "revision": 10,
+          "uncertain": false,
+          "wire": [
+            0,
+            71,
+            129,
+            128,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4,
+            108,
+            111,
+            110,
+            103,
+            4,
+            116,
+            101,
+            115,
+            116,
+            0,
+            0,
+            28,
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "operation": "resolve",
+      "reply": {
+        "error": {
+          "code": "invalid_state",
+          "message": "DNS requires a known live controller lease",
+          "request_id": null,
+          "retryable": false
+        },
+        "id": 62
+      }
+    },
+    {
+      "operation": "quarantine",
+      "reply": {
+        "id": 63,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 11,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "dbdf655bafd130189bcc28bd4ffd715f3a89a04546ef849bbf8e832ac85b8d78",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "apply",
+      "reply": {
+        "id": 64,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 12,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "6241c25d68a09e8cbebb1d23b7772a4b68c55b0f6ad75f0d6044f1064bd1af31",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 65,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 12,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "6241c25d68a09e8cbebb1d23b7772a4b68c55b0f6ad75f0d6044f1064bd1af31",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "resolve",
+      "reply": {
+        "id": 66,
+        "result": {
+          "revision": 12,
+          "uncertain": false,
+          "wire": [
+            0,
+            71,
+            129,
+            128,
+            0,
+            1,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            4,
+            108,
+            111,
+            110,
+            103,
+            4,
+            116,
+            101,
+            115,
+            116,
+            0,
+            0,
+            1,
+            0,
+            1,
+            192,
+            12,
+            0,
+            1,
+            0,
+            1,
+            0,
+            0,
+            0,
+            9,
+            0,
+            4,
+            172,
+            19,
+            0,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "operation": "apply",
+      "reply": {
+        "id": 67,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 13,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "bfb345d25ca6e9ed9c1ad2aec0e8f307f835827f56eb7ae693ec76c197b512b1",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "resolve",
+      "reply": {
+        "error": {
+          "code": "forbidden",
+          "message": "DNS query is denied by policy",
+          "request_id": null,
+          "retryable": false
+        },
+        "id": 68
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 69,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 13,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "9bbbcea9dc7927d39590358c4d02282652b51b6a6aefc7338ffdce9257f65f10",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "apply",
+      "reply": {
+        "id": 70,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 14,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "e12979d30eb0d713a2d6fafab0035fd9fbf9a13f0264655d257a38f67045c6ea",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 71,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 14,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "e12979d30eb0d713a2d6fafab0035fd9fbf9a13f0264655d257a38f67045c6ea",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "resolve",
+      "reply": {
+        "id": 72,
+        "result": {
+          "revision": 14,
+          "uncertain": false,
+          "wire": [
+            0,
+            71,
+            129,
+            128,
+            0,
+            1,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            8,
+            111,
+            112,
+            101,
+            114,
+            97,
+            116,
+            111,
+            114,
+            4,
+            116,
+            101,
+            115,
+            116,
+            0,
+            0,
+            1,
+            0,
+            1,
+            192,
+            12,
+            0,
+            1,
+            0,
+            1,
+            0,
+            0,
+            0,
+            9,
+            0,
+            4,
+            172,
+            19,
+            0,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "operation": "apply",
+      "reply": {
+        "id": 73,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 15,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "a535dfa1b365e0e467eb3b19be7d242ccdcd7694038545bea1556d3601bf3d18",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "resolve",
+      "reply": {
+        "error": {
+          "code": "forbidden",
+          "message": "resolved DNS address is denied by policy",
+          "request_id": null,
+          "retryable": false
+        },
+        "id": 74
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 75,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 15,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "672ddafa7fcd1e5a5868d188396306b2fe11d03a4d89643bcc659857210cab6a",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "apply",
+      "reply": {
+        "id": 76,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 16,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "54707ab2282cb70b407e6a2391dc60a684eadcd5290b99377e0cc969e1d20020",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 77,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 16,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "54707ab2282cb70b407e6a2391dc60a684eadcd5290b99377e0cc969e1d20020",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "resolve",
+      "reply": {
+        "id": 78,
+        "result": {
+          "revision": 16,
+          "uncertain": false,
+          "wire": [
+            0,
+            71,
+            129,
+            128,
+            0,
+            1,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            8,
+            111,
+            112,
+            101,
+            114,
+            97,
+            116,
+            111,
+            114,
+            4,
+            116,
+            101,
+            115,
+            116,
+            0,
+            0,
+            1,
+            0,
+            1,
+            192,
+            12,
+            0,
+            1,
+            0,
+            1,
+            0,
+            0,
+            0,
+            9,
+            0,
+            4,
+            172,
+            19,
+            0,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 79,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 16,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "19cf3c9160af1aa05fcfb6ba5585bbf0aaf41f18430a66b1bbc2a8378f5a351d",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "apply",
+      "reply": {
+        "id": 80,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 17,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "d3b4df6fcaa28bbb078fa3289fca740367e594d2e3795e0b12aca014aa1f2dd3",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 81,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 17,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "d3b4df6fcaa28bbb078fa3289fca740367e594d2e3795e0b12aca014aa1f2dd3",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 82,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 17,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "06fbe8e12fffb4715497831dd2bfa38ecfa01e025001dc05a1a246b28e8d2b08",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 83,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 17,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "99c36078e89b1aee2dc80411207d00bc2e86a046c117f8c25691518e1fdde0c0",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 84,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 17,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "57843127f986595dbf7df027dab98c0953a6dde6b16341bb7142c2b2aa88194b",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 85,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 17,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "c6653b2bf67832b1e7ad6911d96e40f2933afd73d4053a81cc5a051cf5af3a87",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 86,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 17,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "81bdae6632bca45d879b3498b80a23f769ea758b64cac97feed546ed88bfc728",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "apply",
+      "reply": {
+        "id": 88,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 18,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "d6b4586d14a81e905e3895f143509ac9ae78c0b3616d0d3b275dcc30544eddd9",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 89,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 18,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "0c518c1b5b037498076edc35d0405ba0634bea62391a05a7899193fab4976703",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "id": 90,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 18,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "16d307f8d895331b3e76bffe517a51b0b5969bcaa2b057686458c1ac14f7d2cf",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "open",
+      "reply": {
+        "id": 1,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 18,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "0c9e9654759c068a32997f786563418b7f44861d6f857f811280cf6654e42e70",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "renew",
+      "reply": {
+        "error": {
+          "code": "invalid_state",
+          "message": "egress lease is not renewable",
+          "request_id": null,
+          "retryable": false
+        },
+        "id": 2
+      }
+    },
+    {
+      "operation": "apply",
+      "reply": {
+        "error": {
+          "code": "invalid_state",
+          "message": "quarantine is required before policy changes",
+          "request_id": null,
+          "retryable": false
+        },
+        "id": 3
+      }
+    },
+    {
+      "operation": "quarantine",
+      "reply": {
+        "id": 4,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 19,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "04e5879db609254e2e385d30cfbb2726712b9a620f22c4e385bc2c23031e5c66",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "apply",
+      "reply": {
+        "id": 5,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 20,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "1f5b8cb1a554dd7a038a25d7352f32407f47c492b07b528a4cb8d5c6d3d922d7",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "quarantine",
+      "reply": {
+        "id": 6,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 21,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "ff5e620e6e9a1393d039fb18db40091ccb51201080fe566d50044622f9b36be4",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "inspect",
+      "reply": {
+        "id": 7,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": true,
+          "maximum_lease_seconds": 10,
+          "revision": 21,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": "64e2cd4b53813f43dd4a2dccfd72fee5b601984e6bace95479ef4b879501dc09",
+          "uncertain": false
+        }
+      }
+    },
+    {
+      "operation": "remove",
+      "reply": {
+        "id": 8,
+        "result": {
+          "destination_binding_sha256": null,
+          "destinations_guarded": false,
+          "ethernet_guarded": false,
+          "ethernet_sha256": null,
+          "installed": false,
+          "maximum_lease_seconds": 10,
+          "revision": null,
+          "source_binding_sha256": null,
+          "source_guarded": false,
+          "table_sha256": null,
+          "uncertain": false
+        }
+      }
+    }
+  ],
+  "owned_resolver_configuration": {
+    "volume": "goldenhoop-network-697b34e8fca24203811dc60cbe13e421-dns-config",
+    "contents": "nameserver 172.18.0.1\noptions timeout:1 attempts:1\n",
+    "source": "/var/lib/docker/volumes/goldenhoop-network-697b34e8fca24203811dc60cbe13e421-dns-config/_data/resolv.conf",
+    "sha256": "012a9ecced3a41ebd436b0cda3903e38737241adad54dd7b0290eac73e1c50b4",
+    "mounted_readonly": true,
+    "configured_before_workload_start": true,
+    "observed_mount": {
+      "Type": "volume",
+      "Source": "goldenhoop-network-697b34e8fca24203811dc60cbe13e421-dns-config",
+      "Target": "/etc/resolv.conf",
+      "ReadOnly": true,
+      "VolumeOptions": {
+        "NoCopy": true,
+        "Subpath": "resolv.conf"
+      }
+    }
+  },
+  "workload_identity": {
+    "uid": 1000,
+    "gid": 1000,
+    "groups": [
+      1000
+    ],
+    "credentials": {
+      "CapEff": "0000000000000000",
+      "NoNewPrivs": "1"
+    },
+    "nft_exit_code": 3
+  },
+  "owned_dns_listener": {
+    "binding": {
+      "address": "172.18.0.1",
+      "port": 46637
+    },
+    "destination_binding_sha256": null,
+    "destinations_guarded": false,
+    "ethernet_guarded": false,
+    "ethernet_sha256": null,
+    "installed": true,
+    "maximum_lease_seconds": 10,
+    "revision": 9,
+    "source_binding_sha256": null,
+    "source_guarded": false,
+    "table_sha256": "268faad00d74f3dab3bf5ca6a11bb7e246601ad23eb09face23ff53353446a40",
+    "uncertain": false
+  },
+  "dns_expired_existing_flow": {
+    "ok": false,
+    "error": "TimeoutError"
+  },
+  "owned_dns_queries": [
+    {
+      "query": "short.test",
+      "kind": 1
+    },
+    {
+      "query": "short.test",
+      "kind": 1
+    },
+    {
+      "query": "long.test",
+      "kind": 1
+    },
+    {
+      "query": "long.test",
+      "kind": 28
+    },
+    {
+      "query": "long.test",
+      "kind": 28
+    },
+    {
+      "query": "long.test",
+      "kind": 28
+    },
+    {
+      "query": "long.test",
+      "kind": 28
+    },
+    {
+      "query": "long.test",
+      "kind": 28
+    },
+    {
+      "query": "long.test",
+      "kind": 28
+    },
+    {
+      "query": "long.test",
+      "kind": 28
+    },
+    {
+      "query": "long.test",
+      "kind": 28
+    },
+    {
+      "query": "long.test",
+      "kind": 1
+    },
+    {
+      "query": "operator.test",
+      "kind": 1
+    },
+    {
+      "query": "operator.test",
+      "kind": 1
+    },
+    {
+      "query": "operator.test",
+      "kind": 1
+    }
+  ],
+  "workload_dns_observations": [
+    {
+      "container_role": "guest",
+      "mode": "udp",
+      "address": "172.18.0.1",
+      "port": 46637,
+      "name": "listener.test",
+      "reply": {
+        "ok": true,
+        "rcode": 0,
+        "answers": 1,
+        "addresses": [
+          "172.19.0.2"
+        ]
+      }
+    },
+    {
+      "container_role": "guest",
+      "mode": "udp",
+      "address": "198.51.100.53",
+      "port": 53,
+      "name": "redirect-udp.test",
+      "reply": {
+        "ok": true,
+        "rcode": 0,
+        "answers": 1,
+        "addresses": [
+          "172.19.0.2"
+        ]
+      }
+    },
+    {
+      "container_role": "guest",
+      "mode": "tcp",
+      "address": "198.51.100.53",
+      "port": 53,
+      "name": "redirect-tcp.test",
+      "reply": {
+        "ok": true,
+        "rcode": 0,
+        "answers": 1,
+        "addresses": [
+          "172.19.0.2"
+        ]
+      }
+    },
+    {
+      "container_role": "guest",
+      "mode": "udp",
+      "address": "198.51.100.53",
+      "port": 53,
+      "name": "denied.test",
+      "reply": {
+        "ok": true,
+        "rcode": 5,
+        "answers": 0,
+        "addresses": []
+      }
+    },
+    {
+      "container_role": "guest",
+      "mode": "tcp",
+      "address": "198.51.100.53",
+      "port": 53,
+      "name": "denied.test",
+      "reply": {
+        "ok": true,
+        "rcode": 5,
+        "answers": 0,
+        "addresses": []
+      }
+    },
+    {
+      "container_role": "guest",
+      "mode": "udp",
+      "address": "172.18.0.1",
+      "port": 53,
+      "name": "system.test",
+      "reply": {
+        "ok": true,
+        "rcode": 0,
+        "answers": 1,
+        "addresses": [
+          "172.19.0.2"
+        ]
+      }
+    },
+    {
+      "container_role": "guest",
+      "mode": "udp",
+      "address": "172.18.0.1",
+      "port": 53,
+      "name": "denied.test",
+      "reply": {
+        "ok": true,
+        "rcode": 5,
+        "answers": 0,
+        "addresses": []
+      }
+    },
+    {
+      "container_role": "other-bridge",
+      "mode": "udp",
+      "address": "172.18.0.1",
+      "port": 46637,
+      "name": "foreign.test",
+      "reply": {
+        "ok": false,
+        "error": "TimeoutError"
+      }
+    },
+    {
+      "container_role": "guest",
+      "mode": "udp",
+      "address": "172.18.0.1",
+      "port": 46637,
+      "name": "same-bridge.test",
+      "reply": {
+        "ok": true,
+        "rcode": 0,
+        "answers": 1,
+        "addresses": [
+          "172.19.0.2"
+        ]
+      }
+    },
+    {
+      "container_role": "guest",
+      "mode": "udp",
+      "address": "172.18.0.1",
+      "port": 46637,
+      "name": "partial-frame.test",
+      "reply": {
+        "ok": true,
+        "rcode": 0,
+        "answers": 1,
+        "addresses": [
+          "172.19.0.2"
+        ]
+      }
+    }
+  ],
+  "workload_resolver_configuration": {
+    "path": "owned",
+    "dns": [
+      "172.18.0.1"
+    ],
+    "resolv_conf": "nameserver 172.18.0.1\noptions timeout:1 attempts:1\n"
+  },
+  "libc_resolver_observation": {
+    "ok": true,
+    "addresses": [
+      "172.19.0.2"
+    ],
+    "resolver_readonly": true
+  },
+  "malformed_workload_dns_observations": [
+    {
+      "mode": "udp",
+      "wire_length": 32,
+      "reply": {
+        "ok": true,
+        "rcode": 1,
+        "counts": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "length": 12
+      }
+    },
+    {
+      "mode": "udp",
+      "wire_length": 4097,
+      "reply": {
+        "ok": true,
+        "rcode": 2,
+        "counts": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "length": 12
+      }
+    },
+    {
+      "mode": "partial",
+      "wire_length": 32,
+      "reply": {
+        "ok": true,
+        "closed_without_answer": true
+      }
+    },
+    {
+      "mode": "oversized",
+      "wire_length": 32,
+      "reply": {
+        "ok": true,
+        "closed_without_answer": true
+      }
+    },
+    {
+      "mode": "short",
+      "wire_length": 32,
+      "reply": {
+        "ok": true,
+        "closed_without_answer": true
+      }
+    }
+  ],
+  "tightening": {
+    "existing_flow_observation": {
+      "ok": false,
+      "error": "TimeoutError"
+    },
+    "new_drop_packets": 5,
+    "scope": "packet denial observed; conntrack/socket collection and production revision acknowledgement are not tested"
+  },
+  "rust_table_collection_confirmed": true,
+  "owned_filter_table_absent": true,
+  "owned_resolver_volume_absent": true
+}

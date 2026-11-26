@@ -171,8 +171,10 @@ impl Manager {
         expected: u64,
         config: &Config,
         names: &SetNames,
-    ) -> Result<(Observation, crate::EffectivePolicyReceipt), ApiError> {
-        self.policy_context(config)?;
+    ) -> Result<(Observation, PolicySample, Instant), ApiError> {
+        // Native renewal also serves private relative-lifetime DNS allocations.
+        // A public binding receipt additionally requires the original absolute
+        // lifetime; keep that stronger projection in renew_policy().
         self.protected_kernel(expected, config, names).await?;
         let milliseconds = self.live_milliseconds()?;
         let batch = format!(
@@ -210,9 +212,9 @@ impl Manager {
         let until = kernel
             .until
             .min(started + Duration::from_millis(milliseconds.saturating_sub(11)));
-        let receipt = self.policy_receipt(
-            expected,
-            config,
+        crate::policy_binding::sampled_lease_budget(sampled, Instant::now(), until)?;
+        Ok((
+            observation,
             PolicySample {
                 observed_at,
                 started: sampled,
@@ -221,11 +223,7 @@ impl Manager {
                 destinations,
             },
             until,
-        )?;
-        self.lease_until = Some(until);
-        self.uncertain = false;
-        self.can_renew = true;
-        Ok((observation, receipt))
+        ))
     }
 
     pub async fn renew_policy(
@@ -257,8 +255,12 @@ impl Manager {
         self.uncertain = true;
         self.can_renew = false;
         self.lease_until = None;
-        self.renew_protected(expected, &config, &names)
-            .await
-            .map(|(_, receipt)| receipt)
+        self.policy_context(&config)?;
+        let (_, sample, until) = self.renew_protected(expected, &config, &names).await?;
+        let receipt = self.policy_receipt(expected, &config, sample, until)?;
+        self.lease_until = Some(until);
+        self.uncertain = false;
+        self.can_renew = true;
+        Ok(receipt)
     }
 }
