@@ -5,6 +5,8 @@ permissions:
   contents: read
 env:
   CARGO_BUILD_JOBS: 2
+  CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS: 'true'
+  CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS: 'true'
   M4_IMAGE: goldenhoop-m4-rootfs:${{ github.run_id }}-${{ github.run_attempt }}
   M4_OWNER: ${{ github.run_id }}-${{ github.run_attempt }}
 jobs:
@@ -19,13 +21,13 @@ jobs:
         with:
           python-version: '3.11'
       - run: python -m pip install httpx==0.28.1
-      - name: Build the actual Rust API worker CLI driver and supervisor
-        run: cargo build --locked -p goldenhoop-control -p goldenhoop-cli -p goldenhoop-firecracker
+      - name: Build optimized checked Rust API worker CLI driver and supervisor
+        run: cargo build --locked --release -p goldenhoop-control -p goldenhoop-cli -p goldenhoop-firecracker
       - name: Build the actual Rust guest components
         # Full workspace checks remain mandatory in CI and stage acceptance.
         run: docker build --build-arg VALIDATE_WORKSPACE=0 --target microvm-rootfs --label dev.goldenhoop.task=m4-guest --label dev.goldenhoop.run="$M4_OWNER" --tag "$M4_IMAGE" --file images/agent/Dockerfile .
       - name: Require actual private and public native lifecycle recovery
-        run: sudo -n env PYTHONPATH="$PWD/sdk/python/src" "$pythonLocation/bin/python3" -B tests/firecracker_guest_contract.py --driver-contract --public-contract --source-commit "$GITHUB_SHA" --binary "$PWD/target/debug/goldenhoop-firecracker" --control "$PWD/target/debug/goldenhoopd" --cli "$PWD/target/debug/goldenhoop" --image "$M4_IMAGE" --owner "$M4_OWNER" --output "$PWD/evidence/firecracker-public.json"
+        run: sudo -n env PYTHONPATH="$PWD/sdk/python/src" "$pythonLocation/bin/python3" -B tests/firecracker_guest_contract.py --driver-contract --public-contract --source-commit "$GITHUB_SHA" --binary "$PWD/target/release/goldenhoop-firecracker" --control "$PWD/target/release/goldenhoopd" --cli "$PWD/target/release/goldenhoop" --image "$M4_IMAGE" --owner "$M4_OWNER" --output "$PWD/evidence/firecracker-public.json"
       - name: Collect the exact owned test image and positively observe absence
         if: always()
         shell: python

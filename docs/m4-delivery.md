@@ -419,3 +419,12 @@ The corrected setup holds a nonce-marked actual command behind a release barrier
 until the same VM/execution is recovered after worker death, retaining transition
 evidence and the original readiness/wait/TTL budgets. A local real-process check
 verifies that barrier only; new actual KVM acceptance is still required.
+
+The [e0781d6 retry](evidence/m4-native-45909348764-archive.json) retains
+Failed/Complete and verifies all 300 inputs. Its actual execution stays Pending
+with no recorded start through the original pre-kill window; the exact stalled
+stage is not established. The next hardware gate uses optimized release host
+binaries with arithmetic checks/debug assertions explicitly retained and records
+service/command readiness timing. Authentication, resource, expiry and success
+conditions remain intact. This build change does not retroactively diagnose or
+accept the failed run, and requires new complete private/public evidence.

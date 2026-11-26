@@ -54,6 +54,7 @@ def suite(control, cli, native, boot, fixture):
         return values
 
     def start(name):
+        started = time.monotonic()
         event = name + '_started'
         before = len(event_lines(name, event))
         args = [str(control), '--database', str(database), name]
@@ -70,6 +71,7 @@ def suite(control, cli, native, boot, fixture):
             assert processes[name].poll() is None, f'public {name} exited before readiness'
             assert time.monotonic() < until, f'public {name} readiness deadline'
             time.sleep(.1)
+        report['observations'].setdefault('service_start_seconds', {}).setdefault(name, []).append(round(time.monotonic() - started, 3))
         return event_lines(name, event)[-1]
 
     def stop(name, kill=False):
@@ -191,6 +193,7 @@ def suite(control, cli, native, boot, fixture):
         command = Command(['python3', '-c', recovery_program(nonce)])
         command_key = str(uuid.uuid4())
         execution = client.start(sid, command, command_key)
+        submitted = time.monotonic()
         until = time.monotonic() + 25
         transitions = report['observations']['recovery_execution_transitions'] = []
         while True:
@@ -200,10 +203,12 @@ def suite(control, cli, native, boot, fixture):
                 del transitions[:-64]
             assert time.monotonic() < until, f'command readiness deadline: {current}'
             if current['state'] == 'running':
+                report['observations']['recovery_running_seconds'] = round(time.monotonic() - submitted, 3)
                 break
             assert current['state'] == 'pending', f'command ended before fault injection: {current}'
             time.sleep(.05)
         assert client.read_file(sid, 'ready-' + nonce) == b'ready'
+        report['observations']['recovery_guest_ready_seconds'] = round(time.monotonic() - submitted, 3)
         assert time.monotonic() < until, 'guest readiness readback exceeded original fault-injection budget'
         report['observations']['recovery_guest_ready_before_kill'] = True
         stop('worker', kill=True)
