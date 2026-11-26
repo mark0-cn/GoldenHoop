@@ -1,6 +1,6 @@
 # Production worker owned-network recovery
 
-The production Rust worker can collect a persisted owned network and controller after sandbox expiry. This is terminal recovery. Live policy startup, endpoint/source/DNS/destination composition, lease scheduling and capability publication remain required under M3; M4-M6 remain required. NetworkPolicy and SecretInjection are unadvertised.
+The production Rust worker can collect a persisted owned network and controller after sandbox expiry. This component covers terminal recovery. The separate [worker-held session path](worker-network-policy.md) and [public network path](network-policy.md) provide live policy startup, source/DNS/destination composition and finite lease scheduling. Capability publication requires configured actual deployment probes and confirmed collection; [M3 delivery](m3-delivery.md) records composed acceptance. M4-M6 remain required.
 
 Schema 10 also supports [terminal collection before a native checkpoint](native-probes.md). The worker settles original probe processes, freezes known provider identity before removal and runs a separate read-only bridge/table absence probe. Unknown dispatched creation remains unknown. Native absence is confirmed without inventing an interface index; a remaining table blocks cleanup rather than being deleted by this path. The existing positive-native collector below remains unchanged in purpose.
 

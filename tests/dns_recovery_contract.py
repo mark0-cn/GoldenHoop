@@ -109,7 +109,9 @@ class Contract(GuardedContract):
         blocker=self.start_blocker(frozen['destinations']['dns'][1]);self.new_epoch(frozen)
         self.invoke('controller-resume','--controller-resume-binding-json',json.dumps(frozen),'--recovery-dns-upstream',self.upstream,expected=1)
         frames=self.report['invocations'][-1]['frames'];error=next(frame['error'] for frame in frames if 'error' in frame)
-        assert error['code']=='backend_unavailable' and error['message']=='cannot bind owned TCP DNS listener'
+        assert (error['code'],error['message'])==('backend_unavailable',
+            'owned workload network bootstrap recovered binding confirmation: '
+            'owned workload network bootstrap DNS socket recovery: cannot bind owned TCP DNS listener'),error
         assert any(frame.get('controller_failure_collection',{}).get('journal',{}).get('phase')=='collected' for frame in frames)
         collision=self.source_audit(frozen,owner);self.verify_quarantine(frozen,recovered['revision']+1,collision['inet_table'])
         self.report['failed_exact_port_recovery']={'frames':frames,'native':collision,'records':self.records()}
