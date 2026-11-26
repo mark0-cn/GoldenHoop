@@ -95,6 +95,8 @@ with socket.socket(socket.AF_INET6,socket.SOCK_STREAM) as tcp, socket.socket(soc
                 native={'allocation':allocation,'identity':{k:allocation[k] for k in ['installation_id','sandbox_id','generation']},'provisioning_token':str(uuid.uuid4()),'expires_at':datetime.now(timezone.utc).isoformat()};native['identity']['profile']='local-runc-dev'
                 produced=self.native('python3','-B','-c',MANAGER,json.dumps({'allocation':allocation,'native_plan':native,'config':basic}),timeout=60)
                 self.report['actual_production_manager']=json.loads(produced.stdout);assert self.report['actual_production_manager']['controller_exit_code']==0 and not self.report['actual_production_manager']['ready']
+                assert self.report['actual_production_manager']['protected_renewal_refused']
+                self.report['cases'].append('protected_receipt_renewal_refuses_incomplete_floors_without_mutating_the_existing_basic_lease')
                 self.report['cases'].extend(['actual_production_apply_renew_tamper_and_expired_lease_fences','actual_original_lifetime_clips_kernel_timeout_and_refuses_later_dispatch']);print('passed actual production manager policy and lease readbacks',flush=True)
             self.report['display_only']=self.args.display_only
             self.report['result']='passed'

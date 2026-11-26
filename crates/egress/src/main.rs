@@ -22,6 +22,7 @@ mod server {
         Effective(goldenhoop_egress::EffectivePolicyReceipt),
         Credentials(goldenhoop_egress::InstalledCredentials),
         Audit(Vec<goldenhoop_credentials::BrokerAuditDelivery>),
+        Ingress(goldenhoop_egress::controller::CredentialIngressObservation),
     }
 
     async fn execute(
@@ -136,6 +137,9 @@ mod server {
                     .await
                     .map(Reply::Audit);
             }
+            Request::InspectCredentialIngress {} => {
+                return Ok(Reply::Ingress(credentials.ingress.observation()));
+            }
             Request::RecoverDns {
                 expected_revision,
                 upstream,
@@ -206,7 +210,12 @@ mod server {
                 }
                 return Ok(Reply::Binding(receipt));
             }
-            Request::InspectPolicy { expected_revision } => {
+            command @ (Request::InspectPolicy { .. } | Request::RenewPolicy { .. }) => {
+                let (expected_revision, renew) = match command {
+                    Request::InspectPolicy { expected_revision } => (expected_revision, false),
+                    Request::RenewPolicy { expected_revision } => (expected_revision, true),
+                    _ => unreachable!("matched policy exchange"),
+                };
                 let bound = native_context.as_ref().ok_or_else(|| {
                     ApiError::new(
                         ErrorCode::InvalidState,
@@ -220,7 +229,11 @@ mod server {
                         "protected DNS frontend is not running",
                     ));
                 }
-                let receipt = manager.inspect_policy(expected_revision).await?;
+                let receipt = if renew {
+                    manager.renew_policy(expected_revision).await?
+                } else {
+                    manager.inspect_policy(expected_revision).await?
+                };
                 if receipt.binding.expires_at != bound.expires_at
                     || receipt.binding.allocation.owner() != bound.allocation.owner()
                     || !frontend.as_ref().is_some_and(|f| f.is_running())
@@ -398,10 +411,12 @@ mod server {
                         if !matches!(
                             &frame.command,
                             Request::Renew { .. }
+                                | Request::RenewPolicy { .. }
                                 | Request::Inspect {}
                                 | Request::InspectPolicy { .. }
                                 | Request::InspectBinding { .. }
                                 | Request::CredentialAudit { .. }
+                                | Request::InspectCredentialIngress {}
                                 | Request::DnsSource { .. }
                         ) {
                             credentials.fence();

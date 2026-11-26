@@ -1,4 +1,4 @@
-use super::effective::KernelPolicy;
+use super::effective::{KernelPolicy, PolicySample};
 use super::*;
 use crate::{
     DestinationDefinition, DestinationPlan, MAX_SNAPSHOT_BYTES, ScopedKernelSnapshot, SourcePlan,
@@ -171,7 +171,8 @@ impl Manager {
         expected: u64,
         config: &Config,
         names: &SetNames,
-    ) -> Result<Observation, ApiError> {
+    ) -> Result<(Observation, crate::EffectivePolicyReceipt), ApiError> {
+        self.policy_context(config)?;
         self.protected_kernel(expected, config, names).await?;
         let milliseconds = self.live_milliseconds()?;
         let batch = format!(
@@ -182,10 +183,12 @@ impl Manager {
         );
         let started = Instant::now();
         nft(&["--file", "-"], Some(batch.as_bytes())).await?;
+        let observed_at = chrono::Utc::now();
+        let sampled = Instant::now();
         let (kernel, source, destinations) = self.protected_kernel(expected, config, names).await?;
         self.check_bridge()?;
         self.check_lifetime()?;
-        let ethernet_sha256 = kernel.ethernet_sha256.ok_or_else(|| {
+        let ethernet_sha256 = kernel.ethernet_sha256.clone().ok_or_else(|| {
             error(
                 ErrorCode::Conflict,
                 "protected Ethernet observation is absent",
@@ -195,7 +198,7 @@ impl Manager {
             installed: true,
             revision: Some(expected),
             uncertain: false,
-            table_sha256: Some(kernel.sha256),
+            table_sha256: Some(kernel.sha256.clone()),
             maximum_lease_seconds: LEASE_SECONDS,
             ethernet_guarded: true,
             ethernet_sha256: Some(ethernet_sha256),
@@ -204,13 +207,58 @@ impl Manager {
             destinations_guarded: true,
             destination_binding_sha256: Some(destinations.digest()),
         };
-        self.lease_until = Some(
-            kernel
-                .until
-                .min(started + Duration::from_millis(milliseconds.saturating_sub(11))),
-        );
+        let until = kernel
+            .until
+            .min(started + Duration::from_millis(milliseconds.saturating_sub(11)));
+        let receipt = self.policy_receipt(
+            expected,
+            config,
+            PolicySample {
+                observed_at,
+                started: sampled,
+                kernel,
+                source,
+                destinations,
+            },
+            until,
+        )?;
+        self.lease_until = Some(until);
         self.uncertain = false;
         self.can_renew = true;
-        Ok(observation)
+        Ok((observation, receipt))
+    }
+
+    pub async fn renew_policy(
+        &mut self,
+        expected: u64,
+    ) -> Result<crate::EffectivePolicyReceipt, ApiError> {
+        self.check_lifetime()?;
+        if self.uncertain
+            || !self.can_renew
+            || self.revision != Some(expected)
+            || !self.ethernet_required
+            || self.source_scope.is_none()
+            || self.destinations.is_none()
+        {
+            return Err(error(
+                ErrorCode::InvalidState,
+                "policy renewal requires a known fully protected allocation",
+            ));
+        }
+        let config = self
+            .effective_policy
+            .clone()
+            .ok_or_else(|| error(ErrorCode::InvalidState, "effective policy is absent"))?;
+        let names = self
+            .dns
+            .as_ref()
+            .map(|dns| dns.active.clone())
+            .ok_or_else(|| error(ErrorCode::InvalidState, "trusted DNS is absent"))?;
+        self.uncertain = true;
+        self.can_renew = false;
+        self.lease_until = None;
+        self.renew_protected(expected, &config, &names)
+            .await
+            .map(|(_, receipt)| receipt)
     }
 }

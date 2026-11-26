@@ -637,6 +637,21 @@ async fn hold(
     } else {
         Ok(())
     };
+    // Read only fixed numeric socket diagnostics before retiring this process.
+    // No request target, header, provider material or authority is exported.
+    if credentials.is_some()
+        && let Ok(value) = call(&mut session, Request::InspectCredentialIngress {}).await
+        && let Ok(observation) = serde_json::from_value::<
+            goldenhoop_egress::controller::CredentialIngressObservation,
+        >(value)
+    {
+        println!(
+            "{}",
+            serde_json::json!({"event":"credential_ingress_retirement_observation","sandbox_id":id,
+                "controller_generation":record.controller_generation,"diagnostic_only":true,
+                "observation":observation})
+        );
+    }
     // Best-effort immediate native quarantine; its response is not cleanup.
     // Physical positive collection below is mandatory, including error paths.
     if let Ok(state) = call(&mut session, Request::Inspect {}).await

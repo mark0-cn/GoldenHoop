@@ -1,4 +1,5 @@
 //! Private staged broker material and actual allocation TCP ingress.
+use crate::controller::CredentialIngressObservation;
 use crate::{
     AcknowledgedAudit, CredentialRedirect, EndpointAddresses, InstalledCredentials, Manager,
     NativePacketAuthority, error,
@@ -12,7 +13,10 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     net::SocketAddr,
-    sync::{Arc, RwLock},
+    sync::{
+        Arc, RwLock,
+        atomic::{AtomicU16, AtomicU64, Ordering},
+    },
 };
 use tokio::net::TcpStream;
 use tokio_util::sync::CancellationToken;
@@ -28,6 +32,36 @@ struct ActiveIngress {
 #[derive(Default)]
 pub struct CredentialIngress {
     active: RwLock<Option<Arc<ActiveIngress>>>,
+    counters: [AtomicU64; 7],
+    last_original_port: AtomicU16,
+}
+
+impl CredentialIngress {
+    fn observe(&self, index: usize) {
+        let counter = &self.counters[index];
+        let mut current = counter.load(Ordering::Relaxed);
+        while let Err(actual) = counter.compare_exchange_weak(
+            current,
+            current.saturating_add(1),
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        ) {
+            current = actual;
+        }
+    }
+    pub fn observation(&self) -> CredentialIngressObservation {
+        let values = self.counters.each_ref().map(|n| n.load(Ordering::Relaxed));
+        CredentialIngressObservation {
+            inactive: values[0],
+            original_unavailable: values[1],
+            dns: values[2],
+            unexpected_port: values[3],
+            foreign_peer: values[4],
+            http_socket: values[5],
+            transport_failed: values[6],
+            last_original_port: self.last_original_port.load(Ordering::Relaxed),
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -44,15 +78,22 @@ impl crate::frontend::TcpHandler for CredentialIngress {
             .map_err(|_| error(ErrorCode::Forbidden, "credential ingress is fenced"))?
             .clone();
         let Some(active) = active else {
+            self.observe(0);
             return Ok(Some(stream));
         };
         // Direct trusted DNS queries have no NAT original target; their bytes
         // continue through the existing bounded DNS parser. No HTTP fallback.
         let original = match goldenhoop_credentials::frontend::original_destination(&stream) {
             Ok(original) => original,
-            Err(_) => return Ok(Some(stream)),
+            Err(_) => {
+                self.observe(1);
+                return Ok(Some(stream));
+            }
         };
+        self.last_original_port
+            .store(original.port(), Ordering::Relaxed);
         if original.port() == 53 {
+            self.observe(2);
             return Ok(Some(stream));
         }
         let scheme = active
@@ -60,6 +101,7 @@ impl crate::frontend::TcpHandler for CredentialIngress {
             .ports
             .get(&original.port())
             .ok_or_else(|| {
+                self.observe(3);
                 error(
                     ErrorCode::Forbidden,
                     "original credential port is not installed",
@@ -74,12 +116,14 @@ impl crate::frontend::TcpHandler for CredentialIngress {
                     .is_some_and(|ip| native_peer == std::net::IpAddr::V6(ip)))
             || matches!(peer,SocketAddr::V6(v) if v.scope_id()!=0)
         {
+            self.observe(4);
             return Err(error(
                 ErrorCode::Forbidden,
                 "credential socket source is outside the owned endpoint",
             ));
         }
-        goldenhoop_credentials::frontend::serve_connection(
+        self.observe(5);
+        let result = goldenhoop_credentials::frontend::serve_connection(
             stream,
             active.broker.clone(),
             active.ca.clone(),
@@ -90,7 +134,11 @@ impl crate::frontend::TcpHandler for CredentialIngress {
             },
             stop,
         )
-        .await?;
+        .await;
+        if result.is_err() {
+            self.observe(6);
+        }
+        result?;
         Ok(None)
     }
 }

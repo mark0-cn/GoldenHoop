@@ -473,7 +473,10 @@ impl Manager {
             && self.destinations.is_some()
             && let Some(names) = names.as_ref()
         {
-            return self.renew_protected(expected, &config, names).await;
+            return self
+                .renew_protected(expected, &config, names)
+                .await
+                .map(|(observation, _)| observation);
         }
         self.expected(expected).await?;
         self.verify_kernel_policy(expected, &config, names.as_ref())

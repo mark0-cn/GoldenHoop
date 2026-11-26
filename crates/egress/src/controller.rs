@@ -12,6 +12,21 @@ use zeroize::Zeroizing;
 
 pub const MAX_FRAME: u64 = 256 * 1024;
 
+/// Numeric socket observations only. These never grant request authorization,
+/// delivery, a packet lease or a collection receipt.
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CredentialIngressObservation {
+    pub(crate) inactive: u64,
+    pub(crate) original_unavailable: u64,
+    pub(crate) dns: u64,
+    pub(crate) unexpected_port: u64,
+    pub(crate) foreign_peer: u64,
+    pub(crate) http_socket: u64,
+    pub(crate) transport_failed: u64,
+    pub(crate) last_original_port: u16,
+}
+
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Envelope {
@@ -49,6 +64,7 @@ pub enum Request {
     CredentialAudit {
         acknowledged: Vec<uuid::Uuid>,
     },
+    InspectCredentialIngress {},
     BindNative {
         plan: crate::native::NativeBridgePlan,
     },
@@ -64,6 +80,11 @@ pub enum Request {
         expected_revision: u64,
     },
     Renew {
+        expected_revision: u64,
+    },
+    /// Renew a fully protected policy and return its freshly sampled receipt.
+    /// This is never available to an incomplete or quarantined allocation.
+    RenewPolicy {
         expected_revision: u64,
     },
     Inspect {},

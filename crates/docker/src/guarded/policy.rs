@@ -105,7 +105,7 @@ impl DockerDriver {
         // Read-only preflight precedes the mutation fence. A duplicate initial
         // apply refuses without shutting down an otherwise healthy session.
         let preflight = Utc::now();
-        if let Some(previous) = previous {
+        if let Some(previous) = previous.filter(|_| config.is_some()) {
             let receipt: EffectivePolicyReceipt = serde_json::from_value(
                 call(
                     session,
@@ -124,7 +124,7 @@ impl DockerDriver {
                 preflight,
                 &receipt,
             )?;
-        } else {
+        } else if previous.is_none() {
             let actual: ProtectedBindingReceipt = serde_json::from_value(
                 call(
                     session,
@@ -143,7 +143,7 @@ impl DockerDriver {
         };
         let session = &mut *attempt.session;
         let result = async {
-            let revision = if let Some(config) = config {
+            let (revision, first) = if let Some(config) = config {
                 let next = frozen.revision.checked_add(1).ok_or_else(conflict)?;
                 call(
                     session,
@@ -153,18 +153,20 @@ impl DockerDriver {
                     },
                 )
                 .await?;
-                next
-            } else {
-                call(
-                    session,
-                    Request::Renew {
-                        expected_revision: frozen.revision,
-                    },
+                (
+                    next,
+                    read_policy(session, network, frozen, next, &digest, false).await?,
                 )
-                .await?;
-                frozen.revision
+            } else {
+                // RenewPolicy performs the complete native preflight, mutation
+                // and postflight. Its sampled receipt replaces the former
+                // repeated preflight/first read; the independent final read
+                // still follows actual provider/endpoint reobservation.
+                (
+                    frozen.revision,
+                    read_policy(session, network, frozen, frozen.revision, &digest, true).await?,
+                )
             };
-            let first = read_policy(session, network, frozen, revision, &digest).await?;
             if self.inspect(handle).await?.state != ObservedState::Running {
                 return Err(conflict());
             }
@@ -175,7 +177,8 @@ impl DockerDriver {
                 return Err(conflict());
             }
             endpoint_matches(frozen, &after)?;
-            let mut final_read = read_policy(session, network, frozen, revision, &digest).await?;
+            let mut final_read =
+                read_policy(session, network, frozen, revision, &digest, false).await?;
             final_read.until = final_read.until.min(first.until);
             if final_read.remaining().is_zero() {
                 return Err(conflict());
@@ -242,14 +245,21 @@ async fn read_policy(
     frozen: &ProtectedBindingReceipt,
     revision: u64,
     digest: &str,
+    renew: bool,
 ) -> Result<VerifiedPolicyLease, ApiError> {
     let start = Instant::now();
     let wall = Utc::now();
     let receipt: EffectivePolicyReceipt = serde_json::from_value(
         call(
             session,
-            Request::InspectPolicy {
-                expected_revision: revision,
+            if renew {
+                Request::RenewPolicy {
+                    expected_revision: revision,
+                }
+            } else {
+                Request::InspectPolicy {
+                    expected_revision: revision,
+                }
             },
         )
         .await?,

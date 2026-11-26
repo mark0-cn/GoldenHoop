@@ -23,6 +23,9 @@ try:
  applied=rpc('apply',expected_revision=1,config=value['config']);assert applied['revision']==2 and not applied['uncertain']
  renewed=rpc('renew',expected_revision=2);assert renewed['revision']==2 and not renewed['uncertain'];capture('actual_applied_and_renewed_policy')
  refused=rpc('inspect_policy',expected_revision=2,error=True);assert refused['code']=='invalid_state'
+ refused=rpc('renew_policy',expected_revision=2,error=True);assert refused['code']=='invalid_state'
+ assert not rpc('inspect')['uncertain'],'refusing a partial allocation must not fabricate a protected receipt or mutate its existing basic lease'
+ observation=rpc('inspect_credential_ingress');assert all(v==0 for v in observation.values()) and len(observation)==8
  nft('--file','-',input='flush chain inet '+table+' decision\nadd rule inet '+table+' decision counter accept\n')
  actual=capture('actual_tampered_same_revision_policy');assert any(row.get('set',{}).get('name')=='live' and row['set'].get('elem') for row in actual['nftables'])
  refused=rpc('renew',expected_revision=2,error=True);assert refused['code']=='conflict'
@@ -45,5 +48,5 @@ finally:
  try:code=p.wait(timeout=5)
  except subprocess.TimeoutExpired:p.kill();p.wait(timeout=5);raise
  stderr=p.stderr.read();assert code==0,stderr
-print(json.dumps({'events':events,'captures':captures,'controller_exit_code':code,'original_native_plan':native,'full_protected_receipt_refused':True,'ready':False}))
+print(json.dumps({'events':events,'captures':captures,'controller_exit_code':code,'original_native_plan':native,'full_protected_receipt_refused':True,'protected_renewal_refused':True,'ready':False}))
 '''

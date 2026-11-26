@@ -9,6 +9,13 @@ pub(super) struct KernelPolicy {
     pub sha256: String,
     pub ethernet_sha256: Option<String>,
 }
+pub(super) struct PolicySample {
+    pub observed_at: chrono::DateTime<chrono::Utc>,
+    pub started: Instant,
+    pub kernel: KernelPolicy,
+    pub source: crate::SourceScope,
+    pub destinations: crate::DestinationDefinition,
+}
 impl Manager {
     pub(super) fn live_milliseconds(&self) -> Result<u64, ApiError> {
         let maximum = u64::from(LEASE_SECONDS) * 1000;
@@ -168,6 +175,32 @@ impl Manager {
             .dns
             .as_ref()
             .ok_or_else(|| error(ErrorCode::InvalidState, "trusted DNS is absent"))?;
+        self.policy_context(config)?;
+        let (kernel, source, destinations) =
+            self.protected_kernel(expected, config, &dns.active).await?;
+        self.policy_receipt(
+            expected,
+            config,
+            PolicySample {
+                observed_at,
+                started,
+                kernel,
+                source,
+                destinations,
+            },
+            self.lease_until
+                .ok_or_else(|| error(ErrorCode::InvalidState, "local lease is absent"))?,
+        )
+    }
+
+    pub(super) fn policy_context(
+        &self,
+        config: &Config,
+    ) -> Result<chrono::DateTime<chrono::Utc>, ApiError> {
+        let dns = self
+            .dns
+            .as_ref()
+            .ok_or_else(|| error(ErrorCode::InvalidState, "trusted DNS is absent"))?;
         let expires_at = dns
             .expires_at
             .ok_or_else(|| error(ErrorCode::InvalidState, "original DNS lifetime is absent"))?;
@@ -186,27 +219,33 @@ impl Manager {
                 "trusted DNS policy authority is absent",
             ));
         }
-        let (kernel, source, destinations) =
-            self.protected_kernel(expected, config, &dns.active).await?;
+        Ok(expires_at)
+    }
+
+    pub(super) fn policy_receipt(
+        &self,
+        expected: u64,
+        config: &Config,
+        sample: PolicySample,
+        local_until: Instant,
+    ) -> Result<EffectivePolicyReceipt, ApiError> {
+        let expires_at = self.policy_context(config)?;
         self.check_bridge()?;
         self.check_lifetime()?;
-        let until = kernel.until.min(
-            self.lease_until
-                .ok_or_else(|| error(ErrorCode::InvalidState, "local lease is absent"))?,
-        );
+        let until = sample.kernel.until.min(local_until);
         let remaining =
-            crate::policy_binding::sampled_lease_budget(started, Instant::now(), until)?;
+            crate::policy_binding::sampled_lease_budget(sample.started, Instant::now(), until)?;
         let receipt = EffectivePolicyReceipt {
             binding: ProtectedBindingReceipt {
                 allocation: self.allocation.clone(),
-                source,
-                destinations,
+                source: sample.source,
+                destinations: sample.destinations,
                 revision: expected,
                 expires_at,
-                observed_at,
+                observed_at: sample.observed_at,
             },
             config_sha256: config.digest()?,
-            native_sha256: kernel.sha256,
+            native_sha256: sample.kernel.sha256,
             lease_remaining_milliseconds: remaining,
         };
         receipt.validate_config(config)?;
