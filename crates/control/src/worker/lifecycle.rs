@@ -16,19 +16,7 @@ impl Worker {
                     "runtime profile is not registered",
                 )
             })?;
-        goldenhoop_core::validate_create(profile, &stored.request)?;
-        let mut native = stored.request.clone();
-        // Artifact retention is implemented by the probed host storage worker.
-        // Its availability is checked above; the native driver owns file capture.
-        native.required_capabilities.remove(&Capability::Artifacts);
-        // Hierarchy allocation and feature ceilings are enforced by the host.
-        // The native runtime receives only this node's workload hard limits.
-        native
-            .required_capabilities
-            .remove(&Capability::IsolatedSessions);
-        native.child_budget = None;
-        native.feature_limit = None;
-        Ok(native)
+        project_runtime_request(profile, &stored.request)
     }
     pub(super) async fn recovered_handle(
         &self,
@@ -485,5 +473,124 @@ impl Worker {
             .await?;
         }
         Ok(())
+    }
+}
+
+fn project_runtime_request(
+    profile: &RuntimeProfile,
+    request: &CreateSandbox,
+) -> Result<CreateSandbox, ApiError> {
+    goldenhoop_core::validate_create(profile, request)?;
+    let mut native = request.clone();
+    // Artifact retention is implemented by the probed host storage worker.
+    // Its availability is checked above; the native driver owns file capture.
+    native.required_capabilities.remove(&Capability::Artifacts);
+    // The verified protected host broker supplies credentials. Docker owns
+    // the workload, not this composed capability; admission was checked above.
+    native
+        .required_capabilities
+        .remove(&Capability::SecretInjection);
+    // Hierarchy allocation and feature ceilings are enforced by the host.
+    // The native runtime receives only this node's workload hard limits.
+    native
+        .required_capabilities
+        .remove(&Capability::IsolatedSessions);
+    native.child_budget = None;
+    native.feature_limit = None;
+    Ok(native)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn host_credential_capability_is_checked_before_runtime_projection() {
+        // Synthetic registration tests projection only, never native support.
+        let mut profile = RuntimeProfile {
+            id: "projection-fixture".into(),
+            placement: Placement::Local,
+            isolation: Isolation::Oci,
+            availability: Availability::Available,
+            capabilities: [
+                Capability::Commands,
+                Capability::NetworkIsolation,
+                Capability::NetworkPolicy,
+                Capability::SecretInjection,
+                Capability::Artifacts,
+                Capability::IsolatedSessions,
+            ]
+            .into(),
+            code_languages: Default::default(),
+            max_resources: ResourceLimits::default(),
+            max_ttl_seconds: 86400,
+            reason: None,
+        };
+        let mut request = CreateSandbox::new(&profile.id, "projection-fixture:test");
+        request.required_capabilities = [
+            Capability::Commands,
+            Capability::NetworkPolicy,
+            Capability::SecretInjection,
+            Capability::Artifacts,
+            Capability::IsolatedSessions,
+        ]
+        .into();
+        request.network.rules.push(NetworkRule {
+            destination: "192.0.2.10".into(),
+            ports: vec![443],
+            action: NetworkAction::Allow,
+        });
+        let original = serde_json::to_value(&request).unwrap();
+        let native = project_runtime_request(&profile, &request).unwrap();
+        assert_eq!(
+            native.required_capabilities,
+            [Capability::Commands, Capability::NetworkPolicy].into()
+        );
+        assert_eq!(native.network, request.network);
+        assert_eq!(native.resources, request.resources);
+        assert_eq!(serde_json::to_value(&request).unwrap(), original);
+
+        profile.capabilities.remove(&Capability::SecretInjection);
+        assert_eq!(
+            project_runtime_request(&profile, &request)
+                .unwrap_err()
+                .code,
+            ErrorCode::UnsupportedCapability
+        );
+        profile.capabilities.insert(Capability::SecretInjection);
+        request.feature_limit = Some(
+            profile
+                .capabilities
+                .iter()
+                .copied()
+                .filter(|cap| *cap != Capability::SecretInjection)
+                .collect(),
+        );
+        assert_eq!(
+            project_runtime_request(&profile, &request)
+                .unwrap_err()
+                .code,
+            ErrorCode::Forbidden
+        );
+        request.feature_limit = None;
+        request
+            .required_capabilities
+            .insert(Capability::MemorySnapshot);
+        assert_eq!(
+            project_runtime_request(&profile, &request)
+                .unwrap_err()
+                .code,
+            ErrorCode::UnsupportedCapability
+        );
+        request
+            .required_capabilities
+            .remove(&Capability::MemorySnapshot);
+        profile.availability = Availability::Unavailable;
+        assert_eq!(
+            project_runtime_request(&profile, &request)
+                .unwrap_err()
+                .code,
+            ErrorCode::BackendUnavailable
+        );
     }
 }
