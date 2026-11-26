@@ -9,6 +9,7 @@ import uuid
 
 import httpx
 from goldenhoop import ApiError, Client, Command, CreateArtifact
+from firecracker_manager_fixture import Manager
 
 
 def suite(control, cli, native, boot, fixture):
@@ -27,6 +28,7 @@ def suite(control, cli, native, boot, fixture):
     installation = None
     sandboxes = []
     artifact_id = None
+    manager = None
 
     def event_lines(name, event):
         values = []
@@ -109,6 +111,8 @@ def suite(control, cli, native, boot, fixture):
                'capacity': {'cpu_millis': 2000, 'memory_bytes': 2 * 1024**3, 'max_vms': 2},
                'max_ttl_seconds': 300}
         config.write_text(json.dumps(cfg)); config.chmod(0o600)
+        manager = Manager(native, config, cfg)
+        manager.start()
         start('worker')
         client = Client(endpoint, token)
         profiles = client.profiles()
@@ -230,6 +234,8 @@ def suite(control, cli, native, boot, fixture):
             for path in sorted((root / 'records').glob('*.json')):
                 try:
                     value = json.loads(path.read_text()); records.append(value)
+                    if manager:
+                        value['live_resources_before_final_collection'] = manager.observe(value)
                     assert value['owner']['installation_id'] == installation
                     handle = {'sandbox_id': value['owner']['sandbox_id'], 'profile': 'local-firecracker',
                               'backend_ref': f'fc1:{installation}:{value["owner"]["generation"]}'}
@@ -242,6 +248,12 @@ def suite(control, cli, native, boot, fixture):
                 except Exception as error:
                     cleanup_errors.append(str(error))
             report['observations']['records_before_final_collection'] = records
+        if manager:
+            try:
+                manager.close()
+            except Exception as error:
+                cleanup_errors.append(str(error))
+            report['observations']['manager'] = manager.diagnostics()
         report['observations']['service_log_tails'] = {name: path.read_text(errors='replace')[-5000:]
                                                        for name, path in logs.items() if path.exists()}
         report['cleanup'] = 'complete' if not cleanup_errors else 'unknown'

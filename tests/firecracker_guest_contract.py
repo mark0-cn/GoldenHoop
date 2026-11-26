@@ -72,7 +72,7 @@ def main():
     sources = [root / 'Cargo.toml', root / 'Cargo.lock', Path(__file__).resolve(),
                root / '.github/workflows/firecracker-guest.yml', root / 'images/agent/Dockerfile']
     if args.driver_contract:
-        sources += [root / 'tests/firecracker_driver_contract.py', root / '.github/workflows/firecracker-driver.yml']
+        sources += [root / 'tests/firecracker_driver_contract.py', root / 'tests/firecracker_manager_fixture.py', root / '.github/workflows/firecracker-driver.yml']
     for crate in ['firecracker', 'guest-init', 'agent', 'protocol', 'runtime']:
         sources += sorted((root / f'crates/{crate}').rglob('*.rs'))
         sources.append(root / f'crates/{crate}/Cargo.toml')

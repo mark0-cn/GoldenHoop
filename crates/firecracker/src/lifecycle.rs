@@ -1,10 +1,12 @@
 //! Durable native ownership. A separate Rust supervisor owns each VMM so worker
 //! death neither breaks its console pipes nor suspends absolute expiry.
 mod driver;
+mod manager;
+pub(crate) mod reaper;
 mod supervisor;
 #[cfg(test)]
 mod tests;
-pub use driver::FirecrackerDriver;
+pub use manager::{FirecrackerDriver, run_manager};
 pub use supervisor::run_supervisor;
 
 use crate::machine::{Artifact, BootInput, ProcessObservation, digest, trusted_file};
@@ -86,7 +88,7 @@ impl DriverConfig {
             || self.max_ttl_seconds == 0
             || self.max_ttl_seconds > 86400
             || self.capacity.cpu_millis == 0
-            || self.capacity.memory_bytes < 384 * MIB
+            || self.capacity.memory_bytes < 384 * MIB + manager::MANAGER_MEMORY
             || self.capacity.max_vms == 0
             || self.capacity.max_vms > 128
         {

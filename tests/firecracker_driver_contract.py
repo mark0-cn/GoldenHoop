@@ -12,6 +12,7 @@ from pathlib import Path
 import subprocess
 import time
 import uuid
+from firecracker_manager_fixture import Manager
 
 
 def suite(binary, boot, fixture):
@@ -36,6 +37,7 @@ def suite(binary, boot, fixture):
     interrupted = None
     restore_record = None
     original_group = None
+    manager = Manager(binary, config, cfg)
 
     def prepare_request(value):
         request_file.write_text(json.dumps(value)); request_file.chmod(0o600)
@@ -111,6 +113,7 @@ def suite(binary, boot, fixture):
         return value
 
     try:
+        manager.start()
         observed = call({'operation': 'probe'}, timeout=220)
         assert observed['availability'] == 'available', observed
         assert set(observed['capabilities']) == {'commands', 'files', 'pause', 'network_isolation'}
@@ -119,6 +122,7 @@ def suite(binary, boot, fixture):
         a_request = request()
         a = call(a_request); handles[a['sandbox_id']] = a
         a_record = record(a['sandbox_id'])
+        manager.assert_parent(a_record)
         assert call(a_request) == a
         assert call({'operation': 'inspect', 'handle': a})['state'] == 'running'
         assert a in call({'operation': 'discover'})
@@ -203,7 +207,7 @@ def suite(binary, boot, fixture):
         original_group.mkdir()
         d = call(d_request, original_scope=original_group); handles[d['sandbox_id']] = d
         d_record = record(d['sandbox_id'])
-        assert d_record['original_cgroup'] == str(original_group)
+        assert d_record['original_cgroup'] == manager.owner['cgroup']
         assert 'populated 0' in (original_group / 'cgroup.events').read_text().splitlines()
         original_group.rmdir()
         call({'operation': 'pause', 'handle': d})
@@ -218,7 +222,7 @@ def suite(binary, boot, fixture):
         assert not (Path('/proc') / str(d_record['supervisor']['pid'])).exists()
         call({'operation': 'rpc', 'handle': d, 'request': {'method': 'ping'}}, expect=False)
         remove(d)
-        report['cases'].append('independent_absolute_expiry_collects_paused_VM_after_callers_and_original_service_group_disappear')
+        report['cases'].append('independent_absolute_expiry_collects_paused_VM_after_callers_and_caller_service_group_disappear')
         remove(a)
         call({'operation': 'remove', 'handle': a})
         assert record(a['sandbox_id'])['phase'] == 'collected'
@@ -246,6 +250,7 @@ def suite(binary, boot, fixture):
             for path in sorted((root / 'records').glob('*.json')):
                 try:
                     value = json.loads(path.read_text()); records.append(value)
+                    value['live_resources_before_final_collection'] = manager.observe(value)
                     assert value['owner']['installation_id'] == installation
                     handle = {'sandbox_id': value['owner']['sandbox_id'], 'profile': 'local-firecracker',
                               'backend_ref': f'fc1:{installation}:{value["owner"]["generation"]}'}
@@ -254,6 +259,11 @@ def suite(binary, boot, fixture):
                     assert all(not p.exists() for p in generation_paths(value))
                 except Exception as error:
                     cleanup_errors.append(str(error))
+        try:
+            manager.close()
+        except Exception as error:
+            cleanup_errors.append(str(error))
+        report['observations']['manager'] = manager.diagnostics()
         report['observations']['records_before_final_collection'] = records
         report['observations']['config'] = cfg
         report['cleanup'] = 'complete' if not cleanup_errors else 'unknown'

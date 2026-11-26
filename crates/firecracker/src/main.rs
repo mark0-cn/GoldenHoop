@@ -9,6 +9,16 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Action {
+    /// Foreground native installation service, independent of the API worker.
+    Manage {
+        #[arg(long)]
+        config: std::path::PathBuf,
+    },
+    /// Request draining; the service's parent still confirms final collection.
+    ManagerStop {
+        #[arg(long)]
+        config: std::path::PathBuf,
+    },
     /// Observe actual KVM access; does not establish a usable runtime profile.
     ProbeKvm,
     /// Private actual jailed boot/guest/collection gate; no profile publication.
@@ -37,6 +47,33 @@ enum Action {
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     match Args::parse().command {
+        Action::Manage { config } => {
+            #[cfg(target_os = "linux")]
+            goldenhoop_firecracker::lifecycle::run_manager(config).await?;
+            #[cfg(not(target_os = "linux"))]
+            {
+                let _ = config;
+                return Err("native manager requires Linux root/KVM".into());
+            }
+        }
+        Action::ManagerStop { config } => {
+            #[cfg(target_os = "linux")]
+            {
+                use goldenhoop_firecracker::lifecycle::{DriverConfig, FirecrackerDriver};
+                FirecrackerDriver::connect(DriverConfig::read(&config)?)?
+                    .request_manager_shutdown()
+                    .await?;
+                println!(
+                    "{}",
+                    serde_json::json!({"stop_requested":true,"cleanup":"pending"})
+                );
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                let _ = config;
+                return Err("native manager requires Linux root/KVM".into());
+            }
+        }
         Action::Supervise {
             config,
             sandbox,

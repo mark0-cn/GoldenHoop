@@ -959,8 +959,9 @@ impl Machine {
 
     pub(crate) async fn collect(&mut self, report: &mut GuestReport) -> Result<()> {
         let mut pids = BTreeSet::new();
-        // waitpid is limited to this process's children. This untrusted candidate
-        // is only reaped, never signaled outside the authenticated owned cgroup.
+        // Capture descriptor-bound owned identities before termination. A
+        // private live bootstrap owns only this generation's host children;
+        // a recovered manager must use recorded identity or actual cgroup proof.
         if let Some(pid) = self.candidate_pid {
             pids.insert(pid as i32);
         }
@@ -972,6 +973,31 @@ impl Machine {
             {
                 pids.insert(pid.parse::<i32>()?);
             }
+        }
+        let mut targets = Vec::new();
+        for pid in pids {
+            let target = if let Some(process) = &self.process
+                && process.pid == pid as u32
+            {
+                crate::lifecycle::reaper::recorded(&crate::lifecycle::ProcessIdentity {
+                    pid: process.pid,
+                    start_ticks: process.start_ticks,
+                    boot_id: process.boot_id.clone(),
+                    executable_sha256: process.executable_sha256.clone(),
+                    uid: process.uid,
+                })?
+            } else {
+                crate::lifecycle::reaper::group_child(
+                    pid as u32,
+                    self.owned_cgroup.then_some(self.cgroup.as_path()),
+                    !self.recovered,
+                )?
+            };
+            if let Some(target) = target {
+                targets.push(target);
+            }
+        }
+        if self.owned_cgroup {
             std::fs::write(self.cgroup.join("cgroup.kill"), b"1")?;
         }
         if let Some(fd) = &self.pidfd {
@@ -996,19 +1022,18 @@ impl Machine {
         }
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
         loop {
-            pids.retain(|pid| {
-                let mut status = 0;
-                let result = unsafe { libc::waitpid(*pid, &mut status, libc::WNOHANG) };
-                result == 0
-                    || (result < 0
-                        && (io::Error::last_os_error().raw_os_error() != Some(libc::ECHILD)
-                            || Path::new("/proc").join(pid.to_string()).exists()))
-            });
+            let mut pending = Vec::new();
+            for target in targets {
+                if !target.collected()? {
+                    pending.push(target);
+                }
+            }
+            targets = pending;
             let empty = !self.owned_cgroup
                 || std::fs::read_to_string(self.cgroup.join("cgroup.events"))?
                     .lines()
                     .any(|line| line == "populated 0");
-            if pids.is_empty() && empty && (self.pidfd.is_none() || self.exited()?) {
+            if targets.is_empty() && empty && (self.pidfd.is_none() || self.exited()?) {
                 break;
             }
             if tokio::time::Instant::now() >= deadline {

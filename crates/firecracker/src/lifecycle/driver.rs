@@ -19,9 +19,20 @@ struct Inner {
     operations: Mutex<()>,
     vm_locks: Mutex<std::collections::HashMap<Uuid, std::sync::Weak<Mutex<()>>>>,
     profile: RwLock<RuntimeProfile>,
+    children: std::sync::Mutex<std::collections::HashMap<Uuid, OwnedChild>>,
+}
+struct OwnedChild {
+    pid: u32,
+    child: tokio::process::Child,
+    status: Option<String>,
+}
+enum ChildState {
+    NotOwned,
+    Running,
+    Exited(String),
 }
 #[derive(Clone)]
-pub struct FirecrackerDriver {
+pub(super) struct NativeEngine {
     inner: Arc<Inner>,
 }
 
@@ -34,7 +45,7 @@ fn unavailable(error: impl std::fmt::Display) -> ApiError {
     error.retryable = false;
     error
 }
-fn profile(cfg: &DriverConfig) -> RuntimeProfile {
+pub(super) fn profile(cfg: &DriverConfig) -> RuntimeProfile {
     RuntimeProfile {
         id: PROFILE.into(),
         placement: Placement::Local,
@@ -48,7 +59,7 @@ fn profile(cfg: &DriverConfig) -> RuntimeProfile {
     }
 }
 
-impl FirecrackerDriver {
+impl NativeEngine {
     pub fn connect(cfg: DriverConfig) -> Result<Self> {
         cfg.validate()?;
         if unsafe { libc::geteuid() } != 0 {
@@ -100,12 +111,9 @@ impl FirecrackerDriver {
                 operations: Mutex::new(()),
                 vm_locks: Mutex::new(Default::default()),
                 profile: RwLock::new(observed),
+                children: std::sync::Mutex::new(Default::default()),
             }),
         })
-    }
-
-    pub async fn profile_snapshot(&self) -> RuntimeProfile {
-        self.inner.profile.read().await.clone()
     }
 
     async fn vm_lock(&self, id: Uuid) -> Arc<Mutex<()>> {
@@ -124,6 +132,55 @@ impl FirecrackerDriver {
         record.validate(&self.inner.cfg, id)?;
         Ok(record)
     }
+    fn child_state(&self, id: Uuid, expected: Option<&ProcessIdentity>) -> Result<ChildState> {
+        let mut children = self
+            .inner
+            .children
+            .lock()
+            .map_err(|_| invalid("native child registry poisoned"))?;
+        let Some(owned) = children.get_mut(&id) else {
+            return Ok(ChildState::NotOwned);
+        };
+        if expected.is_some_and(|identity| identity.pid != owned.pid) {
+            return Err(invalid("recorded supervisor differs from actual owned child").into());
+        }
+        if owned.status.is_none()
+            && let Some(status) = owned.child.try_wait()?
+        {
+            owned.status = Some(status.to_string());
+        }
+        Ok(match &owned.status {
+            Some(status) => ChildState::Exited(status.clone()),
+            None => ChildState::Running,
+        })
+    }
+    pub(super) fn reap_children(&self) -> Result<()> {
+        let mut children = self
+            .inner
+            .children
+            .lock()
+            .map_err(|_| invalid("native child registry poisoned"))?;
+        for owned in children.values_mut() {
+            if owned.status.is_none()
+                && let Some(status) = owned.child.try_wait()?
+            {
+                owned.status = Some(status.to_string());
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn children_collected(&self) -> Result<bool> {
+        self.reap_children()?;
+        Ok(self
+            .inner
+            .children
+            .lock()
+            .map_err(|_| invalid("native child registry poisoned"))?
+            .values()
+            .all(|owned| owned.status.is_some()))
+    }
+
     fn handle(&self, record: &VmJournal) -> RuntimeHandle {
         RuntimeHandle {
             sandbox_id: record.owner.sandbox_id,
@@ -165,7 +222,7 @@ impl FirecrackerDriver {
         let mut cpu = u64::from(resources.cpu_millis);
         let mut memory = resources
             .memory_bytes
-            .checked_add(256 * MIB)
+            .checked_add(256 * MIB + super::manager::MANAGER_MEMORY)
             .ok_or_else(|| invalid("native reservation overflow"))?;
         let mut count = 1u32;
         for record in self.records()? {
@@ -335,8 +392,29 @@ impl FirecrackerDriver {
     async fn wait_ready(
         &self,
         id: Uuid,
-        mut child: Option<tokio::process::Child>,
+        child: Option<tokio::process::Child>,
     ) -> Result<RuntimeHandle> {
+        if let Some(child) = child {
+            let pid = child
+                .id()
+                .ok_or_else(|| invalid("native child PID missing"))?;
+            let mut children = self
+                .inner
+                .children
+                .lock()
+                .map_err(|_| invalid("native child registry poisoned"))?;
+            if children.contains_key(&id) {
+                return Err(invalid("native child already tracked").into());
+            }
+            children.insert(
+                id,
+                OwnedChild {
+                    pid,
+                    child,
+                    status: None,
+                },
+            );
+        }
         let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
         loop {
             let record = self.load(id)?;
@@ -359,9 +437,7 @@ impl FirecrackerDriver {
             {
                 return Ok(self.handle(&record));
             }
-            if let Some(child) = child.as_mut()
-                && let Some(status) = child.try_wait()?
-            {
+            if let ChildState::Exited(status) = self.child_state(id, record.supervisor.as_ref())? {
                 return Err(invalid(format!(
                     "native supervisor exited during creation: {status}"
                 ))
@@ -610,7 +686,11 @@ impl FirecrackerDriver {
         Ok(!paths.root.try_exists()?
             && !paths.vm_cgroup.try_exists()?
             && !paths.supervisor_cgroup.try_exists()?
-            && self.supervisor_gone(record)?)
+            && self.supervisor_gone(record)?
+            && !matches!(
+                self.child_state(record.owner.sandbox_id, record.supervisor.as_ref())?,
+                ChildState::Running
+            ))
     }
 
     fn supervisor_gone(&self, record: &VmJournal) -> Result<bool> {
@@ -638,11 +718,13 @@ impl FirecrackerDriver {
     async fn settle_collected(&self, record: &VmJournal) -> Result<()> {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
         loop {
-            if let Some(identity) = &record.supervisor {
-                // waitpid never signals a foreign PID; a restarted manager may
-                // instead observe host init reap the adopted supervisor.
-                let mut status = 0;
-                unsafe { libc::waitpid(identity.pid as i32, &mut status, libc::WNOHANG) };
+            if matches!(
+                self.child_state(record.owner.sandbox_id, record.supervisor.as_ref())?,
+                ChildState::NotOwned
+            ) && let Some(identity) = &record.supervisor
+                && let Some(target) = super::reaper::recorded(identity)?
+            {
+                let _ = target.collected()?;
             }
             if !self.supervisor_alive(record)? {
                 supervisor::collect_supervisor_cgroup(&self.inner.cfg, record)?;
@@ -656,6 +738,11 @@ impl FirecrackerDriver {
                         &self.inner.cfg.record_path(record.owner.sandbox_id),
                         &updated,
                     )?;
+                    self.inner
+                        .children
+                        .lock()
+                        .map_err(|_| invalid("native child registry poisoned"))?
+                        .remove(&record.owner.sandbox_id);
                     return Ok(());
                 }
             }
@@ -686,6 +773,28 @@ impl FirecrackerDriver {
             return self.settle_collected(record).await;
         }
         if self.supervisor_alive(record)? {
+            if ["reserved", "preparing", "launch_intent", "tracked"]
+                .contains(&record.phase.as_str())
+            {
+                let identity = record
+                    .supervisor
+                    .as_ref()
+                    .ok_or_else(|| invalid("native supervisor identity missing"))?;
+                let fd = track_process(identity)?;
+                let result = unsafe {
+                    libc::syscall(
+                        libc::SYS_pidfd_send_signal,
+                        fd.as_raw_fd(),
+                        libc::SIGTERM,
+                        std::ptr::null::<libc::siginfo_t>(),
+                        0,
+                    )
+                };
+                if result < 0 && io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH) {
+                    return Err(io::Error::last_os_error().into());
+                }
+                return self.settle_collected(record).await;
+            }
             let result = self
                 .supervisor_call(record, SupervisorOperation::Stop)
                 .await;
@@ -747,7 +856,7 @@ impl FirecrackerDriver {
 }
 
 #[async_trait]
-impl RuntimeDriver for FirecrackerDriver {
+impl RuntimeDriver for NativeEngine {
     async fn probe(&self) -> RuntimeProfile {
         let mut result = profile(&self.inner.cfg);
         let id = Uuid::new_v4();
@@ -993,7 +1102,7 @@ impl RuntimeDriver for FirecrackerDriver {
 }
 
 #[async_trait]
-impl AgentTransport for FirecrackerDriver {
+impl AgentTransport for NativeEngine {
     async fn rpc(
         &self,
         handle: &RuntimeHandle,

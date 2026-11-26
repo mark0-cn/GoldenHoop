@@ -247,3 +247,44 @@ verifies 264 inputs per platform against current format/strict workspace checks:
 passes 313 plus static musl guest/rootfs construction. These results establish
 portable component validation only. The [first native failure diagnosis](evidence/m4-native-supervisor-failure-diagnosis.json)
 preserves the missing telemetry and the requirement for a new hardware result.
+
+## Persistent service parent
+
+The [next native-public archive](evidence/m4-native-45887664380-archive.json)
+retains six passing bootstrap groups and six new private groups at 6cc9a93,
+followed by Failed/Unknown collection during a second VM removal. All 288
+reported inputs are verified. The journal reached `vm_collected`, but the
+original report did not identify every remaining process/path. Its exact
+residual item is not reconstructed, and no public groups were reached.
+
+The next implementation runs an explicit foreground installation service:
+
+```sh
+goldenhoop-firecracker manage --config /etc/goldenhoop/native.json
+```
+
+A service supervisor owns this process. The worker uses the same private
+configuration through `--runtime firecracker --firecracker-config ...`; Docker
+remains the default runtime selection. The persistent manager retains and reaps
+each VM supervisor as its actual child after a worker or CLI exits. Private IPC
+binds installation, configuration digest, epoch and real peer identity. The
+manager reserves 768 MiB in host capacity, enforces its own CPU/memory/task
+limits and bounds connections and heavy RPCs. Existing guest/VMM/supervisor
+limits remain in force.
+
+`manager-stop --config ...` only acknowledges a pending drain request. The
+service parent waits for actual exit and verifies its cgroup, socket and marker
+collection. The manager drains VM generations before exiting. Unclean restart
+with uncollected generations is fenced pending service-parent recovery; it does
+not infer collection from an exited nonchild. Actual fixtures now own this
+foreground service and record individual residual observations. Two real Linux
+process regressions plus the retained Firecracker checks pass 31 focused tests.
+Portable full checks and a new actual KVM public gate remain required. Production
+service packaging, image preparation, snapshots/restores/templates and full
+M4-M6 acceptance are still outstanding.
+
+[Windows validation](evidence/m4-native-manager-validation-windows.json) passes
+270 tests; [Linux validation](evidence/m4-native-manager-validation-linux.json)
+passes 315 plus static guest/rootfs construction. Both include format, strict
+workspace/all-target lint and fingerprints of all 266 build inputs. These
+portable results do not replace the corrected actual KVM gate.
