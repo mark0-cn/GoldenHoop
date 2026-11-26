@@ -37,6 +37,20 @@ impl Manager {
         config: &Config,
         names: Option<&SetNames>,
     ) -> Result<KernelPolicy, ApiError> {
+        if self.ethernet_required
+            && self.source_scope.is_some()
+            && self.destinations.is_some()
+            && let Some(names) = names
+        {
+            self.check_lifetime()?;
+            // The protected snapshot brackets the same native-duration sample
+            // with exact main, Ethernet, source, destination and credential
+            // readback. Reuse it for renewal instead of launching each table
+            // reader separately before and after that sample.
+            let (kernel, _, _) = self.protected_kernel(revision, config, names).await?;
+            self.check_lifetime()?;
+            return Ok(kernel);
+        }
         self.expected(revision).await?;
         let (_, native) = self
             .table()

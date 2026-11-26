@@ -9,6 +9,45 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+MANAGER = r'''
+import datetime,json,pathlib,subprocess,sys,uuid
+a=json.loads(sys.argv[1]);table='gh_c_'+a['generation'].replace('-','');events=[];captures=[];sequence=0;failure=None
+p=subprocess.Popen(['/usr/local/libexec/goldenhoop-egress'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+def rpc(operation,error=False,**fields):
+ global sequence
+ sequence+=1;request={'id':sequence,'command':dict(operation=operation,**fields)}
+ p.stdin.write(json.dumps(request)+'\n');p.stdin.flush();line=p.stdout.readline();assert line,'missing explicit manager reply'
+ reply=json.loads(line);events.append(dict(request=request,reply=reply))
+ assert reply['id']==sequence and ('error' in reply)==error,reply
+ return reply.get('error' if error else 'result')
+def nft(*args):
+ r=subprocess.run(['nft',*args],capture_output=True,text=True,timeout=8);assert r.returncode==0,r.stderr;return json.loads(r.stdout)
+def capture(phase,present=True):
+ inventory=nft('--json','list','tables');found=any(r.get('table',{}).get('name')==table for r in inventory['nftables'])
+ observed=nft('--json','list','table','inet',table) if found else None
+ captures.append(dict(phase=phase,present=found,native=observed))
+ assert found==present,(phase,'credential redirect presence differs')
+try:
+ native=dict(allocation=a,identity={**{k:a[k] for k in ('installation_id','sandbox_id','generation')},'profile':'local-runc-dev'},provisioning_token=str(uuid.uuid4()),expires_at=(datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(seconds=90)).isoformat())
+ rpc('bind_native',plan=native);rpc('open',allocation=a);capture('before_install')
+ rpc('install');capture('after_install')
+ policy={'policies':[{'default_action':'deny','rules':[]}]}
+ applied=rpc('apply',expected_revision=0,config=policy);assert applied['revision']==1 and not applied['uncertain'];capture('after_apply')
+ rpc('quarantine',expected_revision=1);capture('after_quarantine')
+ refused=rpc('remove',expected_revision=2,error=True);assert refused['code']=='conflict';capture('remove_refused_while_bridge_exists')
+ removed=subprocess.run(['ip','link','delete',a['bridge']],capture_output=True,text=True,timeout=8);assert removed.returncode==0,removed.stderr
+ assert not pathlib.Path('/sys/class/net',a['bridge']).exists()
+ rpc('remove',expected_revision=2);capture('after_bridge_absence_and_remove',False)
+except BaseException as error:failure=repr(error)
+finally:
+ p.stdin.close()
+ try:code=p.wait(timeout=5)
+ except subprocess.TimeoutExpired:p.kill();p.wait(timeout=5);raise
+ stderr=p.stderr.read()
+print(json.dumps(dict(events=events,captures=captures,controller_exit_code=code,controller_stderr=stderr,error=failure,ready=False)))
+assert code==0 and failure is None,failure or stderr
+'''
+
 
 def run(args):
     attempt = str(uuid.uuid4())
@@ -53,6 +92,8 @@ def run(args):
         report["image_id"] = image["Id"]
         allocation = dict(installation_id=str(uuid.uuid4()), sandbox_id=str(uuid.uuid4()),
                           generation=str(uuid.uuid4()), bridge="ghcredprobe", ifindex=37)
+        if args.manager:
+            allocation["bridge"] = "ghn" + uuid.UUID(allocation["generation"]).hex[:12]
         definition = dict(v4=dict(address="198.19.0.1", port=44000),
                           v6=dict(address="fd42::1", port=44001), ports={"80": "http", "443": "https"})
         value = dict(allocation=allocation, definition=definition)
@@ -101,6 +142,15 @@ def run(args):
         invalid["definition"]["ports"]["53"] = "http"
         compiler(invalid, refused=True)
         report["cases"].append("dns_transport_cannot_be_selected_as_credential_port")
+        if args.manager:
+            result = call(["docker", "exec", container, "python3", "-B", "-c", MANAGER, json.dumps(allocation)], check=False)
+            report["actual_manager_lifecycle"] = json.loads(result.stdout)
+            save()
+            assert result.returncode == 0 and not report["actual_manager_lifecycle"]["ready"], result.stderr
+            report["cases"].extend([
+                "actual_manager_preserves_owned_redirect_across_install_apply_and_quarantine",
+                "actual_manager_refuses_redirect_removal_while_bridge_exists",
+                "actual_manager_removes_redirect_only_after_independent_bridge_absence"])
         report["result"] = "passed"
     except BaseException as error:
         report["error"] = repr(error)
@@ -131,4 +181,5 @@ if __name__ == "__main__":
     parser.add_argument("--binary", required=True)
     parser.add_argument("--image", default="goldenhoop-network-fixture:test")
     parser.add_argument("--output", required=True)
+    parser.add_argument("--manager", action="store_true", help="Also run the production Linux manager's actual private redirect lifecycle")
     run(parser.parse_args())

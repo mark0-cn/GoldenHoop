@@ -426,13 +426,8 @@ impl Manager {
         replace: bool,
         policy: Option<&Config>,
     ) -> Result<Observation, ApiError> {
+        self.verify_credential_guard().await?;
         let mut batch = String::new();
-        if self.credential_guard().await?.is_some() {
-            batch.push_str(&format!(
-                "delete table inet {}\n",
-                self.allocation.credential_table()
-            ));
-        }
         if replace {
             batch.push_str(&format!("delete table inet {}\n", self.allocation.table()));
         }
@@ -558,6 +553,22 @@ impl Manager {
             ));
         }
         let mut batch = String::new();
+        if let Some(observed) = self.credential_guard().await? {
+            if self
+                .credential_redirect
+                .as_ref()
+                .is_some_and(|expected| expected.digest() != observed.digest())
+            {
+                return Err(error(
+                    ErrorCode::Conflict,
+                    "credential collection identity differs",
+                ));
+            }
+            batch.push_str(&format!(
+                "delete table inet {}\n",
+                self.allocation.credential_table()
+            ));
+        }
         if let Some((revision, _)) = self.table().await? {
             if revision != expected {
                 return Err(error(ErrorCode::Conflict, "egress policy revision differs"));
