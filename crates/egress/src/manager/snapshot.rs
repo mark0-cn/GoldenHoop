@@ -15,7 +15,7 @@ struct Floors {
 impl Manager {
     async fn kernel_snapshot(&self) -> Result<ScopedKernelSnapshot, ApiError> {
         let bytes = nft_bounded(
-            &["--json", "list", "ruleset"],
+            &["--json", "--numeric", "list", "ruleset"],
             None,
             MAX_SNAPSHOT_BYTES as u64,
         )
@@ -64,6 +64,23 @@ impl Manager {
                 ErrorCode::Conflict,
                 "required destination guard is unavailable or changed",
             ));
+        }
+        match (
+            &self.credential_redirect,
+            snapshot.table(&self.allocation.credential_table()),
+        ) {
+            (Some(definition), Ok(table)) => {
+                crate::CredentialRedirectPlan::new(&self.allocation, definition.clone())?
+                    .verify(&self.allocation, table)?;
+            }
+            (Some(_), Err(error)) => return Err(error),
+            (None, Ok(_)) => {
+                return Err(error(
+                    ErrorCode::Conflict,
+                    "unexpected credential ingress in protected snapshot",
+                ));
+            }
+            (None, Err(_)) => {}
         }
         crate::policy_readback::verify_structure(
             &self.allocation,
