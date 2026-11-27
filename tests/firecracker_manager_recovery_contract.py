@@ -160,24 +160,35 @@ def exercise(native, cfg, config, root, manager, client, sid, complete, observed
     group = Path(death['owner']['cgroup'])
     suffix = uuid.UUID(cfg['installation_id']).hex+'-'+uuid.UUID(death['owner']['epoch']).hex
     assert group == Path('/sys/fs/cgroup')/('ghm-'+suffix)
-    saved = group.with_name(group.name+'-saved')
     old_group = identity(group)
     assert old_group == death['owner']['cgroup_identity']
     assert 'populated 0' in (group/'cgroup.events').read_text().splitlines()
-    group.rename(saved)
+    # cgroup v2 has no rename operation. Collect only the recorded empty
+    # fixture group, then create a genuinely different kernel object at its
+    # path. Keep its descriptor pinned while checking replacement identity.
+    old_descriptor = os.open(group, os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+    pinned = os.fstat(old_descriptor)
+    assert old_group == dict(device=pinned.st_dev,inode=pinned.st_ino)
     foreign_group = None
     try:
+        assert identity(group)==old_group
+        group.rmdir()
+        observed['owned_old_empty_cgroup_collection'] = dict(identity=old_group,absent=not group.exists())
+        assert not group.exists()
         group.mkdir()
         foreign_group = identity(group)
         assert foreign_group != old_group
         observed['foreign_cgroup_refusal'] = refused(config)
         assert identity(group)==foreign_group
     finally:
-        if foreign_group:
-            assert identity(group)==foreign_group and 'populated 0' in (group/'cgroup.events').read_text().splitlines()
-            group.rmdir()
-        assert identity(saved)==old_group and not group.exists()
-        saved.rename(group)
+        try:
+            if foreign_group:
+                assert identity(group)==foreign_group and 'populated 0' in (group/'cgroup.events').read_text().splitlines()
+                group.rmdir()
+        finally:
+            os.close(old_descriptor)
+    assert not group.exists()
+    same_processes(before)
     cases.append('replacement_empty_cgroup_inode_is_refused_and_preserved_without_signalling_processes')
 
     # Explicitly labeled metadata fault: this is not a claimed real PID reuse.

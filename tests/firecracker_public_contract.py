@@ -275,6 +275,11 @@ def suite(control, cli, native, boot, fixture, manager_recovery=False):
                 cleanup_errors.append(str(error))
         if client:
             client.close()
+        if manager:
+            try:
+                manager.ensure_collection_owner()
+            except Exception as error:
+                cleanup_errors.append(f'collection owner: {type(error).__name__}: {error}')
         if config.exists() and (root / 'records').exists():
             records = []
             for path in sorted((root / 'records').glob('*.json')):
@@ -291,8 +296,13 @@ def suite(control, cli, native, boot, fixture, manager_recovery=False):
                                             capture_output=True, timeout=40)
                     assert result.returncode == 0 and json.loads(result.stdout)['ok'], result.stderr.decode(errors='replace')[-1000:]
                     assert all(not p.exists() for p in paths(value))
+                    collected = manager.observe(value)
+                    value['live_resources_after_final_collection'] = collected
+                    assert not any(collected['paths'].values()) and all(
+                        not process['present'] or process.get('identity_start_matches') is False
+                        for process in collected['processes'].values()), collected
                 except Exception as error:
-                    cleanup_errors.append(str(error))
+                    cleanup_errors.append(f'generation collection: {type(error).__name__}: {error}')
             report['observations']['records_before_final_collection'] = records
         if manager:
             try:

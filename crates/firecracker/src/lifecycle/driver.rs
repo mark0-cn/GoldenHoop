@@ -1103,26 +1103,10 @@ impl RuntimeDriver for NativeEngine {
             {
                 let _ = self.retain_dead_supervisor_diagnostics(&mut record, &error.to_string());
             }
-            if record.phase == "vm_collected" {
-                let _ = self.settle_collected(&record).await;
-            } else if self.supervisor_alive(&record).unwrap_or(false) {
-                if let Some(identity) = &record.supervisor
-                    && let Ok(fd) = track_process(identity)
-                {
-                    unsafe {
-                        libc::syscall(
-                            libc::SYS_pidfd_send_signal,
-                            fd.as_raw_fd(),
-                            libc::SIGTERM,
-                            std::ptr::null::<libc::siginfo_t>(),
-                            0,
-                        )
-                    };
-                }
-                let _ = self.settle_collected(&record).await;
-            } else {
-                let _ = self.collect_dead(&record).await;
-            }
+            // A rejected retry grants no extra authority over an adopted
+            // supervisor. Use the same process/group/acknowledgement fences
+            // as explicit removal, and retain the original create error.
+            let _ = self.remove_owned(&record).await;
         }
         result.map_err(|error| {
             error
@@ -1243,8 +1227,7 @@ mod recovery_tests {
     use super::*;
 
     #[tokio::test]
-    async fn recovered_unacknowledged_reservation_waits_without_spawning_or_advertising_a_runtime()
-    {
+    async fn recovered_unacknowledged_intent_never_replays_or_signals_on_create_error() {
         if unsafe { libc::geteuid() } != 0 {
             return;
         }
@@ -1259,6 +1242,8 @@ mod recovery_tests {
             sha256,
             size,
         };
+        let supervisor_path = PathBuf::from("/usr/bin/sleep");
+        let (sha256, size) = digest(trusted_file(&supervisor_path).unwrap()).unwrap();
         let resources = ResourceLimits {
             cpu_millis: 500,
             memory_bytes: 256 * MIB,
@@ -1274,7 +1259,11 @@ mod recovery_tests {
                 rootfs: artifact.clone(),
             },
             image: format!("sha256:{}", artifact.sha256),
-            supervisor: artifact,
+            supervisor: Artifact {
+                path: supervisor_path,
+                sha256,
+                size,
+            },
             max_resources: resources.clone(),
             capacity: HostCapacity::default(),
             max_ttl_seconds: 300,
@@ -1377,6 +1366,36 @@ mod recovery_tests {
         assert_eq!(
             engine.inner.profile.read().await.availability,
             Availability::Unverified
+        );
+
+        // This real process is intentionally absent from this engine's owned
+        // child registry, as a previous manager's supervisor would be. The
+        // fixture parent still owns its final kill/wait; no KVM is involved.
+        let mut child = tokio::process::Command::new(&cfg.supervisor.path)
+            .arg("60")
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let identity = process_identity(child.id().unwrap()).unwrap();
+        let mut pending = record.clone();
+        pending.supervisor = Some(identity.clone());
+        pending.phase = "preparing".into();
+        atomic_json(&cfg.record_path(id), &pending).unwrap();
+        let snapshot = std::fs::read(cfg.record_path(id)).unwrap();
+        let mut expired = sandbox.clone();
+        expired.created_at = Utc::now() - chrono::Duration::seconds(121);
+        expired.expires_at = expired.created_at + chrono::Duration::seconds(120);
+        let result =
+            tokio::time::timeout(Duration::from_secs(2), engine.create(&expired, &request)).await;
+        let preserved = child.try_wait().unwrap().is_none()
+            && std::fs::read(cfg.record_path(id)).unwrap() == snapshot;
+        child.kill().await.unwrap();
+        child.wait().await.unwrap();
+        assert!(super::super::reaper::process_absent(&identity).unwrap());
+        assert!(result.is_ok_and(|value| value.is_err()));
+        assert!(
+            preserved,
+            "a rejected create retry signalled or rewrote an unacknowledged adopted supervisor"
         );
         drop(engine);
         let path = directory.path().to_owned();

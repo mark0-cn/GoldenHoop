@@ -123,14 +123,17 @@ class Manager:
                 return
             time.sleep(.2)
 
-    def close(self):
-        if not self.process:
-            return
-        if self.process.poll() is not None and any(value['owner']['process']['pid']==self.process.pid for value in self.deaths):
+    def ensure_collection_owner(self):
+        if self.process and self.process.poll() is not None and any(value['owner']['process']['pid']==self.process.pid for value in self.deaths):
             # Preserve the original failure and use the production restart/drain
             # path to collect this exact installation after an interrupted test.
             self.maintenance_restart = True
             self.start()
+
+    def close(self):
+        if not self.process:
+            return
+        self.ensure_collection_owner()
         if self.process.poll() is None:
             try:
                 stopped = subprocess.run([str(self.binary), 'manager-stop', '--config', str(self.config)],

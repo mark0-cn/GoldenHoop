@@ -128,3 +128,20 @@ epoch refusal, paused state and expiry while both worker and manager are dead.
 Host/configuration migration, earlier abandoned allocation/metadata recovery,
 snapshots/restore/templates/production placement, complete M4 and M5-M6 remain
 unaccepted.
+
+The first actual gate at d54ac1b is retained as Failed/Unknown in
+[its source-verified archive](evidence/m4-manager-recovery-45949925668-archive.json).
+Its fixture attempted cgroup-v2 rename, which Linux does not implement. The
+corrected fixture removes only the receipt-verified empty old group and creates
+a different real kernel inode at the same path, requiring refusal/preservation
+before collecting that exact fixture replacement. Failure cleanup restores only
+an intentionally killed fixture manager before generation collection and samples
+old PID/start and scoped-path absence. Historical cleanup is not rewritten.
+
+Create-error cleanup also uses the same `remove_owned` fences as explicit stop;
+a rejected retry has no extra signalling authority over an adopted supervisor.
+The [corrective Windows281](evidence/m4-manager-recovery-validation-windows-signal-fenced.json)
+and [Linux-root348](evidence/m4-manager-recovery-validation-linux-signal-fenced.json)
+full checks include a real unregistered sleep process preserved after rejection,
+then killed/waited by its fixture parent. This does not establish actual nonchild
+or KVM recovery; the corrected dedicated hardware gate remains mandatory.
