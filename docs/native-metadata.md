@@ -62,4 +62,12 @@ pass 281/338 tests with format/strict lint and 313 exact source bindings, includ
 the diagnostic parent and both Dockerfiles. Linux builds the actual optimized
 host service. These are canonical repository bytes; the separate newline review
 in the progress log qualifies earlier diagnostic-checkout evidence. Actual native
-KVM acceptance remains pending for this ownership change.
+KVM lifecycle verification of this ownership change now passes in
+[run 45926123930](https://github.com/mark0-cn/GoldenHoop/actions/runs/45926123930)
+at b3fa14d. The [archive](evidence/m4-native-45926123930-archive.json) verifies
+all 337 source inputs against that immutable commit and retains the raw report
+SHA256 `12b226603c1ef61f7717c2bbd61553e4ab0e729b503b6b79e4475e7cb97fca35`.
+All 23 retained bootstrap/private/public groups pass with Complete collection,
+including worker restart and expiry. This accepts the existing lifecycle under
+the new root/atomic boundary; hard-manager death, abandoned pending-file
+reconciliation, snapshots and complete M4 remain unaccepted.

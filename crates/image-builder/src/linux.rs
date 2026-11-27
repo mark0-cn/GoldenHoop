@@ -136,6 +136,46 @@ pub async fn read_host_permit() -> io::Result<HostPermit> {
     read_permit_fd(fd).await
 }
 
+fn network_interface_names() -> io::Result<std::collections::BTreeSet<String>> {
+    struct Names(*mut libc::if_nameindex);
+    impl Drop for Names {
+        fn drop(&mut self) {
+            // SAFETY: This is the unchanged allocation returned by the one
+            // successful if_nameindex call below, released exactly once.
+            unsafe { libc::if_freenameindex(self.0) };
+        }
+    }
+    let pointer = unsafe { libc::if_nameindex() };
+    if pointer.is_null() {
+        return Err(io::Error::last_os_error());
+    }
+    let owned = Names(pointer);
+    let mut result = std::collections::BTreeSet::new();
+    let mut indexes = std::collections::BTreeSet::new();
+    for offset in 0..64 {
+        // SAFETY: libc returns a terminated array whose names remain valid
+        // until if_freenameindex. Stop at its documented zero/NULL terminator.
+        let item = unsafe { &*owned.0.add(offset) };
+        if item.if_index == 0 && item.if_name.is_null() {
+            return Ok(result);
+        }
+        if item.if_index == 0 || item.if_name.is_null() || !indexes.insert(item.if_index) {
+            return Err(invalid("invalid network interface observation"));
+        }
+        let name = unsafe { std::ffi::CStr::from_ptr(item.if_name) };
+        if name.to_bytes().is_empty() || name.to_bytes().len() >= libc::IF_NAMESIZE {
+            return Err(invalid("invalid network interface name"));
+        }
+        let name = name
+            .to_str()
+            .map_err(|_| invalid("invalid network interface name"))?;
+        if !result.insert(name.to_owned()) {
+            return Err(invalid("duplicate network interface observation"));
+        }
+    }
+    Err(invalid("network interface observation exceeds limit"))
+}
+
 async fn read_permit_fd(fd: std::os::fd::OwnedFd) -> io::Result<HostPermit> {
     let flags = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GETFL) };
     if flags < 0
@@ -210,11 +250,10 @@ pub fn verify_isolation() -> io::Result<()> {
     if info.f_flag & libc::ST_RDONLY as libc::c_ulong == 0 {
         return Err(invalid("builder root must be read-only"));
     }
-    let mut interfaces = fs::read_dir("/sys/class/net")?
-        .map(|e| e.map(|e| e.file_name()))
-        .collect::<io::Result<Vec<_>>>()?;
-    interfaces.sort();
-    if interfaces != [std::ffi::OsString::from("lo")] {
+    // gVisor exposes RTM_GETLINK without /sys/class/net. Enumerate names,
+    // including unaddressed links, rather than interpreting missing sysfs as
+    // an empty network or filtering by configured IP addresses/statistics.
+    if network_interface_names()? != std::collections::BTreeSet::from(["lo".to_owned()]) {
         return Err(invalid(
             "builder must have no network interface except loopback",
         ));
@@ -714,6 +753,15 @@ async fn prepare_inner(
 mod permit_io_tests {
     use super::*;
     use std::os::unix::net::UnixStream;
+    #[test]
+    fn actual_name_enumeration_matches_all_kernel_links() {
+        let observed = network_interface_names().unwrap();
+        let expected = fs::read_dir("/sys/class/net")
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(observed, expected);
+    }
     #[tokio::test]
     async fn stalled_private_writer_does_not_prevent_authorization_cancellation() {
         let (reader, writer) = UnixStream::pair().unwrap();

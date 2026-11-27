@@ -260,3 +260,37 @@ refused root write; it grants no capability. The
 [corrected local diagnostic/pipeline gate](evidence/m4-image-prepare-failure-observation-actual-runc-current.json)
 passes nine retained groups and Complete collection. New runsc evidence with the
 explicit Actions SHA is still required.
+
+## Interface enumeration without sysfs
+
+The [second runsc gate](evidence/m4-image-prepare-45924506330-archive.json)
+at 6085bda records the converter exiting 1 without OOM before authorization,
+with ENOENT on stderr. Its separate isolated kernel diagnostic observes PID1,
+NNP1, CapEff0x1b and a refused root write, but `/sys/class/net` is absent.
+The converter's isolation check read that path; these observations identify
+the incompatible check without accepting a missing path as an empty network.
+The failed report remains Failed/Unknown and no disk is accepted.
+
+The check now uses libc
+[if_nameindex](https://man7.org/linux/man-pages/man3/if_nameindex.3.html)
+and still requires exactly the loopback name. This enumerates interface names,
+including links without an IP address, with bounded names/counts and ownership
+of the returned allocation. gVisor's pinned
+[RTM_GETLINK implementation](https://github.com/gvisor/gvisor/blob/cc5b7474bf134432a4f41a47d37022fc4f05ede6/pkg/sentry/socket/netlink/route/protocol.go)
+dumps all stack interface IDs. `/proc/net/dev` is retained only as diagnostic
+output; link statistics are not an authority for a complete interface list.
+Other PID, NNP, capability, read-only-root, host resource, live-process and
+private-permit checks are unchanged. A real Linux test compares libc's returned
+names with every actual sysfs link in the ordinary full-check environment.
+
+[Windows checks](evidence/m4-image-builder-interface-validation-windows.json)
+pass format, strict workspace/all-target Clippy and 281 tests;
+[Linux checks](evidence/m4-image-builder-interface-validation-linux.json)
+pass the same checks and 339 tests, then build the actual optimized host.
+Both bind 313 exact build inputs. The
+[actual local runc-development gate](evidence/m4-image-builder-interface-actual-runc.json)
+passes all nine groups with 316 input bindings and Complete collection, raw
+SHA256 `8d5c807409c5830f20b6181e40d5cc92ee535fbd9262d5e590c0ffa4276457ff`.
+All fresh test resources and both owned build-image tags are absent. This
+validates the revised converter locally; a new actual runsc gate and boot of a
+produced disk remain required before production image acceptance.

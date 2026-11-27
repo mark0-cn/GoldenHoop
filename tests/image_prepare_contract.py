@@ -103,7 +103,7 @@ class Contract(SourceContract):
         # settings and no input, output, host mount, daemon access or secret.
         # This records a kernel view; it cannot accept the image pipeline.
         command = ("printf 'ROOT_PID=%s\\n' \"$$\"; "
-                   "cat /proc/self/status; printf '\\nINTERFACES\\n'; ls /sys/class/net; "
+                   "cat /proc/self/status; printf '\\nINTERFACES\\n'; cat /proc/net/dev; "
                    "printf '\\nROOT_MOUNT\\n'; grep ' / ' /proc/mounts; "
                    "if /usr/bin/touch /goldenhoop-readonly-diagnostic; then "
                    "printf 'ROOT_WRITE=allowed\\n'; exit 3; else printf 'ROOT_WRITE=refused\\n'; fi")
