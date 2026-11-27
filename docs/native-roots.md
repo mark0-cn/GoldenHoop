@@ -46,10 +46,19 @@ filesystem/process checks exercise real SIGKILL/reap before a marker and after i
 unlink, live/zombie refusal, same-inode resumption and copied/replaced/link refusal.
 That targeted report precedes the final mount guard; full checks bind the current
 source. The explicitly ignored real bind-mount test is compiled but remains
-unverified until the dedicated release gate runs it.
+verified by the dedicated release gate below.
 
 `firecracker-root-recovery.yml` requires two actual mount groups, four release
 supervisor/manager recovery or refusal groups, and all 41 retained groups. Pre-ack
 refusal is distinct from the observer's separately witnessed empty-fixture rollback.
-The 47-group gate remains pending. Host power loss/migration, public prepared-image
+[Run45980384093](https://github.com/mark0-cn/GoldenHoop/actions/runs/45980384093)
+at 2038512 passes all 47 with Complete collection. Its [archive](evidence/m4-root-recovery-45980384093-archive.json)
+verifies 355 runtime inputs; separate build-only evidence verifies 325 inputs and
+claims no runtime result. The ignored test binary binds 321 compiled inputs.
+The actual pre-ack case preserves its original root/reservation, refuses same-intent
+recreate, admits an independent VM and refuses a third reservation. Only the
+separately witnessed empty fixture is manually rolled back. The pending receipt
+and partial-delete cases retain the original root inode; actual replacement refusal
+preserves both directories before normal original-root collection.
+Host power loss/migration, public prepared-image
 placement, snapshots/restore/templates, complete M4 and all M5-M6 remain open.
