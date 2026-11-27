@@ -48,6 +48,10 @@ Credentials stay in the trusted broker, bound to destination/method/path. Worklo
 
 Snapshots distinguish rootfs, volumes and memory, include content digests and format versions, and validate CPU/VMM compatibility where applicable. Restores rotate identities/tokens/network allocation. Existing network connections are not promised to survive VM restore.
 
+The remaining native implementation and actual acceptance requirements are in
+[native snapshots and restore](native-snapshots.md). That plan records pending
+work and does not advertise an implemented capability.
+
 Warm pools allocate clean instances and destroy or rebuild used allocations. Browser/desktop functionality is supplied by workload images and authorized endpoints.
 
 ## Defaults

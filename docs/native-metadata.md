@@ -74,7 +74,7 @@ reconciliation, snapshots and complete M4 remain unaccepted.
 
 ## Same-boot installation manager recovery
 
-The next manager implementation holds the existing installation lease before
+The same-boot manager implementation holds the existing installation lease before
 recovery. It checks the prior manager's installation, epoch, executable and
 exact declared/persisted configuration before writing configuration or replacing
 control metadata. The original PID/start identity must be gone; a zombie still
@@ -121,8 +121,8 @@ The earlier successful check and test-module-placement lint failure are retained
 the final checks use the fenced source. Both temporary check tags are
 ownership-verified and collected; useful caches remain.
 
-The dedicated `firecracker-manager-recovery.yml` gate still needs actual KVM
-acceptance. It covers public command continuation, manager SIGKILL, live-owner
+The dedicated `firecracker-manager-recovery.yml` gate passes actual KVM
+acceptance at ef8c360. It covers public command continuation, manager SIGKILL, live-owner
 exclusion, changed configuration/control objects/supervisor identity, stale
 epoch refusal, paused state and expiry while both worker and manager are dead.
 Host/configuration migration, earlier abandoned allocation/metadata recovery,
@@ -144,4 +144,17 @@ The [corrective Windows281](evidence/m4-manager-recovery-validation-windows-sign
 and [Linux-root348](evidence/m4-manager-recovery-validation-linux-signal-fenced.json)
 full checks include a real unregistered sleep process preserved after rejection,
 then killed/waited by its fixture parent. This does not establish actual nonchild
-or KVM recovery; the corrected dedicated hardware gate remains mandatory.
+or KVM recovery by itself; the corrected dedicated hardware gate supplies that
+separate evidence below.
+
+[Actual KVM run45951829900](https://github.com/mark0-cn/GoldenHoop/actions/runs/45951829900)
+passes all 32 groups with Complete collection. Its
+[archive](evidence/m4-manager-recovery-45951829900-archive.json) verifies 342 inputs
+against ef8c360 and preserves raw SHA256
+`0ba600dbaf4c48090a67920161d7ebe10488675029b48ea4c93940a891cdbfd7`.
+Three actual manager SIGKILLs preserve running-command identity/once semantics,
+paused state and independent expiry. Six generation records are resampled after
+collection with actual old PID/start and scoped-path absence. The fixture,
+manager, export carrier and run-owned image are collected. This is same-boot,
+exact-configuration acceptance; earlier unacknowledged metadata/allocation,
+migration, snapshots/restore/templates and complete M4 remain unaccepted.
