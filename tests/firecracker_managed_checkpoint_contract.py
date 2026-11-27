@@ -65,7 +65,9 @@ def exercise(binary, config, root, cfg, manager, request, call, rpc, command,
     # Both public manager resume and the actual root supervisor endpoint enforce
     # the same persisted hold. A rejected operation never thaws the source.
     denied = call({'operation':'resume','handle':source}, expect=False)
-    assert denied['retryable'] is False
+    assert denied['code']=='invalid_state' and denied['retryable'] is False
+    held=record(source['sandbox_id'])
+    assert held['phase']=='paused' and held['error'] is None and held['capture_hold']==capture
     generation = uuid.UUID(original['owner']['generation'])
     control = root/'vm'/generation.hex[:12]/'control.sock'
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
@@ -73,7 +75,9 @@ def exercise(binary, config, root, cfg, manager, request, call, rpc, command,
         client.sendall(json.dumps({'owner':original['owner'],'operation':'resume'}).encode()+b'\n')
         with client.makefile('rb') as response:
             refused = json.loads(response.readline(65537))
-    assert refused['generation'] == str(generation) and refused['error'], refused
+    assert refused['generation'] == str(generation) and refused['error']['code']=='invalid_state', refused
+    held=record(source['sandbox_id'])
+    assert held['phase']=='paused' and held['error'] is None and held['capture_hold']==capture
     assert call({'operation':'inspect','handle':source})['state'] == 'paused'
     assert call({'operation':'checkpoint_capture','handle':source,'capture':capture})['reference'] == reference
     conflict = call({'operation':'checkpoint_capture','handle':other,'capture':capture}, expect=False)

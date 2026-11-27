@@ -7,8 +7,13 @@ Its [raw archive](evidence/m4-checkpoint-capture-46036731540-archive.json) prese
 SHA256 `346850b1eaedb79146247a989ed392f6616e492e5a156caea352d7594b1c02a9`.
 Protocol3 private authority remains accepted at6c32d1a (55/371/Complete), and the
 original b18bd35 missing-probe-generation failure remains Failed. The new private
-native-manager capture integration passes local Windows290/GNU397 and musl21
-checks on340 identical inputs; its own actual gate remains required. Public snapshot integration, actual restore, templates,
+native-manager capture at9f260a6 passes local Windows290/GNU397 and musl21 on340
+inputs, but actual gate46043276070 fails after39 groups/380 inputs with Complete
+collection. Capture succeeds; Resume refusal incorrectly poisons and collects
+the held source. Its correction passes Windows290/GNU398/musl21 on identical340
+inputs, including formatting and strict clippy. The fresh actual managed64 gate
+remains required; local checks do not accept physical source preservation.
+Public snapshot integration, actual restore, templates,
 combined M4 and complete M5-M6 remain active. See the
 [authority acceptance](evidence/m4-guest-authority-acceptance-summary.json) and
 [capture/store contract](native-checkpoint-store.md).
@@ -55,10 +60,32 @@ Native public selected-image placement and private protocol2 quiescence remain i
   output. A contention diagnosis remains an inference. No production fence or
   assertion is relaxed. The separate managed KVM gate retains capture60 and adds
   client-disconnect, hold/retry/conflict, actual manager death/reconnect and GC.
-  It is unexecuted; fresh-target restore, public snapshots, templates, combined
-  M4 and complete M5-M6 remain required.
+  The original9f260a6 run fails after39 groups/380 inputs with Complete collection;
+  its exact bytes remain in the [archive](evidence/m4-managed-checkpoint-46043276070-archive.json).
+  Fresh-target restore, public snapshots, templates, combined M4 and complete
+  M5-M6 remain required.
 
 ## Active objective
+
+The [manager policy-denial correction](evidence/m4-manager-denial-upstream-diagnosis.json)
+rejects known intent before effects without changing a healthy source journal.
+Genuine runtime errors/timeouts still poison Unknown, which Status cannot clear,
+and original errors survive collection. A real root IPC test covers both paths
+with an unbooted synthetic runtime; physical KVM preservation, exact retry,
+manager death/reconnect and GC remain required. The first new fixture failed the
+existing Unix socket length guard and now uses a shorter temporary prefix. Its
+Failed report remains unchanged. This correction uses its own frozen340-source
+export; the separate private continuation loader is outside this correction's
+compiled input and acceptance. Final [Windows checks](evidence/m4-manager-denial-validation-windows-final.json)
+pass290 tests and [GNU-root checks](evidence/m4-manager-denial-validation-linux-final.json)
+pass398, both with formatting and strict workspace all-target clippy.
+[Musl checks](evidence/m4-manager-denial-validation-musl-final.json) pass21 scoped
+tests, strict firecracker/init all-target clippy and all4 static guest releases.
+All three reports bind identical340 inputs. The exact owned source export and
+both successful check images are collected with positively observed absence;
+the failed tags are also absent. Useful caches, raw failures and check evidence
+remain. See the [corrective summary](evidence/m4-manager-denial-implementation-summary.json).
+A fresh actual managed64 gate remains required before accepting this source.
 
 Implement the complete M0-M6 design in the dedicated mark0-cn/GoldenHoop repository and push staged, verified commits.
 

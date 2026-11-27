@@ -35,6 +35,20 @@ The supervisor does not execute the copy task, so its independent expiry loop
 continues. No capture path automatically clears the hold, resumes the source or
 thaws the guest. A failed or unconfirmed capture remains reserved and fenced.
 
+Expected policy rejection precedes runtime dispatch and leaves the source journal
+unchanged. This includes Resume on a held source and disabled/nil/changed capture
+intent. Genuine runtime errors and operation timeout poison the journal as
+Unknown; Status cannot overwrite that fence. Stop retains the original error and
+the supervisor independently collects the uncertain generation. The original
+9f260a6 gate exposed this distinction: capture succeeded, but a refused Resume
+was incorrectly classified as Unknown and collected the source. Its original
+Failed/Complete report remains in the
+[diagnosis](evidence/m4-manager-denial-upstream-diagnosis.json).
+The correction passes Windows290/GNU-root398/musl21 on identical340 inputs;
+the [local summary](evidence/m4-manager-denial-implementation-summary.json) records
+the exact reports and scoped collection. Actual held-source preservation and
+manager recovery still require the fresh64-group hardware gate.
+
 Production capture has no marker command or test file write. The private probe
 alone prepares RAM/disk oracles, then invokes the same reserved capture operation.
 Both paths still require the frozen guest receipt, actual Paused state, fresh

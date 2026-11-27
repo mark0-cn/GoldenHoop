@@ -1,0 +1,44 @@
+{
+  "source_commit": "9f260a61451d45095f32e81fc1d28f66b930ddf4",
+  "original_run": 46043276070,
+  "original_result": "failed",
+  "original_cleanup": "complete",
+  "completed_groups": 39,
+  "verified_runtime_inputs": 380,
+  "raw_report": "m4-managed-checkpoint-46043276070-firecracker-managed-checkpoint-firecracker-managed-checkpoint.json",
+  "raw_sha256": "5209d4a297f8e6069c6a23cd4a3b154e17390b15ba67279fd9b5a5691c5f05b9",
+  "observed": {
+    "first_manager_capture_group": "passed after submitting client disconnect, with independent VM operation",
+    "capture_status": ["capturing", "publishing", "ready"],
+    "content_verified": true,
+    "reserved_bytes": 1644167168,
+    "failure_site": "firecracker_managed_checkpoint_contract.py:77, fresh inspect after two expected Resume refusals",
+    "final_source_phase": "vm_collected",
+    "final_source_process": "absent",
+    "final_source_jail_and_VM_cgroup": "absent",
+    "workflow_terminal_updated_at": "2026-11-27T18:00:32Z",
+    "source_expiration": "2026-11-27T18:04:48.658185Z",
+    "manager_crash_cases": "not reached"
+  },
+  "cause": "Supervisor call treated an expected capture-hold Resume rejection as an unconfirmed lifecycle effect. record_error wrote Unknown; the independent supervisor loop collects every Unknown generation. A healthy held source was therefore physically collected before the next inspect. The old generic stop reason overwrote the original policy error.",
+  "primary_comparison": {
+    "project": "Firecracker v1.18.0",
+    "revision": "eaf83bb718a559d324613d566eaf776b31a62340",
+    "url": "https://github.com/firecracker-microvm/firecracker/blob/eaf83bb718a559d324613d566eaf776b31a62340/src/vmm/src/rpc_interface.rs",
+    "applied": "Reject unsupported/state-invalid intent before mutable runtime work. Keep this distinct from restore/resume failures after state changed, for which Firecracker records a fatal preboot error. GoldenHoop retains stricter unconfirmed-effect fencing."
+  },
+  "corrective_behavior": [
+    "Manager refuses held-source Resume as nonretryable InvalidState before supervisor dispatch.",
+    "Supervisor preflight rejects held-source Resume and disabled/nil/changed capture intent with typed errors, without changing its journal or source lifetime.",
+    "Real runtime errors and operation timeout both reach Unknown recording. Later Status cannot clear the fence before collection.",
+    "Stop retains the original recorded error when available.",
+    "Actual root IPC regression requires unchanged bytes/phase/hold on rejection, then proves an unavailable unbooted synthetic runtime is poisoned and Status preserves Unknown. This is not KVM proof.",
+    "KVM harness requires InvalidState and unchanged held source after manager and direct-supervisor rejection, followed by fresh physical Paused observation. All managed64 groups remain required."
+  ],
+  "fixture_failure_retained": {
+    "report": "m4-manager-denial-validation-linux-initial.json",
+    "result": "failed",
+    "cause": "New root-IPC fixture gh-denial- prefix produced a108-byte vsock pathname without NUL. Existing configuration guard correctly refused it. The fixture now uses ghd-; production path bounds are unchanged."
+  },
+  "remaining": "Corrective full/source-bound checks and actual managed KVM gate. Private continuation work is validated and published separately; no native-manager/public restore or complete M4-M6 acceptance is implied."
+}

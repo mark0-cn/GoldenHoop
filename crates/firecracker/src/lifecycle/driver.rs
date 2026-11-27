@@ -1441,6 +1441,12 @@ impl RuntimeDriver for NativeEngine {
         let lock = self.vm_lock(handle.sandbox_id).await;
         let _guard = lock.lock().await;
         let record = self.for_handle(handle).map_err(unavailable)?;
+        if record.capture_hold.is_some() {
+            return Err(ApiError::new(
+                ErrorCode::InvalidState,
+                "captured source cannot resume",
+            ));
+        }
         if record.expired().map_err(unavailable)? {
             return Err(ApiError::new(
                 ErrorCode::InvalidState,

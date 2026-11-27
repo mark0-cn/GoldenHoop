@@ -92,6 +92,40 @@ async fn stop_vm(machine: &mut Machine, reason: Option<String>) -> Result<()> {
     Ok(())
 }
 
+fn reject_policy(
+    hold: Option<Uuid>,
+    checkpoints: bool,
+    operation: SupervisorOperation,
+) -> Option<ApiError> {
+    match operation {
+        SupervisorOperation::Resume if hold.is_some() => Some(ApiError::new(
+            ErrorCode::InvalidState,
+            "captured source cannot resume",
+        )),
+        SupervisorOperation::CaptureHold { .. } if !checkpoints => Some(ApiError::new(
+            ErrorCode::UnsupportedCapability,
+            "native checkpoints are disabled",
+        )),
+        SupervisorOperation::CaptureHold { capture } if capture.is_nil() => Some(ApiError::new(
+            ErrorCode::InvalidRequest,
+            "capture ID is nil",
+        )),
+        SupervisorOperation::CaptureHold { capture } if hold.is_some_and(|old| old != capture) => {
+            Some(ApiError::new(
+                ErrorCode::Conflict,
+                "source already has a different capture hold",
+            ))
+        }
+        _ => None,
+    }
+}
+async fn write_reply(stream: &mut BufReader<UnixStream>, reply: &SupervisorReply) -> Result<()> {
+    let mut bytes = serde_json::to_vec(reply)?;
+    bytes.push(b'\n');
+    stream.get_mut().write_all(&bytes).await?;
+    stream.get_mut().shutdown().await?;
+    Ok(())
+}
 async fn call(machine: &mut Machine, stream: UnixStream, checkpoints: bool) -> Result<bool> {
     let peer = stream.peer_cred()?;
     if peer.uid() != 0 {
@@ -102,6 +136,43 @@ async fn call(machine: &mut Machine, stream: UnixStream, checkpoints: bool) -> R
     let request: SupervisorCall = serde_json::from_slice(&frame)?;
     if request.owner != machine.record().owner {
         return Err(invalid("native supervisor request ownership mismatch").into());
+    }
+    if machine.record().phase == "unknown"
+        && !matches!(request.operation, SupervisorOperation::Stop)
+    {
+        let mut error = ApiError::new(
+            ErrorCode::BackendUnavailable,
+            "owned generation is fenced after an unconfirmed operation",
+        );
+        error.retryable = false;
+        write_reply(
+            &mut stream,
+            &SupervisorReply {
+                generation: machine.generation,
+                state: ObservedState::Unknown,
+                error: Some(error),
+            },
+        )
+        .await?;
+        return Ok(false);
+    }
+    // Rejected intent has not dispatched a runtime effect. Do not poison the
+    // source journal or make its independent expiry loop collect a healthy VM.
+    if let Some(error) = reject_policy(
+        machine.record().capture_hold,
+        checkpoints,
+        request.operation,
+    ) {
+        write_reply(
+            &mut stream,
+            &SupervisorReply {
+                generation: machine.generation,
+                state: ObservedState::Unknown,
+                error: Some(error),
+            },
+        )
+        .await?;
+        return Ok(false);
     }
     let mut stopping = false;
     let operation = async {
@@ -115,19 +186,8 @@ async fn call(machine: &mut Machine, stream: UnixStream, checkpoints: bool) -> R
         match request.operation {
             SupervisorOperation::Status => (),
             SupervisorOperation::Pause => api.pause().await?,
-            SupervisorOperation::Resume => {
-                if machine.record().capture_hold.is_some() {
-                    return Err(invalid(
-                        "captured source is held; resume requires a fresh restored generation",
-                    )
-                    .into());
-                }
-                api.resume().await?;
-            }
+            SupervisorOperation::Resume => api.resume().await?,
             SupervisorOperation::CaptureHold { capture } => {
-                if !checkpoints {
-                    return Err(invalid("native checkpoints are disabled").into());
-                }
                 machine.hold_capture(capture)?;
             }
             SupervisorOperation::Stop => unreachable!(),
@@ -154,7 +214,7 @@ async fn call(machine: &mut Machine, stream: UnixStream, checkpoints: bool) -> R
     };
     let result: Result<ObservedState> = tokio::time::timeout(Duration::from_secs(8), operation)
         .await
-        .map_err(|_| invalid("native lifecycle operation is uncertain"))?;
+        .unwrap_or_else(|_| Err(invalid("native lifecycle operation is uncertain").into()));
     let reply = match result {
         Ok(state) => SupervisorReply {
             generation: machine.generation,
@@ -173,10 +233,7 @@ async fn call(machine: &mut Machine, stream: UnixStream, checkpoints: bool) -> R
             }
         }
     };
-    let mut bytes = serde_json::to_vec(&reply)?;
-    bytes.push(b'\n');
-    stream.get_mut().write_all(&bytes).await?;
-    stream.get_mut().shutdown().await?;
+    write_reply(&mut stream, &reply).await?;
     Ok(stopping)
 }
 
@@ -270,7 +327,8 @@ pub async fn run_supervisor_with_input(
                     }
                 }
             }
-            stop_vm(&mut machine,Some("native absolute expiry, stop or VMM exit".into())).await
+            let reason=machine.record().error.clone().unwrap_or_else(||"native absolute expiry, stop or VMM exit".into());
+            stop_vm(&mut machine,Some(reason)).await
         }.await,
         Err(error)=>{let text=error.to_string();stop_vm(&mut machine,Some(text.clone())).await.and_then(|_|Err(invalid(text).into()))},
     };
@@ -294,4 +352,186 @@ pub async fn run_supervisor_with_input(
         collect_supervisor_cgroup(&cfg, machine.record())?;
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lifecycle::{HostCapacity, VmOwner};
+
+    #[tokio::test]
+    async fn actual_root_ipc_policy_rejection_preserves_the_source_journal_without_runtime_dispatch()
+     {
+        if unsafe { libc::geteuid() } != 0 {
+            return;
+        }
+        // The unbooted Machine has no VMM/process/cgroup authority. Real kernel
+        // root peer IPC must reject these intents before attempting its API.
+        let directory = tempfile::Builder::new()
+            .prefix("ghd-")
+            .tempdir_in("/var/lib")
+            .unwrap();
+        std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        private_directory(&directory.path().join("records")).unwrap();
+        let artifact = Artifact {
+            path: "/operator/artifact".into(),
+            sha256: "a".repeat(64),
+            size: 1,
+        };
+        let resources = ResourceLimits {
+            cpu_millis: 1000,
+            memory_bytes: 256 * MIB,
+            pids: 32,
+        };
+        let cfg = DriverConfig {
+            installation_id: Uuid::new_v4(),
+            data_root: directory.path().into(),
+            artifacts: BootInput {
+                firecracker: artifact.clone(),
+                jailer: artifact.clone(),
+                kernel: artifact.clone(),
+                rootfs: artifact.clone(),
+            },
+            supervisor: artifact.clone(),
+            image: format!("sha256:{}", "a".repeat(64)),
+            prepared_images: None,
+            checkpoints: Some(crate::checkpoint::CheckpointStorePolicy {
+                max_bytes: 2 * 1024 * MIB,
+                max_checkpoints: 1,
+            }),
+            max_resources: resources.clone(),
+            capacity: HostCapacity::default(),
+            max_ttl_seconds: 300,
+        };
+        cfg.validate().unwrap();
+        let hold = Uuid::new_v4();
+        let record = VmJournal {
+            format: 1,
+            owner: VmOwner {
+                installation_id: cfg.installation_id,
+                sandbox_id: Uuid::new_v4(),
+                generation: Uuid::new_v4(),
+                request_sha256: "a".repeat(64),
+                expires_at: Utc::now() + chrono::Duration::seconds(300),
+                host_boot_id: boot_id().unwrap(),
+                boot_deadline_ns: boottime_ns().unwrap() + 300_000_000_000,
+            },
+            artifacts: cfg.artifacts.clone(),
+            selected_image: None,
+            profile_probe_context_sha256: None,
+            capture_hold: Some(hold),
+            resources,
+            supervisor: None,
+            supervisor_cgroup_identity: None,
+            vm_cgroup_identity: None,
+            vm_root: None,
+            root_collection_started: false,
+            supervisor_artifact: artifact,
+            original_cgroup: "/sys/fs/cgroup".into(),
+            process: None,
+            phase: "paused".into(),
+            ever_ready: true,
+            error: None,
+            console_tail: String::new(),
+            supervisor_stderr_tail: String::new(),
+            supervisor_cgroup_events: Default::default(),
+        };
+        let path = cfg.record_path(record.owner.sandbox_id);
+        let original = serde_json::to_vec(&record).unwrap();
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+            .unwrap();
+        file.write_all(&original).unwrap();
+        file.sync_all().unwrap();
+        drop(file);
+        let mut machine = Machine::persistent(&cfg, record).unwrap();
+        for (operation, expected) in [
+            (SupervisorOperation::Resume, ErrorCode::InvalidState),
+            (
+                SupervisorOperation::CaptureHold {
+                    capture: Uuid::new_v4(),
+                },
+                ErrorCode::Conflict,
+            ),
+            (
+                SupervisorOperation::CaptureHold {
+                    capture: Uuid::nil(),
+                },
+                ErrorCode::InvalidRequest,
+            ),
+        ] {
+            let (server, mut client) = UnixStream::pair().unwrap();
+            let mut bytes = serde_json::to_vec(&SupervisorCall {
+                owner: machine.record().owner.clone(),
+                operation,
+            })
+            .unwrap();
+            bytes.push(b'\n');
+            let receive = async move {
+                client.write_all(&bytes).await.unwrap();
+                let mut reader = BufReader::new(client);
+                let bytes = read_frame(&mut reader, 65536).await.unwrap();
+                serde_json::from_slice::<SupervisorReply>(&bytes).unwrap()
+            };
+            let (stopped, reply) = tokio::join!(call(&mut machine, server, true), receive);
+            assert!(!stopped.unwrap());
+            assert_eq!(reply.generation, machine.generation);
+            assert_eq!(reply.error.unwrap().code, expected);
+            assert_eq!(machine.record().phase, "paused");
+            assert!(machine.record().error.is_none());
+            assert_eq!(machine.record().capture_hold, Some(hold));
+            assert!(machine.process.is_none());
+            assert_eq!(
+                std::fs::read(&path).unwrap(),
+                original,
+                "policy rejection must not write unknown or stop intent"
+            );
+        }
+        // A genuine unavailable runtime still poisons the journal. Status must
+        // not turn that Unknown back into Running/Paused before the expiry loop
+        // fences the original generation.
+        let (server, mut client) = UnixStream::pair().unwrap();
+        let mut bytes = serde_json::to_vec(&SupervisorCall {
+            owner: machine.record().owner.clone(),
+            operation: SupervisorOperation::Pause,
+        })
+        .unwrap();
+        bytes.push(b'\n');
+        let receive = async move {
+            client.write_all(&bytes).await.unwrap();
+            let mut r = BufReader::new(client);
+            let b = read_frame(&mut r, 65536).await.unwrap();
+            serde_json::from_slice::<SupervisorReply>(&b).unwrap()
+        };
+        let (_, reply) = tokio::join!(call(&mut machine, server, true), receive);
+        assert!(reply.error.is_some());
+        assert_eq!(machine.record().phase, "unknown");
+        assert!(machine.record().error.is_some());
+        let poisoned = std::fs::read(&path).unwrap();
+        let (server, mut client) = UnixStream::pair().unwrap();
+        let mut bytes = serde_json::to_vec(&SupervisorCall {
+            owner: machine.record().owner.clone(),
+            operation: SupervisorOperation::Status,
+        })
+        .unwrap();
+        bytes.push(b'\n');
+        let receive = async move {
+            client.write_all(&bytes).await.unwrap();
+            let mut r = BufReader::new(client);
+            let b = read_frame(&mut r, 65536).await.unwrap();
+            serde_json::from_slice::<SupervisorReply>(&b).unwrap()
+        };
+        let (stopped, reply) = tokio::join!(call(&mut machine, server, true), receive);
+        assert!(!stopped.unwrap());
+        assert!(reply.error.is_some());
+        assert_eq!(machine.record().phase, "unknown");
+        assert_eq!(std::fs::read(&path).unwrap(), poisoned);
+        drop(machine);
+        let path = directory.path().to_owned();
+        directory.close().unwrap();
+        assert!(!path.exists());
+    }
 }
