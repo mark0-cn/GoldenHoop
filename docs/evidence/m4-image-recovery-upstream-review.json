@@ -1,0 +1,58 @@
+{
+  "suite": "image-producer-fences-and-recovery-upstream-review",
+  "result": "source_review",
+  "scope": "primary-source applicability and local design; actual crash/backend acceptance is recorded separately",
+  "primary_sources": [
+    {
+      "project": "Moby",
+      "revision": "3c2183c2a8eaf2e261dfeaaad627e8faa13a803b",
+      "urls": [
+        "https://github.com/moby/moby/blob/3c2183c2a8eaf2e261dfeaaad627e8faa13a803b/daemon/start.go",
+        "https://github.com/moby/moby/blob/3c2183c2a8eaf2e261dfeaaad627e8faa13a803b/daemon/delete.go",
+        "https://github.com/moby/moby/blob/3c2183c2a8eaf2e261dfeaaad627e8faa13a803b/daemon/archive_unix.go"
+      ],
+      "finding": "Start/removal and filesystem archive/extraction use the known container's lifecycle lock. Removal marks that container dead and releases its registered name after cleanup.",
+      "application": "Reconcile and collect only positively observed immutable carrier IDs with exact ownership and actual absence checks.",
+      "limit": "This is not settlement proof for a missing unacknowledged create. The delayed-request fixture demonstrates a later original create without replay. Input-upload abort and early start/permit recovery are not accepted by this increment."
+    },
+    {
+      "project": "Linux man-pages",
+      "url": "https://man7.org/linux/man-pages/man2/flock.2.html",
+      "finding": "A flock belongs to an open file description. Duplicated/forked descriptors share it, and all references must close before it is released.",
+      "application": "Permanent inode, O_CLOEXEC, nonblocking exclusivity, inode/provider/database readback and a separate producer-death observation.",
+      "local_failure": "The initial fork-based unit fixture inherited another parallel test's descriptor and temporarily retained its lock. The corrected unit launches a separate executable process and tests actual SIGKILL, zombie visibility and reaping."
+    },
+    {
+      "project": "Rust standard library",
+      "url": "https://doc.rust-lang.org/std/process/struct.Child.html",
+      "version_observed": "1.100.0",
+      "finding": "Child::kill uses SIGKILL on Unix; Child is not automatically waited on or killed when dropped.",
+      "application": "The real-process unit owns its direct child and has explicit kill/wait failure-path cleanup. A zombie is not treated as a missing producer."
+    },
+    {
+      "project": "SQLite",
+      "url": "https://www.sqlite.org/wal.html#read_only_databases",
+      "finding": "Reading a WAL database on read-only media requires existing readable WAL/SHM files, permission to create them, or an immutable connection. A retained WAL is part of the database's durable state.",
+      "application": "The independent fixture observer reads existing crash WAL/SHM through a read-only connection. It uses immutable mode only on a frozen database with no nonempty WAL, and never creates sidecars on the original read-only volume.",
+      "local_failure": "The first independent reader failed after clean host-service close removed its WAL/SHM. The original failure report remains Unknown; separate maintenance collected that exact fixture and a fresh crash suite verifies the corrected reader."
+    },
+    {
+      "project": "GoldenHoop large-object storage",
+      "revision": "45da30a93ae99d9a0913ebeca34efc4d8f80c992",
+      "url": "https://github.com/mark0-cn/GoldenHoop/blob/45da30a93ae99d9a0913ebeca34efc4d8f80c992/crates/artifacts/src/stream.rs",
+      "finding": "Large-object intent/chunks/manifest are immutable create-only objects. Existing objects are accepted only after exact size/hash readback, and the manifest publishes last.",
+      "application": "Reuse the saved generation and reference after producer fencing. Actual partial-upload tests retain the first published chunk's inode/content and verify the completed reference independently.",
+      "limit": "Local process exit cannot settle old remote requests. Pending image recovery refuses remote storage; the caller must separately fence consumers before stable collection."
+    }
+  ],
+  "local_source_files_sha256": {
+    "crates/images/src/coordination.rs": "d3d311dca084dc94b78658d78514a0d392133691c63888be2615a456bb8cf20a",
+    "crates/images/src/export.rs": "c9b4b34f38bc165a1dba257735e04c9c245a011a4435ed0a46f62bcdb76b74af",
+    "crates/images/src/prepare.rs": "3c91e6558096ac73871f3747ead5ef168677fae4b13746f44f025922fefb3c03",
+    "crates/artifacts/src/stream.rs": "850307e1a11b3179eb505d10f2a3f14980aad5d92c35f11b20c1aa01166b7aca",
+    "crates/artifacts/src/lib.rs": "50d8550ad31fb8859e6379e596c01225754fcdb8c151a109e91d581cdf42bce4",
+    "crates/store/src/image_jobs.rs": "72dfda63eeab74f32712db6ac390c88221f7eb0aa1810b6e20ddd138c289dad7",
+    "tests/image_fault_proxy.py": "93daf451c82e179e5c05ae05f09ef23e317a58ffc51d1f2ebbdd18d363670570",
+    "tests/image_recovery_contract.py": "cd13b0f03f0c65a059023a191f1442d0575e77c8b124233a50c2dd555d31e647"
+  }
+}

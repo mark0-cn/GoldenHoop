@@ -1,0 +1,63 @@
+name: Image producer crash recovery
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  GH_IMAGE_OWNER: image-recovery-${{ github.run_id }}-${{ github.run_attempt }}
+  GH_HOST_IMAGE: goldenhoop-image-recovery-host:${{ github.run_id }}-${{ github.run_attempt }}
+  GH_BUILDER_IMAGE: goldenhoop-image-recovery-builder:${{ github.run_id }}-${{ github.run_attempt }}
+  GH_PROXY_IMAGE: goldenhoop-image-recovery-proxy:${{ github.run_id }}-${{ github.run_attempt }}
+jobs:
+  runsc:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install the actual gVisor runtime on this disposable runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          scratch=$(mktemp -d)
+          trap 'rm -rf "$scratch"' EXIT
+          base="https://storage.googleapis.com/gvisor/releases/release/latest/$(uname -m)"
+          cd "$scratch"
+          curl --fail --location --retry 3 "$base/gvisor.tar.zstd" -o gvisor.tar.zstd
+          curl --fail --location --retry 3 "$base/gvisor.tar.zstd.sha512" -o gvisor.tar.zstd.sha512
+          sha512sum -c gvisor.tar.zstd.sha512
+          sudo tar --zstd -xf gvisor.tar.zstd -C /usr/local/bin
+          sudo /usr/local/bin/runsc install
+          sudo systemctl reload docker
+          runsc --version
+          docker version
+      - name: Build the exact Rust host, converter and trusted Python fault fixture
+        # Workspace checks remain mandatory in CI/stage. This gate exercises
+        # actual producer death and real provider effects on the same source.
+        run: |
+          docker build --build-arg VALIDATE_WORKSPACE=0 --label dev.goldenhoop.task=m4-image-source-export-fixture --label dev.goldenhoop.owner="$GH_IMAGE_OWNER" --tag "$GH_HOST_IMAGE" --file images/host/Dockerfile .
+          docker build --build-arg VALIDATE_WORKSPACE=0 --target image-builder --label dev.goldenhoop.task=m4-image-builder-fixture --label dev.goldenhoop.owner="$GH_IMAGE_OWNER" --tag "$GH_BUILDER_IMAGE" --file images/agent/Dockerfile .
+          docker build --build-arg VALIDATE_WORKSPACE=0 --target agent-base --label dev.goldenhoop.task=m4-image-fault-proxy-fixture --label dev.goldenhoop.owner="$GH_IMAGE_OWNER" --tag "$GH_PROXY_IMAGE" --file images/agent/Dockerfile .
+      - name: Require actual default-runsc same-generation crash recovery and collection
+        run: python -B tests/image_recovery_contract.py --source-commit "$GITHUB_SHA" --image "$GH_HOST_IMAGE" --image-owner "$GH_IMAGE_OWNER" --builder-image "$GH_BUILDER_IMAGE" --builder-owner "$GH_IMAGE_OWNER" --proxy-image "$GH_PROXY_IMAGE" --remove-image --output evidence/image-recovery-runsc.json
+      - name: Collect exact owned fixture tags and confirm absence
+        if: always()
+        shell: python
+        run: |
+          import json, os, subprocess
+          for image in [os.environ['GH_HOST_IMAGE'], os.environ['GH_BUILDER_IMAGE'], os.environ['GH_PROXY_IMAGE']]:
+              def listed():
+                  return subprocess.check_output(['docker','image','ls','--quiet','--filter','reference='+image]).strip()
+              if listed():
+                  observed=json.loads(subprocess.check_output(['docker','image','inspect',image]))[0]
+                  assert observed['Config']['Labels']['dev.goldenhoop.owner']==os.environ['GH_IMAGE_OWNER']
+                  subprocess.run(['docker','image','rm',image],check=True)
+              assert not listed()
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: image-recovery-runsc
+          path: evidence/*.json
+          if-no-files-found: error

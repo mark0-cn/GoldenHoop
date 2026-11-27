@@ -1,7 +1,11 @@
 //! Never-started immutable OCI export into installation-owned large storage.
 //! All provider writes follow durable CAS; missing create acknowledgement is
 //! fenced, and an uncertain storage upload is never declared collected.
-use crate::{ExportReport, ExportRequest, hex_id};
+use crate::{
+    ExportReport, ExportRequest,
+    coordination::{Coordinator, Producer, Stamp},
+    hex_id,
+};
 use bollard::{Docker, errors::Error as DockerError, models::*, query_parameters::*};
 use futures_util::StreamExt;
 use goldenhoop_artifacts::{BlobStore, LargeBlobRef};
@@ -39,6 +43,12 @@ struct State {
     archive: Option<LargeBlobRef>,
     source_observation: Option<serde_json::Value>,
     error: Option<ApiError>,
+    #[serde(default)]
+    coordination: Option<Stamp>,
+    #[serde(default)]
+    recovery_observation: Option<serde_json::Value>,
+    #[serde(default)]
+    producer: Option<Producer>,
 }
 fn unavailable() -> ApiError {
     let mut error = ApiError::new(
@@ -104,7 +114,7 @@ fn state(job: &ImageJob) -> Result<State, ApiError> {
     ) && (value.archive.is_none()
         || value.container_id.is_none()
         || value.source_observation.is_none()
-        || value.error.is_some())
+        || (value.error.is_some() && value.phase != Phase::Collecting))
     {
         return Err(conflict());
     }
@@ -199,6 +209,7 @@ pub struct SourceExporter {
     docker: Docker,
     store: Store,
     blobs: BlobStore,
+    pub(crate) coordinator: Coordinator,
 }
 impl SourceExporter {
     /// Local socket only. The caller provides trusted host state/storage and
@@ -224,10 +235,13 @@ impl SourceExporter {
                 "source export requires a Linux amd64 Docker API1.53 host",
             ));
         }
+        let engine = bounded(docker.info()).await?.id.ok_or_else(unavailable)?;
+        let coordinator = Coordinator::connect(&store, engine).await?;
         Ok(Self {
             docker,
             store,
             blobs,
+            coordinator,
         })
     }
     async fn lookup(&self, key: &str) -> Result<Option<ContainerInspectResponse>, ApiError> {
@@ -249,6 +263,13 @@ impl SourceExporter {
     ) -> Result<(String, serde_json::Value), ApiError> {
         let actual = self.lookup(&name(job)).await?.ok_or_else(unavailable)?;
         let id = owned(&actual, job, request)?;
+        if state(job)?
+            .container_id
+            .as_deref()
+            .is_some_and(|expected| expected != id)
+        {
+            return Err(conflict());
+        }
         let observed = json!({"container_id":id,"image_id":actual.image,"name":actual.name,"state":actual.state,
             "restart_count":actual.restart_count,"mounts":actual.mounts,"readonly_rootfs":actual.host_config.as_ref().and_then(|h|h.readonly_rootfs),
             "network_mode":actual.host_config.as_ref().and_then(|h|h.network_mode.as_deref())});
@@ -315,11 +336,13 @@ impl SourceExporter {
             .into(),
             archive: value.archive.clone(),
             source_observation: value.source_observation.clone(),
+            recovery_observation: value.recovery_observation.clone(),
             error: value.error.clone(),
         }
     }
     pub async fn export(&self, request: ExportRequest) -> Result<ExportReport, ApiError> {
         request.validate()?;
+        let lease = self.coordinator.acquire(request.id)?;
         let initial = State {
             format: 1,
             phase: Phase::Reserved,
@@ -327,6 +350,9 @@ impl SourceExporter {
             archive: None,
             source_observation: None,
             error: None,
+            coordination: Some(lease.stamp.clone()),
+            recovery_observation: None,
+            producer: Some(Producer::current()?),
         };
         let immutable = json!({"format":1,"source_image":request.source_image,"storage_binding":self.blobs.binding()});
         let mut job = self
@@ -339,6 +365,13 @@ impl SourceExporter {
             )
             .await?;
         let mut value = state(&job)?;
+        lease.check(
+            value.coordination.as_ref(),
+            matches!(
+                value.phase,
+                Phase::Ready | Phase::Collected | Phase::FailedCollected
+            ),
+        )?;
         if value.phase == Phase::Ready {
             self.blobs
                 .download_large(
@@ -354,6 +387,7 @@ impl SourceExporter {
         if value.phase != Phase::Reserved {
             return Err(unavailable());
         }
+        value.producer = Some(Producer::current()?);
         let admission=async {
             let image = bounded(self.docker.inspect_image(&request.source_image)).await?;
             if image.id.as_deref() != Some(&request.source_image) || image.os.as_deref() != Some("linux")
@@ -406,29 +440,7 @@ impl SourceExporter {
             value.container_id = Some(created.id);
             value.phase = Phase::Observed;
             save(&self.store, &mut job, &value).await?;
-            let (id, observed) = self.observe(&job, &request).await?;
-            value.source_observation = Some(observed);
-            let (sha, size) = self.hash_export(&id).await?;
-            value.source_observation = Some(self.observe(&job, &request).await?.1);
-            value.archive = Some(self.blobs.large_reference(job.id, sha, size)?);
-            value.phase = Phase::UploadDispatched;
-            save(&self.store, &mut job, &value).await?;
-            let body = Box::pin(self.docker.export_container(&id));
-            let reader =
-                StreamReader::new(body.map(|value| {
-                    value.map_err(|_| io::Error::other("source export stream failed"))
-                }));
-            self.blobs
-                .put_large(value.archive.as_ref().ok_or_else(conflict)?, reader)
-                .await?;
-            value.source_observation = Some(self.observe(&job, &request).await?.1);
-            value.phase = Phase::ArchiveStored;
-            save(&self.store, &mut job, &value).await?;
-            value.phase = Phase::Removing;
-            save(&self.store, &mut job, &value).await?;
-            self.remove(&job, &request).await?;
-            value.phase = Phase::Ready;
-            save(&self.store, &mut job, &value).await?;
+            self.finish_archive(&mut job, &mut value, &request).await?;
             Ok::<_, ApiError>(())
         }
         .await;
@@ -462,8 +474,16 @@ impl SourceExporter {
     /// claim an in-flight/uncertain upload. A retried collector only deletes
     /// the same fenced immutable generation and cannot overwrite newer state.
     pub async fn collect(&self, id: Uuid) -> Result<ExportReport, ApiError> {
+        let lease = self.coordinator.acquire(id)?;
         let mut job = self.store.image_job(id).await?;
         let mut value = state(&job)?;
+        lease.check(
+            value.coordination.as_ref(),
+            matches!(
+                value.phase,
+                Phase::Ready | Phase::Collected | Phase::FailedCollected
+            ),
+        )?;
         if job.request.get("storage_binding").and_then(|v| v.as_str()) != Some(self.blobs.binding())
         {
             return Err(conflict());
@@ -473,6 +493,14 @@ impl SourceExporter {
         }
         if !matches!(value.phase, Phase::Ready | Phase::Collecting) {
             return Err(unavailable());
+        }
+        if value.phase == Phase::Collecting {
+            crate::coordination::recovery_storage(&self.blobs)?;
+            value
+                .producer
+                .as_ref()
+                .ok_or_else(unavailable)?
+                .require_gone()?;
         }
         let source = job
             .request
@@ -485,14 +513,202 @@ impl SourceExporter {
             source_image: source.into(),
         };
         request.validate()?;
-        self.remove(&job, &request).await?;
+        value.coordination = Some(lease.stamp.clone());
+        value.producer = Some(Producer::current()?);
         value.phase = Phase::Collecting;
         save(&self.store, &mut job, &value).await?;
+        self.remove(&job, &request).await?;
         self.blobs
             .collect_large(value.archive.as_ref().ok_or_else(conflict)?)
             .await?;
         value.phase = Phase::Collected;
+        value.error = None;
         save(&self.store, &mut job, &value).await?;
+        Ok(Self::report(&job, &value))
+    }
+
+    async fn finish_archive(
+        &self,
+        job: &mut ImageJob,
+        value: &mut State,
+        request: &ExportRequest,
+    ) -> Result<(), ApiError> {
+        if matches!(value.phase, Phase::Observed | Phase::UploadDispatched) {
+            let committed = if let Some(reference) = &value.archive {
+                self.blobs
+                    .download_large(reference, tokio::io::sink())
+                    .await
+                    .is_ok()
+            } else {
+                false
+            };
+            if !committed {
+                let (id, observed) = self.observe(job, request).await?;
+                let (sha, size) = self.hash_export(&id).await?;
+                if let Some(reference) = &value.archive {
+                    if reference.sha256 != sha || reference.size_bytes != size {
+                        return Err(conflict());
+                    }
+                } else {
+                    value.archive = Some(self.blobs.large_reference(job.id, sha, size)?);
+                }
+                value.source_observation = Some(observed);
+                value.phase = Phase::UploadDispatched;
+                save(&self.store, job, value).await?;
+                let body = Box::pin(self.docker.export_container(&id));
+                let reader = StreamReader::new(body.map(|value| {
+                    value.map_err(|_| io::Error::other("source export stream failed"))
+                }));
+                // Every object is create-only with exact readback. This resumes
+                // the same journaled reference; it never allocates another one.
+                self.blobs
+                    .put_large(value.archive.as_ref().ok_or_else(conflict)?, reader)
+                    .await?;
+                value.source_observation = Some(self.observe(job, request).await?.1);
+            }
+            value.phase = Phase::ArchiveStored;
+            save(&self.store, job, value).await?;
+        }
+        self.blobs
+            .download_large(
+                value.archive.as_ref().ok_or_else(conflict)?,
+                tokio::io::sink(),
+            )
+            .await?;
+        value.phase = Phase::Removing;
+        save(&self.store, job, value).await?;
+        self.remove(job, request).await?;
+        self.blobs
+            .download_large(
+                value.archive.as_ref().ok_or_else(conflict)?,
+                tokio::io::sink(),
+            )
+            .await?;
+        value.error = None;
+        value.phase = Phase::Ready;
+        if let Some(observation) = &mut value.recovery_observation {
+            observation["outcome"] = json!("ready");
+        }
+        save(&self.store, job, value).await
+    }
+
+    /// Reconcile the same local generation under an actual kernel writer lock.
+    /// A missing unacknowledged create is still Unknown; no create is replayed.
+    pub async fn reconcile(&self, id: Uuid) -> Result<ExportReport, ApiError> {
+        let lease = self.coordinator.acquire(id)?;
+        let mut job = self.store.image_job(id).await?;
+        let mut value = state(&job)?;
+        lease.check(
+            value.coordination.as_ref(),
+            matches!(
+                value.phase,
+                Phase::Ready | Phase::Collected | Phase::FailedCollected
+            ),
+        )?;
+        if job.request.get("storage_binding").and_then(|v| v.as_str()) != Some(self.blobs.binding())
+        {
+            return Err(conflict());
+        }
+        let request = ExportRequest {
+            id: job.id,
+            generation: job.generation,
+            source_image: job
+                .request
+                .get("source_image")
+                .and_then(|v| v.as_str())
+                .ok_or_else(conflict)?
+                .into(),
+        };
+        request.validate()?;
+        if matches!(value.phase, Phase::Collected | Phase::FailedCollected) {
+            return Ok(Self::report(&job, &value));
+        }
+        if value.phase == Phase::Ready {
+            if self
+                .lookup(value.container_id.as_deref().ok_or_else(conflict)?)
+                .await?
+                .is_some()
+                || self.lookup(&name(&job)).await?.is_some()
+            {
+                return Err(unavailable());
+            }
+            self.blobs
+                .download_large(
+                    value.archive.as_ref().ok_or_else(conflict)?,
+                    tokio::io::sink(),
+                )
+                .await?;
+            return Ok(Self::report(&job, &value));
+        }
+        crate::coordination::recovery_storage(&self.blobs)?;
+        value
+            .producer
+            .as_ref()
+            .ok_or_else(unavailable)?
+            .require_gone()?;
+        value.producer = Some(Producer::current()?);
+        if value.recovery_observation.is_none() {
+            value.recovery_observation = Some(
+                json!({"from_phase":value.phase,"from_revision":job.revision,
+                "original_error":value.error,"producer_fence":lease.stamp,"outcome":"unconfirmed"}),
+            );
+        }
+        // Every recovery attempt records its own process before any mutation,
+        // including a retry of a previously interrupted reconciler.
+        save(&self.store, &mut job, &value).await?;
+        let operation = async {
+            if value.phase == Phase::Reserved {
+                if self.lookup(&name(&job)).await?.is_some() || value.archive.is_some() {
+                    return Err(unavailable());
+                }
+                value.error = Some(value.error.clone().unwrap_or_else(|| {
+                    ApiError::new(
+                        ErrorCode::BackendUnavailable,
+                        "source producer interrupted before provider dispatch",
+                    )
+                }));
+                value.phase = Phase::FailedCollected;
+                value.recovery_observation.as_mut().ok_or_else(conflict)?["outcome"] =
+                    json!("aborted_before_dispatch");
+                return save(&self.store, &mut job, &value).await;
+            }
+            if value.phase == Phase::CreateDispatched {
+                let actual = self.lookup(&name(&job)).await?.ok_or_else(unavailable)?;
+                value.container_id = Some(owned(&actual, &job, &request)?);
+                value.phase = Phase::Observed;
+                save(&self.store, &mut job, &value).await?;
+            }
+            if value.phase == Phase::Collecting {
+                self.remove(&job, &request).await?;
+                self.blobs
+                    .collect_large(value.archive.as_ref().ok_or_else(conflict)?)
+                    .await?;
+                value.phase = Phase::Collected;
+                value.error = None;
+                value.recovery_observation.as_mut().ok_or_else(conflict)?["outcome"] =
+                    json!("collected");
+                return save(&self.store, &mut job, &value).await;
+            }
+            if !matches!(
+                value.phase,
+                Phase::Observed | Phase::UploadDispatched | Phase::ArchiveStored | Phase::Removing
+            ) {
+                return Err(unavailable());
+            }
+            self.finish_archive(&mut job, &mut value, &request).await
+        }
+        .await;
+        if let Err(error) = operation {
+            if value.phase == Phase::Ready {
+                value.phase = Phase::Removing;
+            }
+            if value.phase == Phase::Collected {
+                value.phase = Phase::Collecting;
+            }
+            value.recovery_observation.as_mut().ok_or_else(conflict)?["last_error"] = json!(error);
+            value.error = Some(error);
+            save(&self.store, &mut job, &value).await?;
+        }
         Ok(Self::report(&job, &value))
     }
 }

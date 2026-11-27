@@ -63,7 +63,7 @@ class Contract(SourceContract):
     def container(self, *, viewer=False, entrypoint=None):
         args = super().container(viewer=viewer, entrypoint=entrypoint)
         if not viewer:
-            args += ['--pid', 'host', '--cgroupns', 'host', '--mount',
+            args += ['--cgroupns', 'host', '--mount',
                      'type=bind,src=/sys/fs/cgroup,dst=/sys/fs/cgroup,readonly']
         return args
 

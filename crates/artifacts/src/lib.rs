@@ -38,6 +38,7 @@ pub struct BlobStore {
     installation: Uuid,
     binding: String,
     probe_scope: bool,
+    local_root: Option<std::path::PathBuf>,
 }
 
 #[derive(Debug)]
@@ -114,6 +115,7 @@ impl BlobStore {
             Arc::new(backend),
             installation,
             format!("{:x}", digest.finalize()),
+            Some(canonical),
         )
     }
 
@@ -184,6 +186,7 @@ impl BlobStore {
             Arc::new(builder.build().map_err(backend)?),
             installation,
             binding,
+            None,
         )
     }
 
@@ -191,6 +194,7 @@ impl BlobStore {
         backend: Arc<dyn ObjectStore>,
         installation: Uuid,
         binding: String,
+        local_root: Option<std::path::PathBuf>,
     ) -> Result<Self, ApiError> {
         if installation.is_nil() {
             return Err(invalid("installation UUID must not be nil"));
@@ -200,6 +204,7 @@ impl BlobStore {
             installation,
             binding,
             probe_scope: false,
+            local_root,
         })
     }
     /// Namespace identity excludes credentials, so key rotation does not move data.
@@ -208,6 +213,11 @@ impl BlobStore {
     }
     pub fn installation_id(&self) -> Uuid {
         self.installation
+    }
+    /// Trusted host metadata for fencing local writers. Remote requests can
+    /// outlive their initiating process and require a provider-specific fence.
+    pub fn local_root(&self) -> Option<&FsPath> {
+        self.local_root.as_deref()
     }
     fn path(&self, id: Uuid) -> Result<Path, ApiError> {
         if id.is_nil() {

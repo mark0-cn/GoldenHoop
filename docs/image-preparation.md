@@ -445,3 +445,68 @@ configuration. Public image placement, automated interrupted-state recovery,
 snapshots/restore/templates, combined M4 and M5-M6 remain unaccepted. The new
 private gate's runtime-capability flag remains false; existing basic public
 Firecracker acceptance is recorded separately.
+
+## Local producer fences and explicit recovery
+
+The private host CLI provides `reconcile-export --id UUID` and
+`reconcile-image --id UUID`. These reconcile the original durable generation;
+they do not allocate a replacement job. Every exporter, preparer and collector
+holds a nonblocking kernel lock on a permanent, root-owned inode beside its
+database. The recorded fence binds the installation, database and lock inodes,
+Docker engine and host boot. Copying a database/lock is not a recovery or
+placement migration. The zero-byte lock files are retained coordination
+metadata and must not be independently unlinked while an installation is live.
+
+A pending recovery also requires the previous producer's PID and start time to
+be absent/different in the same PID namespace. A zombie is still present. This
+separate process observation protects against a cancelled async operation whose
+blocking filesystem work outlives its dropped future. Each recovery attempt
+records its own producer before further writes. Trusted containerized host
+controllers use the host PID namespace; source and converter containers retain
+their isolated namespaces and never receive a daemon socket or host paths.
+
+Source recovery can adopt a positively observed, owned, never-started carrier.
+An absent unacknowledged create remains Unknown: the original request might
+still take effect, so the reconciler never reissues that create. An interrupted
+source upload reuses its original large-object reference and confirms every
+existing immutable object by size/hash. A complete archive and absence of both
+the recorded carrier ID and its name are required before Ready.
+
+Disk recovery accepts only acknowledged `output_verified` and subsequent disk,
+provider/source collection phases. It rechecks committed disk content or reads
+the same exited converter's validated manifest/disk, then resumes the same
+reference. It does not restart the converter or resend its private permit.
+Provider removal still requires the recorded ID/name absence and actual old
+PID/cgroup collection. Full disk readback and source-archive collection precede
+Ready. An interrupted stable collector deletes only its original immutable
+generation; its consumers must already be fenced by the maintenance caller.
+Recovery reports preserve the original error and last recovery error separately
+from a subsequently confirmed outcome. Historical raw reports are not rewritten.
+
+This process-exit fence is accepted only for local kernel filesystems (ext*,
+XFS, Btrfs, tmpfs and overlayfs). Pending recovery refuses S3 and path-style
+NFS/CIFS/FUSE storage because a remote write can outlive its local process.
+Earlier converter source/input/create/start/authorization phases, host-boot or
+provider migration, legacy pending records without a recorded fence and remote
+writer settlement remain unaccepted. Existing stable legacy records can use
+their acknowledged maintenance path. These private commands do not publish
+image, snapshot or template capabilities, or complete M4 acceptance.
+
+The [local acceptance summary](evidence/m4-image-recovery-acceptance-summary.json)
+verifies every current source binding: Windows 281/Linux-root 345 tests (315
+inputs each), seven source-baseline groups, nine preparation-baseline groups
+and eight actual runc-development crash groups (319 inputs). The final crash
+fixture confirms already-published chunk content/inode retention, independent
+whole-object readback, absence of replayed creates/starts, actual producer
+SIGKILL and scoped collection. Source/converter provider carriers are excluded
+from the fixture's supervisor teardown so its absence checks cannot be supplied
+by that teardown. All fresh fixture resources and the two owned build tags are
+[independently confirmed absent](evidence/m4-image-recovery-owned-fixture-collection.json).
+Useful build caches and unrelated resources are retained.
+
+The [upstream review](evidence/m4-image-recovery-upstream-review.json) records
+the pinned Moby implementation, Linux/Rust process-lock semantics and SQLite
+read-only WAL conditions. Initial fork-fixture and read-only-observer failures
+remain unchanged in their raw records; separate maintenance collects the exact
+retained observer-failure fixture. The new `image-recovery.yml` gate still needs
+actual default-runsc acceptance on the published source.

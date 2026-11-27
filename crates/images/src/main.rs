@@ -27,6 +27,11 @@ enum Action {
         #[arg(long)]
         id: uuid::Uuid,
     },
+    /// Reconcile an interrupted source generation after its producer has exited.
+    ReconcileExport {
+        #[arg(long)]
+        id: uuid::Uuid,
+    },
     /// Prepare a private VM disk with a trusted pinned converter (default runsc).
     Prepare {
         #[arg(long)]
@@ -46,6 +51,11 @@ enum Action {
     },
     /// Collect a stable private disk after fencing all of its consumers.
     CollectImage {
+        #[arg(long)]
+        id: uuid::Uuid,
+    },
+    /// Reconcile acknowledged private converter output after producer exit.
+    ReconcileImage {
         #[arg(long)]
         id: uuid::Uuid,
     },
@@ -136,6 +146,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     let passed = result.error.is_none() && result.provider_cleanup == "complete";
                     (serde_json::to_value(result)?, passed)
                 }
+                Action::ReconcileExport { id } => {
+                    let result = SourceExporter::connect(store.clone(), blobs.clone())
+                        .await?
+                        .reconcile(id)
+                        .await?;
+                    let passed = result.error.is_none() && result.provider_cleanup == "complete";
+                    (serde_json::to_value(result)?, passed)
+                }
                 Action::Prepare {
                     id,
                     generation,
@@ -169,6 +187,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     let result = ImagePreparer::connect(store.clone(), blobs.clone(), false)
                         .await?
                         .collect(id)
+                        .await?;
+                    let passed = result.error.is_none() && result.provider_cleanup == "complete";
+                    (serde_json::to_value(result)?, passed)
+                }
+                Action::ReconcileImage { id } => {
+                    let result = ImagePreparer::connect(store.clone(), blobs.clone(), false)
+                        .await?
+                        .reconcile(id)
                         .await?;
                     let passed = result.error.is_none() && result.provider_cleanup == "complete";
                     (serde_json::to_value(result)?, passed)

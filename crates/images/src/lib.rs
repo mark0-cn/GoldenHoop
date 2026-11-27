@@ -1,6 +1,8 @@
 //! Trusted image preparation orchestration. A source export is not a prepared
 //! VM disk and never publishes runtime, snapshot or template capabilities.
 #[cfg(target_os = "linux")]
+mod coordination;
+#[cfg(target_os = "linux")]
 pub mod export;
 #[cfg(target_os = "linux")]
 pub mod host;
@@ -51,6 +53,7 @@ pub struct ExportReport {
     pub provider_cleanup: String,
     pub archive: Option<LargeBlobRef>,
     pub source_observation: Option<serde_json::Value>,
+    pub recovery_observation: Option<serde_json::Value>,
     pub error: Option<ApiError>,
 }
 
@@ -95,6 +98,7 @@ pub struct ImagePrepareReport {
     pub disk: Option<LargeBlobRef>,
     pub host_observation: Option<serde_json::Value>,
     pub converter_observation: Option<serde_json::Value>,
+    pub recovery_observation: Option<serde_json::Value>,
     pub error: Option<ApiError>,
 }
 

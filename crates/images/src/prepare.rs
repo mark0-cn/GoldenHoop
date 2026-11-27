@@ -3,6 +3,7 @@
 //! are private artifacts; runtime/snapshot/template capabilities are separate.
 use crate::{
     ExportRequest, ImagePrepareReport, ImagePrepareRequest,
+    coordination::{Coordinator, Producer, Stamp},
     export::SourceExporter,
     hex_id,
     host::{HostGuard, HostObservation},
@@ -76,6 +77,12 @@ struct State {
     manifest: Option<PreparedImage>,
     disk: Option<LargeBlobRef>,
     error: Option<ApiError>,
+    #[serde(default)]
+    coordination: Option<Stamp>,
+    #[serde(default)]
+    recovery_observation: Option<Value>,
+    #[serde(default)]
+    producer: Option<Producer>,
 }
 fn conflict() -> ApiError {
     ApiError::new(
@@ -281,7 +288,7 @@ fn state(
     ) && (value.host.is_none()
         || value.disk.is_none()
         || value.manifest.is_none()
-        || value.error.is_some())
+        || (value.error.is_some() && value.phase != Phase::Collecting))
     {
         return Err(conflict());
     }
@@ -295,6 +302,7 @@ pub struct ImagePreparer {
     blobs: BlobStore,
     sources: SourceExporter,
     allow_runc_development: bool,
+    coordinator: Coordinator,
 }
 impl ImagePreparer {
     pub async fn connect(
@@ -303,6 +311,7 @@ impl ImagePreparer {
         allow_runc_development: bool,
     ) -> Result<Self, ApiError> {
         let sources = SourceExporter::connect(store.clone(), blobs.clone()).await?;
+        let coordinator = sources.coordinator.clone();
         let docker = bounded(
             Docker::connect_with_socket_defaults()
                 .map_err(|_| unknown())?
@@ -315,6 +324,7 @@ impl ImagePreparer {
             blobs,
             sources,
             allow_runc_development,
+            coordinator,
         })
     }
     async fn lookup(&self, key: &str) -> Result<Option<ContainerInspectResponse>, ApiError> {
@@ -583,6 +593,18 @@ impl ImagePreparer {
         if self.lookup(&name).await?.is_some() {
             return Err(unknown());
         }
+        let recorded: State =
+            serde_json::from_value(job.payload.clone()).map_err(|_| conflict())?;
+        let id = if builder {
+            recorded.builder_id
+        } else {
+            recorded.seeder_id
+        };
+        if let Some(id) = id
+            && self.lookup(&id).await?.is_some()
+        {
+            return Err(unknown());
+        }
         Ok(())
     }
     async fn providers_collected(
@@ -670,12 +692,21 @@ impl ImagePreparer {
                 .as_ref()
                 .and_then(|v| serde_json::to_value(v).ok()),
             converter_observation: value.converter_observation.clone(),
+            recovery_observation: value.recovery_observation.clone(),
             error: value.error.clone(),
         }
     }
     async fn absent(&self, job: &ImageJob, value: &State) -> Result<(), ApiError> {
         for part in ["builder", "seeder"] {
             if self.lookup(&resource(job, part)).await?.is_some() {
+                return Err(unknown());
+            }
+        }
+        for id in [value.builder_id.as_deref(), value.seeder_id.as_deref()]
+            .into_iter()
+            .flatten()
+        {
+            if self.lookup(id).await?.is_some() {
                 return Err(unknown());
             }
         }
@@ -823,6 +854,7 @@ impl ImagePreparer {
         request: ImagePrepareRequest,
     ) -> Result<ImagePrepareReport, ApiError> {
         request.validate()?;
+        let lease = self.coordinator.acquire(request.id)?;
         let initial = State {
             format: 1,
             phase: Phase::Reserved,
@@ -842,6 +874,9 @@ impl ImagePreparer {
             manifest: None,
             disk: None,
             error: None,
+            coordination: Some(lease.stamp.clone()),
+            recovery_observation: None,
+            producer: Some(Producer::current()?),
         };
         let immutable = json!({"format":1,"role":ROLE,"request":request,"storage_binding":self.blobs.binding()});
         let mut job = self
@@ -854,6 +889,13 @@ impl ImagePreparer {
             )
             .await?;
         let mut value = state(&job, &request, &self.blobs)?;
+        lease.check(
+            value.coordination.as_ref(),
+            matches!(
+                value.phase,
+                Phase::Ready | Phase::Collected | Phase::FailedCollected
+            ),
+        )?;
         if value.phase == Phase::Ready {
             self.absent(&job, &value).await?;
             self.blobs
@@ -867,6 +909,7 @@ impl ImagePreparer {
         if value.phase != Phase::Reserved {
             return Err(unknown());
         }
+        value.producer = Some(Producer::current()?);
         if let Err(error) = self.admission(&request).await {
             value.error = Some(error);
             phase(&self.store, &mut job, &mut value, Phase::FailedCollected).await?;
@@ -1251,10 +1294,10 @@ impl ImagePreparer {
         }
         Ok(Self::report(&job, &value))
     }
-    /// Private maintenance after the original producer is fenced. Only fully
-    /// acknowledged pre-input phases can use this path: it never claims an
-    /// uncertain upload/start/create has settled merely because names are gone.
-    pub async fn abort_before_input(&self, id: Uuid) -> Result<ImagePrepareReport, ApiError> {
+    /// Recover acknowledged converter output and its exact immutable storage
+    /// reference. Earlier uncertain create/start/permit phases are not replayed.
+    pub async fn reconcile(&self, id: Uuid) -> Result<ImagePrepareReport, ApiError> {
+        let lease = self.coordinator.acquire(id)?;
         let mut job = self.store.image_job(id).await?;
         let request: ImagePrepareRequest =
             serde_json::from_value(job.request.get("request").cloned().ok_or_else(conflict)?)
@@ -1267,9 +1310,220 @@ impl ImagePreparer {
             return Err(conflict());
         }
         let mut value = state(&job, &request, &self.blobs)?;
+        lease.check(
+            value.coordination.as_ref(),
+            matches!(
+                value.phase,
+                Phase::Ready | Phase::Collected | Phase::FailedCollected
+            ),
+        )?;
+        if matches!(value.phase, Phase::Collected | Phase::FailedCollected) {
+            return Ok(Self::report(&job, &value));
+        }
+        if value.phase == Phase::Ready {
+            self.absent(&job, &value).await?;
+            self.blobs
+                .download_large(value.disk.as_ref().ok_or_else(conflict)?, tokio::io::sink())
+                .await?;
+            return Ok(Self::report(&job, &value));
+        }
+        if !matches!(
+            value.phase,
+            Phase::OutputVerified
+                | Phase::DiskUploadDispatched
+                | Phase::DiskStored
+                | Phase::ProviderCollecting
+                | Phase::ProvidersCollected
+                | Phase::SourceCollecting
+                | Phase::Collecting
+        ) || value.host.is_none()
+            || value.manifest.is_none()
+            || value.builder_id.is_none()
+        {
+            return Err(unknown());
+        }
+        crate::coordination::recovery_storage(&self.blobs)?;
+        value
+            .producer
+            .as_ref()
+            .ok_or_else(unknown)?
+            .require_gone()?;
+        value.producer = Some(Producer::current()?);
+        if value.recovery_observation.is_none() {
+            value.recovery_observation = Some(
+                json!({"from_phase":value.phase,"from_revision":job.revision,
+                "original_error":value.error,"producer_fence":lease.stamp,"outcome":"unconfirmed"}),
+            );
+        }
+        save(&self.store, &mut job, &value).await?;
+        let operation = async {
+            if value.phase == Phase::Collecting {
+                self.absent(&job, &value).await?;
+                self.blobs
+                    .collect_large(value.disk.as_ref().ok_or_else(conflict)?)
+                    .await?;
+                value.error = None;
+                value.recovery_observation.as_mut().ok_or_else(conflict)?["outcome"] =
+                    json!("collected");
+                return phase(&self.store, &mut job, &mut value, Phase::Collected).await;
+            }
+            if matches!(
+                value.phase,
+                Phase::OutputVerified | Phase::DiskUploadDispatched
+            ) {
+                if value.disk.is_none() {
+                    if value.phase != Phase::OutputVerified {
+                        return Err(conflict());
+                    }
+                    let manifest = value.manifest.as_ref().ok_or_else(conflict)?;
+                    value.disk = Some(self.blobs.large_reference(
+                        job.id,
+                        manifest.disk.sha256.clone(),
+                        manifest.disk.size_bytes,
+                    )?);
+                }
+                phase(
+                    &self.store,
+                    &mut job,
+                    &mut value,
+                    Phase::DiskUploadDispatched,
+                )
+                .await?;
+                let reference = value.disk.as_ref().ok_or_else(conflict)?;
+                if self
+                    .blobs
+                    .download_large(reference, tokio::io::sink())
+                    .await
+                    .is_err()
+                {
+                    let actual = self.inspect_owned(&job, &request, true).await?;
+                    if actual.state.as_ref().is_none_or(|s| {
+                        s.status != Some(ContainerStateStatusEnum::EXITED)
+                            || s.running != Some(false)
+                            || s.oom_killed != Some(false)
+                            || s.exit_code != Some(0)
+                    }) {
+                        return Err(unknown());
+                    }
+                    let cid = value.builder_id.as_deref().ok_or_else(conflict)?;
+                    let output = format!("/output/{}", job.generation);
+                    let bytes = tokio::time::timeout(Duration::from_secs(30), async {
+                        FileStream::open(
+                            &self.docker,
+                            cid,
+                            &format!("{output}/manifest.json"),
+                            "manifest.json",
+                            65536,
+                        )
+                        .await?
+                        .small()
+                        .await
+                    })
+                    .await
+                    .map_err(|_| unknown())?
+                    .map_err(bad_output)?;
+                    let observed: PreparedImage =
+                        serde_json::from_slice(&bytes).map_err(bad_output)?;
+                    if serde_json::to_value(observed).map_err(|_| conflict())?
+                        != serde_json::to_value(value.manifest.as_ref().ok_or_else(conflict)?)
+                            .map_err(|_| conflict())?
+                    {
+                        return Err(conflict());
+                    }
+                    tokio::time::timeout(Duration::from_secs(900), async {
+                        let mut stream = FileStream::open(
+                            &self.docker,
+                            cid,
+                            &format!("{output}/rootfs.ext4"),
+                            "rootfs.ext4",
+                            request.disk_bytes,
+                        )
+                        .await
+                        .map_err(bad_output)?;
+                        if stream.size != request.disk_bytes {
+                            return Err(conflict());
+                        }
+                        self.blobs
+                            .put_large(reference, stream.reader.as_mut().take(stream.size))
+                            .await?;
+                        stream.finish().await.map_err(bad_output)
+                    })
+                    .await
+                    .map_err(|_| unknown())??;
+                }
+                self.blobs
+                    .download_large(reference, tokio::io::sink())
+                    .await?;
+                value.recovery_observation.as_mut().ok_or_else(conflict)?["disk_commit_readback"] =
+                    json!(reference);
+                phase(&self.store, &mut job, &mut value, Phase::DiskStored).await?;
+            }
+            self.blobs
+                .download_large(value.disk.as_ref().ok_or_else(conflict)?, tokio::io::sink())
+                .await?;
+            phase(&self.store, &mut job, &mut value, Phase::ProviderCollecting).await?;
+            self.providers_collected(&job, &request, &value).await?;
+            phase(&self.store, &mut job, &mut value, Phase::ProvidersCollected).await?;
+            phase(&self.store, &mut job, &mut value, Phase::SourceCollecting).await?;
+            let source = self.sources.collect(value.source.id).await?;
+            if source.archive_ready
+                || source.provider_cleanup != "complete"
+                || source.error.is_some()
+            {
+                return Err(unknown());
+            }
+            self.absent(&job, &value).await?;
+            self.blobs
+                .download_large(value.disk.as_ref().ok_or_else(conflict)?, tokio::io::sink())
+                .await?;
+            value.error = None;
+            value.recovery_observation.as_mut().ok_or_else(conflict)?["outcome"] = json!("ready");
+            phase(&self.store, &mut job, &mut value, Phase::Ready).await
+        }
+        .await;
+        if let Err(error) = operation {
+            if value.phase == Phase::Ready {
+                value.phase = Phase::SourceCollecting;
+            }
+            if value.phase == Phase::Collected {
+                value.phase = Phase::Collecting;
+            }
+            value.recovery_observation.as_mut().ok_or_else(conflict)?["last_error"] = json!(error);
+            value.error = Some(error);
+            save(&self.store, &mut job, &value).await?;
+        }
+        Ok(Self::report(&job, &value))
+    }
+
+    /// Private maintenance after the original producer is fenced. Only fully
+    /// acknowledged pre-input phases can use this path: it never claims an
+    /// uncertain upload/start/create has settled merely because names are gone.
+    pub async fn abort_before_input(&self, id: Uuid) -> Result<ImagePrepareReport, ApiError> {
+        let lease = self.coordinator.acquire(id)?;
+        let mut job = self.store.image_job(id).await?;
+        let request: ImagePrepareRequest =
+            serde_json::from_value(job.request.get("request").cloned().ok_or_else(conflict)?)
+                .map_err(|_| conflict())?;
+        request.validate()?;
+        if request.id != job.id
+            || request.generation != job.generation
+            || job.request.get("role").and_then(Value::as_str) != Some(ROLE)
+        {
+            return Err(conflict());
+        }
+        let mut value = state(&job, &request, &self.blobs)?;
+        lease.check(
+            value.coordination.as_ref(),
+            value.phase == Phase::FailedCollected,
+        )?;
         if value.phase == Phase::FailedCollected {
             return Ok(Self::report(&job, &value));
         }
+        value
+            .producer
+            .as_ref()
+            .ok_or_else(unknown)?
+            .require_gone()?;
         if !matches!(
             value.phase,
             Phase::SourceReady
@@ -1297,6 +1551,7 @@ impl ImagePreparer {
                 return Err(unknown());
             }
         }
+        value.producer = Some(Producer::current()?);
         phase(
             &self.store,
             &mut job,
@@ -1317,6 +1572,7 @@ impl ImagePreparer {
     /// Private maintenance only, after all consumers of this immutable disk are
     /// fenced. Uncertain producers cannot be collected by this stable path.
     pub async fn collect(&self, id: Uuid) -> Result<ImagePrepareReport, ApiError> {
+        let lease = self.coordinator.acquire(id)?;
         let mut job = self.store.image_job(id).await?;
         let request: ImagePrepareRequest =
             serde_json::from_value(job.request.get("request").cloned().ok_or_else(conflict)?)
@@ -1329,17 +1585,35 @@ impl ImagePreparer {
             return Err(conflict());
         }
         let mut value = state(&job, &request, &self.blobs)?;
+        lease.check(
+            value.coordination.as_ref(),
+            matches!(
+                value.phase,
+                Phase::Ready | Phase::Collected | Phase::FailedCollected
+            ),
+        )?;
         if matches!(value.phase, Phase::Collected | Phase::FailedCollected) {
             return Ok(Self::report(&job, &value));
         }
         if !matches!(value.phase, Phase::Ready | Phase::Collecting) {
             return Err(unknown());
         }
+        if value.phase == Phase::Collecting {
+            crate::coordination::recovery_storage(&self.blobs)?;
+            value
+                .producer
+                .as_ref()
+                .ok_or_else(unknown)?
+                .require_gone()?;
+        }
         self.absent(&job, &value).await?;
+        value.coordination = Some(lease.stamp.clone());
+        value.producer = Some(Producer::current()?);
         phase(&self.store, &mut job, &mut value, Phase::Collecting).await?;
         self.blobs
             .collect_large(value.disk.as_ref().ok_or_else(conflict)?)
             .await?;
+        value.error = None;
         phase(&self.store, &mut job, &mut value, Phase::Collected).await?;
         Ok(Self::report(&job, &value))
     }

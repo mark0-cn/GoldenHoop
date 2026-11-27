@@ -80,7 +80,7 @@ class Contract:
             args += ['--entrypoint', entrypoint or '/bin/true']
         else:
             # This is the trusted host controller, not the untrusted source.
-            args += ['--mount', 'type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock']
+            args += ['--pid', 'host', '--mount', 'type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock']
         return args
 
     def remove_container(self, cid):

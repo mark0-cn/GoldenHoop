@@ -6,6 +6,29 @@ use serde_json::Value;
 
 const LIMIT: usize = 65536;
 
+impl Store {
+    /// Private local dispatcher metadata; not a public API field. An in-memory
+    /// store cannot coordinate durable image writers across processes.
+    pub async fn image_job_database_path(&self) -> Result<std::path::PathBuf, ApiError> {
+        let rows = sqlx::query("PRAGMA database_list")
+            .fetch_all(&self.pool)
+            .await
+            .map_err(db)?;
+        for row in rows {
+            if row.try_get::<&str, _>("name").map_err(db)? == "main" {
+                let path = std::path::PathBuf::from(row.try_get::<String, _>("file").map_err(db)?);
+                if path.is_absolute() {
+                    return Ok(path);
+                }
+            }
+        }
+        Err(ApiError::new(
+            ErrorCode::Conflict,
+            "image dispatch requires a durable local database",
+        ))
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ImageJob {
@@ -178,6 +201,7 @@ mod tests {
         let path = directory.path().to_owned();
         let database = path.join("image.db");
         let store = Store::open(&database).await.unwrap();
+        assert_eq!(store.image_job_database_path().await.unwrap(), database);
         let id = Uuid::new_v4();
         let generation = Uuid::new_v4();
         let request = json!({"source":"sha256:pinned"});
@@ -226,6 +250,10 @@ mod tests {
     #[tokio::test]
     async fn bounded_records_refuse_foreign_installations_and_corrupt_immutable_input() {
         let store = Store::memory().await.unwrap();
+        assert_eq!(
+            store.image_job_database_path().await.unwrap_err().code,
+            ErrorCode::Conflict
+        );
         let id = Uuid::new_v4();
         let generation = Uuid::new_v4();
         let job = store
