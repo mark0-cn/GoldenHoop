@@ -508,5 +508,17 @@ The [upstream review](evidence/m4-image-recovery-upstream-review.json) records
 the pinned Moby implementation, Linux/Rust process-lock semantics and SQLite
 read-only WAL conditions. Initial fork-fixture and read-only-observer failures
 remain unchanged in their raw records; separate maintenance collects the exact
-retained observer-failure fixture. The new `image-recovery.yml` gate still needs
-actual default-runsc acceptance on the published source.
+retained observer-failure fixture.
+
+The [actual default-runsc recovery gate](https://github.com/mark0-cn/GoldenHoop/actions/runs/45943365621)
+now passes eight groups at implementation commit 03c54eb, with Complete
+collection and [319 immutable inputs verified](evidence/m4-image-recovery-45943365621-archive.json).
+Six actual producers/collectors are killed. A delayed original create is adopted
+only after positive observation; partial disk upload retains its reference and
+published chunk inode/content without another converter start/permit. The raw
+report SHA256 is `fc9316de0508ecf8e4a3fae10eb16d2bd8ab017e51439c0c32e9c6b24fc1eef2`.
+The workflow separately confirms all exact owned build tags absent. Windows and
+Ubuntu [CI45943309261](https://github.com/mark0-cn/GoldenHoop/actions/runs/45943309261)
+also succeed at that commit. This source-unchanged evidence update does not
+complete combined M4 or its remaining recovery, snapshot, restore, template and
+production-placement requirements.
