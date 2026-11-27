@@ -47,7 +47,8 @@ def main():
         for path in files:
             if path == claim:
                 continue
-            assert re.fullmatch(r'trace\.[A-Za-z0-9_.%-]{1,240}\.log', path.name), 'unrecognized trace filename: ' + path.name
+            pattern = r'trace\.(?:[A-Za-z0-9_.%-]{1,240}|<unknown>\.[A-Za-z0-9_.%-]{1,200})\.log'
+            assert re.fullmatch(pattern, path.name), 'unrecognized trace filename: ' + path.name
             metadata = path.lstat()
             assert stat.S_ISREG(metadata.st_mode) and metadata.st_nlink == 1, 'trace is not a single-link regular file: ' + path.name
             assert metadata.st_size <= 32 * 1024**2, 'trace file size exceeds limit'

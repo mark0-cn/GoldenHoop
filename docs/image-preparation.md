@@ -5,8 +5,11 @@ OCI rootfs export into an offline ext4 disk. It overlays the administrator's
 pinned static agent/init assets and writes a versioned content manifest. This
 component alone does not prepare a production allocation or establish a usable
 Firecracker profile. The trusted Rust host service now connects immutable source
-acquisition, isolated conversion and verified private disk storage. Actual
-production gVisor and produced-disk KVM acceptance remain separate required gates.
+acquisition, isolated conversion and verified private disk storage. Default-runsc
+conversion and actual jailed KVM consumption of its disk now have
+[accepted private-path evidence](evidence/m4-image-prepared-guest-acceptance-summary.json)
+at 0060f4b. Interrupted allocation recovery, public image placement and complete
+M4 acceptance remain required.
 
 ## Conversion boundary
 
@@ -38,8 +41,8 @@ private authorization decision after the host verifies actual enforcement.
 Virtual guest accounting cannot establish that boundary. The runsc
 [cgroup v2 implementation](https://github.com/google/gvisor/blob/cc5b7474bf134432a4f41a47d37022fc4f05ede6/runsc/cgroup/cgroup_v2.go)
 and the [Linux cgroup contract](https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html)
-guide the independent host observations below. Actual gVisor acceptance remains
-required; compatibility is established by executing the real converter.
+guide the independent host observations below. The accepted gates execute the
+real runsc converter and record host enforcement independently of guest accounting.
 
 ## Input and publication rules
 
@@ -400,3 +403,45 @@ foreign source refusal, unfenced-writer retention and readable diagnostics with
 refused nonprivate-directory collection. It establishes collector behavior,
 not actual runsc conversion. New real runsc and produced-disk KVM gates remain
 required.
+
+## Actual private pipeline and produced-disk KVM accepted
+
+The [acceptance summary](evidence/m4-image-prepared-guest-acceptance-summary.json)
+binds both actual gates to 0060f4b. The
+[runsc primary report](evidence/m4-image-prepare-45933834830-image-prepare-runsc-image-prepare-runsc.json)
+passes seven groups with Complete conversion-resource collection and all 317
+inputs verified. Its raw SHA256 is
+`aef87e20b0f3b6eac524f483a6814d8a60fd0fe16f18665241bbd2283b18bd4c`.
+The workflow conclusion remains Failed because its separate diagnostic collector
+rejects legitimate `trace.<unknown>...features.log` and delete-log filenames.
+That trace root is observed as UID0/mode0700, its source claim is UID0/single-link,
+and all 14 entries have UID0; its historical collection remains Unknown.
+
+The independent [prepared-disk KVM gate](evidence/m4-image-prepared-guest-45933943754-archive.json)
+succeeds in all 14 groups with Complete collection and 321 verified inputs, raw
+SHA256 `d7348cceb5c4457a467388d8f8e8587bc751f038c55ed0bf6def1f72d47da089`.
+It actually converts a 256-MiB source under default runsc, verifies stored chunks
+and assets, deletes the source image, reopens the stable Ready job, and boots
+that exact verified disk with the Rust jailed KVM bootstrap. A corrupt disk
+digest refuses before launch. The guest completes its actual nonce file/UID1000
+command and isolation checks; the VMM is reaped and its jail, cgroup, temporary
+fixture and all conversion resources are absent. Guest writes leave the
+immutable input copies unchanged. No host extraction or replacement mkfs
+substitutes for the converter's output.
+
+The filename rule now explicitly accepts the observed `<unknown>` identity
+while preserving path/type/owner/source/fencing guards. A
+[six-group Linux replay](evidence/m4-runsc-trace-collector-runtime-name-replay.json)
+uses synthetic bytes with every captured actual filename, passes bounded
+readback and exact fixture collection, and verifies foreign/unfenced/nonprivate
+refusal. Its three source bindings include the unchanged original diagnostic
+record. This is parser/collector regression evidence, not a new runsc execution
+or a correction of the old Unknown cleanup. Fresh complete trace collection
+belongs to the later combined-stage gate; passed image/KVM components do not
+wait for another full conversion solely to retest filename parsing.
+
+This accepts private image creation and verified guest consumption on the tested
+configuration. Public image placement, automated interrupted-state recovery,
+snapshots/restore/templates, combined M4 and M5-M6 remain unaccepted. The new
+private gate's runtime-capability flag remains false; existing basic public
+Firecracker acceptance is recorded separately.

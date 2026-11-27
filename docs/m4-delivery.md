@@ -3,7 +3,10 @@
 M4 remains incomplete. Actual KVM prerequisites, jailed guest boot, private
 native lifecycle and the shared basic API/Python SDK/Rust CLI contract now have
 accepted exact-source hardware evidence. The opt-in backend publishes only its
-actually probed basic capabilities. Production image orchestration, disk/memory
+actually probed basic capabilities. Default-runsc private image creation and
+actual KVM consumption of the verified produced disk now have
+[exact-source acceptance](evidence/m4-image-prepared-guest-acceptance-summary.json).
+Interrupted image allocation recovery, public image placement, disk/memory
 snapshots, templates and combined stage still require acceptance. M0-M3 evidence
 and the full M4-M6 objective remain in the unchanged [roadmap](roadmap.md).
 
