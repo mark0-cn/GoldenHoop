@@ -16,7 +16,7 @@ The full target includes local containers, Firecracker microVMs, and Kubernetes;
 
 Runtime support is declared per profile and checked against the host. Missing isolation must fail closed. A successful unit test is not evidence of a working isolation boundary.
 
-The opt-in [basic local Firecracker profile](docs/m4-delivery.md) passes actual jailed bootstrap and the shared API/Python SDK/Rust CLI contract, including worker SIGKILL recovery and independent expiry. Only actually probed basic commands, files, pause, no-NIC isolation and retained artifacts are published. [Immutable source acquisition and offline ext4 conversion](docs/image-preparation.md) have verified component results. Their production integration, snapshots/restores/templates, hard-manager recovery and combined M4 acceptance remain required.
+The opt-in [basic local Firecracker profile](docs/m4-delivery.md) passes actual jailed bootstrap and the shared API/Python SDK/Rust CLI contract, including worker SIGKILL recovery and independent expiry. Only actually probed basic commands, files, pause, no-NIC isolation and retained artifacts are published. [The trusted image parent](docs/image-preparation.md) connects immutable source acquisition, host resource checks, isolated offline conversion and private disk storage. Production gVisor/produced-disk KVM gates, full allocation recovery, snapshots/restores/templates, hard-manager recovery and combined M4 acceptance remain required.
 
 ## Development
 

@@ -4,9 +4,9 @@ The Rust `goldenhoop-image-builder` component converts an untrusted, uncompresse
 OCI rootfs export into an offline ext4 disk. It overlays the administrator's
 pinned static agent/init assets and writes a versioned content manifest. This
 component alone does not prepare a production allocation or establish a usable
-Firecracker profile. The source-acquisition service below now owns immutable
-exports and their storage. Host orchestration of the isolated converter and
-actual use of its produced disk on KVM remain separate required work.
+Firecracker profile. The trusted Rust host service now connects immutable source
+acquisition, isolated conversion and verified private disk storage. Actual
+production gVisor and produced-disk KVM acceptance remain separate required gates.
 
 ## Conversion boundary
 
@@ -32,12 +32,14 @@ runtime is explicitly `runsc`; local runc testing requires both a named runtime
 and `--allow-runc-development`. There is no runtime fallback. A runc component
 test does not accept production gVisor conversion.
 
-The current converter checks the visible cgroup v2 files and refuses missing or
-unbounded values. gVisor's [compatibility documentation](https://gvisor.dev/docs/user_guide/compatibility/)
-distinguishes virtual in-sandbox cgroups from limits enforced by the host kernel.
-The production parent must verify the actual host resource boundary; virtual
-guest accounting cannot substitute for it. That parent handoff and actual
-gVisor acceptance remain unimplemented/unverified in this component increment.
+Direct `prepare` checks visible cgroup v2 files and refuses missing or unbounded
+values, including swap. The host-driven `await-prepare` path instead requires a
+private authorization decision after the host verifies actual enforcement.
+Virtual guest accounting cannot establish that boundary. The runsc
+[cgroup v2 implementation](https://github.com/google/gvisor/blob/cc5b7474bf134432a4f41a47d37022fc4f05ede6/runsc/cgroup/cgroup_v2.go)
+and the [Linux cgroup contract](https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html)
+guide the independent host observations below. Actual gVisor acceptance remains
+required; compatibility is established by executing the real converter.
 
 ## Input and publication rules
 
@@ -151,10 +153,97 @@ collection. The corrected fixture explicitly closes its readers and uses
 copied database, validates exact job inventory and records cleanup failure
 locations. Production database locking/sync rules are unchanged.
 
-These results accept source acquisition and the earlier offline converter as
-separate components. The production parent must still feed owned input/output
-volumes to the pinned converter, verify real host cgroup enforcement before
-permitting extraction, recover its owned allocations, verify/publish the produced
-disk and demonstrate actual gVisor/KVM use. Source S3 interoperability is not
-accepted by the local acquisition fixture. No public image/snapshot/template
-capability or combined M4-M6 acceptance is published here.
+These historical results accept source acquisition and offline conversion as
+separate components. They do not accept production orchestration, uncertain
+allocation recovery, gVisor/KVM use, or source S3 interoperability. The following
+implementation requires its own actual gates and publishes no public
+image/snapshot/template capability or combined M4-M6 acceptance.
+
+## Durable converter parent
+
+`goldenhoop-images prepare` takes explicit job/generation UUIDs, administrator-
+trusted pinned source and builder image IDs, a disk size and runtime. Its default
+is `runsc`. Missing runsc refuses admission before provider allocation. Local
+`runc-development` also requires `--allow-runc-development`; there is no fallback.
+Builder images with unexpected inherited environment, health checks or anonymous
+volumes are refused. Source programs are never executed.
+
+The private schema-17 parent intent binds source, builder, runtime, disk size and
+storage backend. Its child source-export identity and all exact resource names
+are committed before dispatch. Every mutation phase uses revision CAS. A pending
+job never resets, reissues create/start/authorization, or chooses another runtime
+when retried. Stable Ready jobs can reopen after their source image is gone and
+must pass a fresh whole-disk storage readback and provider-absence checks.
+
+The parent creates two owned local volumes with exact installation/job/generation/
+request labels and NoCopy mounts. A never-started pinned-image seeder supplies
+the bounded baked inventory and receives only a fixed-name tar envelope containing
+`prepare.json` and the opaque `source.tar`. The host does not unpack source-image
+entries. Both storage download verification and Docker upload acknowledgement
+must complete. The seeder is checked as Created/PID0 and removed before conversion.
+Docker may omit a false mount `ReadOnly` flag; absent and false are compared by
+their access semantics, while mount source, target, options and observed RW must
+still match exactly.
+
+The actual converter has only read-only input and writable output volumes, a
+read-only root, no network, no daemon socket, no host bind mounts, NNP and the four
+required capabilities. The pinned host budget is one GiB, zero swap, 128 tasks
+and one CPU. After start, the host authenticates PID/start ticks/boot ID with a
+pidfd and requires its complete immutable container ID in the actual cgroup
+path. Cgroup files are opened beneath root-owned, non-writable directories using
+descriptor-relative no-follow opens on cgroup v2. The tightest finite memory,
+swap, tasks and rational CPU limits are read through all ancestors, supporting
+inherited sentry limits. Missing/unbounded/excessive enforcement refuses the
+permit. The trusted service requires the real host PID/cgroup view; a workload
+never receives it.
+
+Only after persisting those observations does the host send one bounded JSON
+line over the converter's private stdin. It binds generation, request content,
+builder image, installation/job and a nonce; the converter additionally checks
+the generation-bound hostname. This is a trusted-parent decision, not a signed
+self-attestation: arbitrary JSON cannot prove host enforcement. The converter
+waits at most 30 seconds before touching an archive. Nonblocking descriptor
+readiness preserves cancellation without a blocking stdin task outliving the
+deadline. Direct runc development also retains visible-cgroup checks.
+
+The input half remains open until actual exit/output drainage: the pinned Moby
+[attach copier](https://github.com/moby/moby/blob/3c2183c2a8eaf2e261dfeaaad627e8faa13a803b/daemon/internal/stream/attach.go)
+closes attached stdout/stderr when stdin ends with StdinOnce=false. The newline
+delimits the decision without requiring EOF. The
+[Bollard 0.21.1 example](https://github.com/fussybeaver/bollard/blob/v0.21.1/examples/attach_container.rs)
+also supplies explicit attach flags. Empty output/EOF never establishes success.
+
+Success requires an actual zero wait status, Exited/zero/no-OOM/no-restart
+inspection, a bounded Passed report with tools collected/staging absent, and a
+manifest matching the exact request and baked tool/asset inventory. A separate
+fixed-file download must yield the same manifest. The disk storage reference is
+journaled before its bounded stream begins. The host validates tar header
+checksums, exact regular-file names/sizes, bounded PAX metadata and a complete
+zero trailer, without extracting entries. Every chunk and the complete disk are
+verified by the existing large-object store.
+
+Ready follows actual container ID/name absence, old PID absence (a zombie is
+still present), complete container-cgroup absence, both volumes' 404 readbacks,
+child source-archive collection and another full disk readback. Bounded exit,
+output size/digests and stderr evidence are retained. Failed operations keep
+their failure and uncertainty; removing one container is not Complete cleanup.
+
+`collect-image` collects only stable disks after the caller fences all consumers.
+`abort-before-input` is a narrow maintenance path after the caller fences its
+original producer: it accepts failed acknowledged pre-input states, confirms a
+remaining seeder is Created/PID0, and collects exact volumes/source storage. It
+preserves the original error and cannot replay the job. Unacknowledged creates,
+in-flight input/disk uploads and uncertain starts are refused by that path.
+Automated fencing/reconciliation of all interrupted allocation states and actual
+produced-disk KVM placement remain required before complete M4 acceptance.
+
+The [frozen local runc-development pipeline](evidence/m4-image-prepare-actual-windows-frozen.json)
+passes nine actual groups with 315 source bindings and Complete collection.
+It independently reconstructs and checks the 64-MiB disk, fsck, pinned assets,
+workspace ownership/SGID and guest identity, then verifies reopen, refusal and
+exact collection. [Windows](evidence/m4-image-prepare-validation-windows-final.json)
+and [Linux](evidence/m4-image-prepare-validation-linux-final.json) full checks pass
+281/335 tests with 312 exact build inputs. These results do not establish
+production gVisor or KVM placement; `image-prepare.yml` is a separate real-runsc
+gate. The initial failed reports remain unchanged, and separate maintenance-only
+records confirm their later collection without claiming runsc conversion.

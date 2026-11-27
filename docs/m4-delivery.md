@@ -478,3 +478,30 @@ The actual production converter parent, pre-extraction host-limit authorization,
 uncertain-allocation recovery and produced-image gVisor/KVM gates remain pending.
 No public image/snapshot/template capability or overall M4 acceptance follows
 from these source-export results; the complete M4-M6 objective is unchanged.
+
+## Source-to-disk orchestration implemented; production gates pending
+
+The trusted Rust [image parent](image-preparation.md#durable-converter-parent)
+now owns the complete private source/export/volume/converter/disk chain. The
+converter waits for actual host PID/cgroup verification before extracting an
+archive. Default runsc has no fallback; development runc requires explicit opt-in.
+Source files stay opaque on the host, and a disk becomes Ready only after actual
+exit, full digest/manifest checks, old process/cgroup/container/volume absence
+and source-archive collection. Pending work cannot reset or replay its intent.
+
+[Final Windows validation](evidence/m4-image-prepare-validation-windows-final.json)
+passes 281 tests and [Linux validation](evidence/m4-image-prepare-validation-linux-final.json)
+passes 335, both with full format/strict lint and 312 source bindings. The
+[frozen local runc-development gate](evidence/m4-image-prepare-actual-windows-frozen.json)
+passes nine groups and 315 bindings, including independently reconstructed and
+fsck-checked disk bytes, pinned assets/permissions/identity, fresh-process reopen,
+foreign binding refusals, exact collection and no runtime fallback. All its
+fresh task resources are positively collected. Two separate maintenance records
+confirm collection of earlier failed fixture resources; original failure reports
+remain historical. Those maintenance operations did not test runsc conversion.
+
+This does not accept production gVisor conversion or produced-disk KVM use. The
+new focused runsc workflow, complete interrupted-allocation reconciliation,
+native ownership/recovery audits, snapshots/restore/templates and combined Stage
+remain required. M5 Kubernetes/operator/PostgreSQL/placement/pools/batches/volumes
+and M6 installation/upgrades/benchmarks/release audit are unchanged.

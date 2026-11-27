@@ -4,7 +4,7 @@
 
 当前 M0-M3 已在实测 Linux runc-development 与 gVisor 配置下完成验收。[完整阶段验收](https://github.com/mark0-cn/GoldenHoop/actions/runs/45839996451)在 24e313aeacb646d067f61a993794f588d02796c3 上通过全部 7 个任务和 63 份[源码指纹核验报告](docs/evidence/m3-native-45839996451-archive.json)，全部确认资源回收完成。范围包括六种语言的持久化代码上下文、隔离子沙箱、默认拒绝出网、五层策略继承与恢复、透明 HTTP/TLS 凭证代理、凭证轮换与撤销、受限 API 密钥及持久化脱敏审计；S3 兼容后端的公开接口、客户端与恢复回归同时通过。M4-M6 仍未整体验收，Kubernetes 等完整目标继续保留，详见路线图。
 
-[Firecracker 基础本地运行时](docs/m4-delivery.md)已通过实际 KVM 的 23 组验证，包括 jailer/来宾执行、公开 API/Python SDK/Rust CLI、worker 强杀恢复、暂停/恢复、制品保留和独立过期回收。须显式启用并通过真实部署探测，只发布已验证的基础能力。[镜像源导出和离线 ext4 转换](docs/image-preparation.md)已有组件级验证；生产串联、快照恢复、模板、manager 强杀恢复和 M4 综合阶段仍待完成。
+[Firecracker 基础本地运行时](docs/m4-delivery.md)已通过实际 KVM 的 23 组验证，包括 jailer/来宾执行、公开 API/Python SDK/Rust CLI、worker 强杀恢复、暂停/恢复、制品保留和独立过期回收。须显式启用并通过真实部署探测，只发布已验证的基础能力。[Rust 镜像任务](docs/image-preparation.md)已连接源导出、宿主资源核验、隔离转换和私有磁盘存储；生产 gVisor 与生成磁盘的 KVM 验证、完整分配恢复、快照恢复、模板、manager 强杀恢复和 M4 综合阶段仍待完成。
 
 项目面向个人或小团队自托管，Linux x86_64 执行端优先，提供 Rust 与 Python SDK。默认断网，分阶段实现和提交。
 

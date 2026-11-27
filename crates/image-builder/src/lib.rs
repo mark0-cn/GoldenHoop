@@ -5,6 +5,8 @@
 mod archive;
 #[cfg(target_os = "linux")]
 pub mod linux;
+mod permit;
+pub use permit::{BuilderInventory, BuilderLimits, BuilderRuntime, HostPermit};
 
 use serde::{Deserialize, Serialize};
 use std::io;
@@ -39,6 +41,11 @@ pub struct PrepareRequest {
     pub disk_bytes: u64,
 }
 impl PrepareRequest {
+    pub fn fingerprint(&self) -> io::Result<String> {
+        use sha2::{Digest, Sha256};
+        self.validate()?;
+        Ok(format!("{:x}", Sha256::digest(serde_json::to_vec(self)?)))
+    }
     pub fn validate(&self) -> io::Result<()> {
         self.archive.validate(MAX_ARCHIVE_BYTES)?;
         self.agent.validate(64 * 1024 * 1024)?;
@@ -54,7 +61,7 @@ impl PrepareRequest {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PreparedImage {
     pub format: u32,
@@ -69,7 +76,37 @@ pub struct PreparedImage {
     pub builder_version: String,
 }
 
-#[derive(Debug, Serialize)]
+impl PreparedImage {
+    pub fn validate_for(
+        &self,
+        request: &PrepareRequest,
+        inventory: &BuilderInventory,
+    ) -> io::Result<()> {
+        request.validate()?;
+        inventory.validate()?;
+        self.disk.validate(MAX_DISK_BYTES)?;
+        if self.format != 1
+            || self.generation != request.generation
+            || self.archive != request.archive
+            || self.agent != request.agent
+            || self.init != request.init
+            || self.agent != inventory.agent
+            || self.init != inventory.init
+            || self.mke2fs != inventory.mke2fs
+            || self.e2fsck != inventory.e2fsck
+            || self.disk.size_bytes != request.disk_bytes
+            || self.builder_version != inventory.builder_version
+        {
+            return Err(invalid(
+                "prepared image is not bound to this request and pinned builder",
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PrepareReport {
     pub passed: bool,
     pub staging_absent: bool,

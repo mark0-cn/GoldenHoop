@@ -1,4 +1,7 @@
-use crate::{Content, PrepareReport, PrepareRequest, PreparedImage, archive, invalid};
+use crate::{
+    BuilderInventory, BuilderLimits, BuilderRuntime, Content, HostPermit, PrepareReport,
+    PrepareRequest, PreparedImage, archive, invalid,
+};
 use cap_std::{
     ambient_authority,
     fs::{Dir, OpenOptions as CapOptions},
@@ -89,17 +92,97 @@ fn absent(path: &Path) -> io::Result<bool> {
         Err(e) => Err(e),
     }
 }
-pub fn inventory() -> io::Result<serde_json::Value> {
+pub fn inventory() -> io::Result<BuilderInventory> {
     let cancel = AtomicBool::new(false);
-    Ok(
-        serde_json::json!({"agent":content(trusted(Path::new(AGENT))?,&cancel)?,"init":content(trusted(Path::new(INIT))?,&cancel)?,
-        "mke2fs":content(trusted(Path::new(MKFS))?,&cancel)?,"e2fsck":content(trusted(Path::new(FSCK))?,&cancel)?}),
-    )
+    let value = BuilderInventory {
+        format: 1,
+        builder_version: env!("CARGO_PKG_VERSION").into(),
+        agent: content(trusted(Path::new(AGENT))?, &cancel)?,
+        init: content(trusted(Path::new(INIT))?, &cancel)?,
+        mke2fs: content(trusted(Path::new(MKFS))?, &cancel)?,
+        e2fsck: content(trusted(Path::new(FSCK))?, &cancel)?,
+    };
+    value.validate()?;
+    Ok(value)
+}
+
+pub fn read_request() -> io::Result<PrepareRequest> {
+    let mut file = trusted(Path::new("/input/prepare.json"))?;
+    if file.metadata()?.len() > 65536 {
+        return Err(invalid("image preparation request exceeds limit"));
+    }
+    let mut bytes = Vec::new();
+    Read::by_ref(&mut file)
+        .take(65537)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > 65536 {
+        return Err(invalid("image preparation request exceeds limit"));
+    }
+    let request: PrepareRequest = serde_json::from_slice(&bytes)?;
+    request.validate()?;
+    Ok(request)
+}
+
+/// Cancellable private-pipe read. Tokio's blocking stdin adapter can outlive a
+/// timeout while waiting for a writer; nonblocking fd readiness keeps both the
+/// authorization deadline and TERM handling effective even if the host stalls.
+pub async fn read_host_permit() -> io::Result<HostPermit> {
+    use std::os::fd::{FromRawFd, OwnedFd};
+    let raw = unsafe { libc::fcntl(libc::STDIN_FILENO, libc::F_DUPFD_CLOEXEC, 3) };
+    if raw < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let fd = unsafe { OwnedFd::from_raw_fd(raw) };
+    read_permit_fd(fd).await
+}
+
+async fn read_permit_fd(fd: std::os::fd::OwnedFd) -> io::Result<HostPermit> {
+    let flags = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GETFL) };
+    if flags < 0
+        || unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: OwnedFd retains this descriptor without replacement; only the
+    // readiness callback reads it, and AsyncFd drops before the descriptor.
+    let input = unsafe { tokio::io::unix::AsyncFd::register(fd) }.map_err(io::Error::other)?;
+    let mut bytes = Vec::new();
+    loop {
+        let mut ready = input.readable().await?;
+        let mut chunk = [0u8; 1024];
+        let count = match ready.try_io(|fd| {
+            let count =
+                unsafe { libc::read(fd.as_raw_fd(), chunk.as_mut_ptr().cast(), chunk.len()) };
+            if count < 0 {
+                Err(io::Error::last_os_error())
+            } else {
+                Ok(count as usize)
+            }
+        }) {
+            Ok(value) => value?,
+            Err(_) => continue,
+        };
+        if count == 0 {
+            return Err(invalid(
+                "host preparation decision ended before its delimiter",
+            ));
+        }
+        bytes.extend_from_slice(&chunk[..count]);
+        if bytes.len() > 65536 {
+            return Err(invalid("host preparation decision exceeds limit"));
+        }
+        if let Some(end) = bytes.iter().position(|b| *b == b'\n') {
+            if end + 1 != bytes.len() {
+                return Err(invalid("multiple host preparation decisions"));
+            }
+            return serde_json::from_slice(&bytes[..end]).map_err(Into::into);
+        }
+    }
 }
 
 /// Refuse ordinary host invocation before creating files. The trusted parent
 /// additionally verifies private namespaces, its exact image and owned volume.
-pub fn verify_context() -> io::Result<()> {
+pub fn verify_isolation() -> io::Result<()> {
     if unsafe { libc::geteuid() } != 0 || unsafe { libc::getpid() } != 1 {
         return Err(invalid(
             "image conversion requires root PID1 in an isolated builder",
@@ -136,32 +219,6 @@ pub fn verify_context() -> io::Result<()> {
             "builder must have no network interface except loopback",
         ));
     }
-    let limit = |name: &str| -> io::Result<u64> {
-        fs::read_to_string(Path::new("/sys/fs/cgroup").join(name))?
-            .trim()
-            .parse()
-            .map_err(|_| invalid("builder cgroup limit is unavailable"))
-    };
-    let memory = limit("memory.max")?;
-    let pids = limit("pids.max")?;
-    let cpu = fs::read_to_string("/sys/fs/cgroup/cpu.max")?;
-    let values = cpu
-        .split_whitespace()
-        .map(str::parse::<u64>)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| invalid("builder CPU limit is unavailable"))?;
-    if memory == 0
-        || memory > 2 * 1024 * 1024 * 1024
-        || !(16..=128).contains(&pids)
-        || values.len() != 2
-        || values[0] == 0
-        || values[1] == 0
-        || values[0] > values[1].saturating_mul(2)
-    {
-        return Err(invalid(
-            "builder resource limits exceed the allowed boundary",
-        ));
-    }
     for (key, _) in std::env::vars_os() {
         if !["PATH", "LANG", "HOME", "HOSTNAME", "TERM", "TZ"]
             .iter()
@@ -171,6 +228,48 @@ pub fn verify_context() -> io::Result<()> {
                 "builder environment contains an unexpected variable",
             ));
         }
+    }
+    Ok(())
+}
+
+pub fn verify_context() -> io::Result<()> {
+    verify_isolation()?;
+    let limit = |name: &str| -> io::Result<u64> {
+        fs::read_to_string(Path::new("/sys/fs/cgroup").join(name))?
+            .trim()
+            .parse()
+            .map_err(|_| invalid("builder cgroup limit is unavailable"))
+    };
+    let cpu = fs::read_to_string("/sys/fs/cgroup/cpu.max")?;
+    let values = cpu
+        .split_whitespace()
+        .map(str::parse::<u64>)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| invalid("builder CPU limit is unavailable"))?;
+    if values.len() != 2 {
+        return Err(invalid("builder CPU limit is unavailable"));
+    }
+    BuilderLimits {
+        memory_max: limit("memory.max")?,
+        swap_max: limit("memory.swap.max")?,
+        pids_max: limit("pids.max")?,
+        cpu_quota: values[0],
+        cpu_period: values[1],
+    }
+    .validate()?;
+    Ok(())
+}
+
+fn permitted_context(request: &PrepareRequest, permit: &HostPermit) -> io::Result<()> {
+    verify_isolation()?;
+    permit.validate_for(request)?;
+    if fs::read_to_string("/proc/sys/kernel/hostname")?.trim()
+        != request.generation.simple().to_string()
+    {
+        return Err(invalid("host permit hostname/generation binding differs"));
+    }
+    if permit.runtime == BuilderRuntime::RuncDevelopment {
+        verify_context()?;
     }
     Ok(())
 }
@@ -423,6 +522,22 @@ fn publish(source: &Path, destination: &Path) -> io::Result<()> {
 }
 
 pub async fn prepare(request: PrepareRequest, cancel: Arc<AtomicBool>) -> PrepareReport {
+    prepare_inner(request, cancel, None).await
+}
+
+pub async fn prepare_authorized(
+    request: PrepareRequest,
+    permit: HostPermit,
+    cancel: Arc<AtomicBool>,
+) -> PrepareReport {
+    prepare_inner(request, cancel, Some(permit)).await
+}
+
+async fn prepare_inner(
+    request: PrepareRequest,
+    cancel: Arc<AtomicBool>,
+    permit: Option<HostPermit>,
+) -> PrepareReport {
     let mut report = PrepareReport {
         passed: false,
         staging_absent: false,
@@ -442,7 +557,11 @@ pub async fn prepare(request: PrepareRequest, cancel: Arc<AtomicBool>) -> Prepar
     };
     let result = async {
         request.validate()?;
-        verify_context()?;
+        if let Some(permit) = &permit {
+            permitted_context(&request, permit)?;
+        } else {
+            verify_context()?;
+        }
         let metadata = fs::symlink_metadata("/output")?;
         if !metadata.is_dir() || metadata.file_type().is_symlink() || metadata.uid() != 0 {
             return Err(invalid("builder output must be an owned real directory"));
@@ -589,4 +708,41 @@ pub async fn prepare(request: PrepareRequest, cancel: Arc<AtomicBool>) -> Prepar
         report.error = Some("image staging absence is unconfirmed".into());
     }
     report
+}
+
+#[cfg(test)]
+mod permit_io_tests {
+    use super::*;
+    use std::os::unix::net::UnixStream;
+    #[tokio::test]
+    async fn stalled_private_writer_does_not_prevent_authorization_cancellation() {
+        let (reader, writer) = UnixStream::pair().unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), read_permit_fd(reader.into()))
+                .await
+                .is_err()
+        );
+        // The timed-out reader owns no blocking task; its descriptor is gone
+        // even though the parent still holds its side of the authorization pipe.
+        let mut writer = writer;
+        assert!(writer.write_all(b"late decision\n").is_err());
+    }
+    #[tokio::test]
+    async fn decisions_require_one_bounded_complete_json_line() {
+        let (reader, mut writer) = UnixStream::pair().unwrap();
+        writer.write_all(b"{}\n{}\n").unwrap();
+        assert!(read_permit_fd(reader.into()).await.is_err());
+        let (reader, mut writer) = UnixStream::pair().unwrap();
+        writer.write_all(&vec![b'x'; 65537]).unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), read_permit_fd(reader.into()))
+                .await
+                .unwrap()
+                .is_err()
+        );
+        let (reader, mut writer) = UnixStream::pair().unwrap();
+        writer.write_all(b"{}").unwrap();
+        drop(writer);
+        assert!(read_permit_fd(reader.into()).await.is_err());
+    }
 }
