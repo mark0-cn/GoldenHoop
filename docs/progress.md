@@ -20,6 +20,27 @@ M0-M3 are accepted on the tested Linux runc-development/gVisor and retained S3-c
 
 ## Implementation and validation log
 
+The private Ready-image consumption bridge is implemented and locally checked.
+It adds canonical job/generation/manifest references, administrator-pinned
+inventory checks, actual provider-absence checks and a locked, verified
+anonymous disk copy. The library hands an owned descriptor to its host consumer;
+the administrator CLI can inspect metadata or exercise and close the copy.
+Windows283/Linux-root363 formatting, strict clippy and full workspace tests pass
+with 326 identical frozen inputs. Both actual anonymous-file tests cover verified
+bytes, source collection, descriptor closure, corrupt partial-copy refusal and
+untrusted staging refusal. Metadata-only admission tests are synthetic; they do
+not accept a converter or VM. The independent canonical manifest vector also
+passes both tests with `serde_json/preserve_order` enabled. See the
+[implementation summary](evidence/m4-ready-materialization-implementation-summary.json).
+The failed intermediate full check remains Failed: its immediate root-lock
+reacquisition assertion failed during parallel process tests. The unchanged
+assertions now execute in an exact isolated child process; production locking
+is unchanged, and the original transient holder was not traced. Both owned
+local check images are removed and their absence is recorded. The extended
+actual default-runsc preparation/materialization gate is pending source-bound
+CI. This is a private handoff increment; native selected-image journaling,
+public placement, snapshots/restore/templates and M5-M6 remain open.
+
 M0 is implemented and pushed in commit 94cb4e75f07e6df447d9beca6b0453a0e6014012: independent repository, domain contracts, state/capability invariants, driver boundary, schema export and CI definition.
 
 - cargo test --workspace: 13 integration tests passed (8 orchestration invariants, 5 wire-contract tests).

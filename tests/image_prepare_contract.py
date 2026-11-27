@@ -181,6 +181,53 @@ class Contract(SourceContract):
         # The ordinary converter contract makes no guest-execution claim.
         pass
 
+    def pinned_inventory(self):
+        # Read policy from the independently pinned converter image, not from
+        # the job payload or an untrusted request. This diagnostic has no host
+        # PID view, daemon socket, writable state mount or build input.
+        cid = docker(*(self.container(viewer=True, entrypoint='/bin/cat') +
+                       [self.builder, '/opt/goldenhoop/inventory.json'])).decode().strip()
+        try:
+            raw = docker('start', '--attach', cid)
+            state = json.loads(docker('inspect', cid))[0]['State']
+            assert state['Status'] == 'exited' and state['ExitCode'] == 0 and not state['OOMKilled'], state
+            assert len(raw) <= 65536
+            return json.loads(raw)
+        finally:
+            self.remove_container(cid)
+
+    def materialization(self, preparation, inventory):
+        policy = json.dumps(inventory, sort_keys=True, separators=(',', ':'))
+        opt_in = ['--allow-runc-development'] if self.args.runtime == 'runc' else []
+        info = self.call(['inspect-image', '--id', preparation['id'], '--trusted-inventory', policy, *opt_in])
+        assert set(info) == {'reference', 'manifest'} and info['manifest'] == preparation['manifest'], info
+        reference = info['reference']
+        digest = hashlib.sha256(json.dumps(info['manifest'], sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+        assert reference == dict(id=preparation['id'], generation=preparation['generation'], manifest_sha256=digest), reference
+        name = f'prepared:{reference["id"]}:{reference["generation"]}:{reference["manifest_sha256"]}'
+        arguments = ['verify-image', '--image', name, '--trusted-inventory', policy,
+                     '--staging-root', '/state/blobs', *opt_in]
+        checked = self.call(arguments)
+        assert checked == dict(image=info, materialized=True, size_bytes=self.disk_size,
+                               anonymous=True, descriptor_closed=True), checked
+        self.report['observations']['materialized_ready_image'] = checked
+        self.report['cases'].append('actual_ready_generation_and_pinned_inventory_resolve_to_verified_anonymous_disk_and_closed_descriptor')
+        foreign = arguments.copy()
+        foreign[foreign.index('--image')+1] = name[:-64] + ('0' if name[-64:] != '0'*64 else '1')*64
+        self.call(foreign, expected=1)
+        self.report['observations']['wrong_manifest_refusal'] = self.report['observations']['last_call']
+        changed = json.loads(policy)
+        changed['agent']['sha256'] = 'e'*64 if inventory['agent']['sha256'] != 'e'*64 else 'f'*64
+        foreign = arguments.copy()
+        foreign[foreign.index('--trusted-inventory')+1] = json.dumps(changed)
+        self.call(foreign, expected=1)
+        self.report['observations']['wrong_guest_asset_refusal'] = self.report['observations']['last_call']
+        if opt_in:
+            self.call(arguments[:-1], expected=1)
+            self.report['observations']['development_materialization_refusal'] = self.report['observations']['last_call']
+        self.report['cases'].append('changed_manifest_and_unpinned_guest_assets_refuse_materialization_without_provider_or_VM_allocation')
+        return arguments
+
     def exercise(self):
         image = json.loads(docker('image', 'inspect', self.args.image))[0]
         assert image['Config']['Labels']['dev.goldenhoop.task'] == 'm4-image-source-export-fixture'
@@ -283,6 +330,9 @@ class Contract(SourceContract):
         assert output.stat().st_size == reference['size_bytes'] and whole.hexdigest() == reference['sha256']
         self.inspect_disk(output, reference, parent['payload']['inventory'])
         self.report['cases'].append('independent_all_chunks_whole_disk_fsck_pinned_assets_and_guest_identity_readback')
+        inventory = self.pinned_inventory()
+        assert inventory == parent['payload']['inventory']
+        materialize_arguments = self.materialization(value, inventory)
         docker('image', 'rm', source)
         assert self.call(arguments)['disk'] == reference
         self.report['cases'].append('fresh_process_reopens_verified_disk_after_source_image_collection_without_relaunch')
@@ -298,6 +348,9 @@ class Contract(SourceContract):
         assert collected['phase'] == 'collected' and not collected['image_ready'] and collected['provider_cleanup'] == 'complete'
         assert self.call(['collect-image', '--id', value['id']])['phase'] == 'collected'
         assert not self.call(arguments, expected=2)['image_ready']
+        self.call(materialize_arguments, expected=1)
+        self.report['observations']['collected_image_materialization_refusal'] = self.report['observations']['last_call']
+        self.report['cases'].append('collected_generation_cannot_materialize_or_relaunch_after_earlier_successful_copy')
         self.report['cases'].append('exact_disk_collection_is_idempotent_and_collected_intent_cannot_relaunch')
         bad, _ = self.source_image(volume=True)
         denied = self.call(self.intent(bad), expected=2)

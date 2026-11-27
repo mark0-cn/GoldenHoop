@@ -1,0 +1,39 @@
+{
+  "scope": "A failed mandatory full check is retained unchanged; this is test-fixture diagnosis, not native runtime acceptance.",
+  "timestamp": "2026-11-27T11:14:16.462607+00:00",
+  "failed_report": "m4-ready-materialization-validation-linux-canonical.json",
+  "failed_report_sha256": "61cf17ff3c76c653d826eb68b873307364172dc93a0cd02a8a0b0507d7c3423c",
+  "observed": {
+    "error": "native installation already has an owner",
+    "test": "lifecycle::metadata::tests::native_root_claim_preserves_foreign_roots_and_recovers_only_its_durable_identity",
+    "line": 151,
+    "phase": "same-process close followed by immediate nonblocking reacquisition",
+    "successful_groups_before_package_failure": 179
+  },
+  "diagnosis_status": "Supported inference; the original transient holder PID was not captured. It is not claimed as a directly traced fork event.",
+  "sources": [
+    {
+      "url": "https://man7.org/linux/man-pages/man2/flock.2.html",
+      "application": "flock belongs to an open-file description; fork/dup references can keep the lock until every descriptor closes."
+    },
+    {
+      "url": "https://docs.rs/crate/fs2/0.4.3/source/src/lib.rs",
+      "local_source_sha256": "38e0f03bb81d76ac8d71b73b00fae648359aa7e1c1b9ba7159cb1b19eb12b987",
+      "application": "The dependency uses Linux flock; its exclusivity tests explicitly unlock, and its drop cleanup test uses a blocking subsequent lock."
+    }
+  ],
+  "correction": "Execute the original complete root-claim test in an exact, fresh test process with no other tests spawning children; require both a successful exit and exactly one passed test. Keep every existing refusal and close/reclaim assertion.",
+  "production_changes": "None in the native lock/claim path. No retry of the failed assertion, no weakened ownership predicate and no global test serialization.",
+  "failed_tag_absent": true,
+  "obsolete_initial_tag_absent": true,
+  "corrected_full_checks": {
+    "windows": 283,
+    "linux_root": 363,
+    "inputs": 326,
+    "result": "passed",
+    "reports": [
+      "m4-ready-materialization-validation-windows-isolated.json",
+      "m4-ready-materialization-validation-linux-isolated.json"
+    ]
+  }
+}

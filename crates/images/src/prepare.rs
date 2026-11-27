@@ -28,6 +28,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_util::io::ReaderStream;
 use uuid::Uuid;
 
+mod ready;
+pub use ready::MaterializedImage;
+
 const ROLE: &str = "image-prepare";
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]

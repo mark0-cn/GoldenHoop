@@ -11,6 +11,56 @@ conversion and actual jailed KVM consumption of its disk now have
 at 0060f4b. Interrupted allocation recovery, public image placement and complete
 M4 acceptance remain required.
 
+## Ready-image consumption bridge
+
+The trusted Rust host library now provides `ImagePreparer::inspect_ready` and
+`materialize_ready`. A canonical name is
+`prepared:<job UUID>:<generation UUID>:<manifest SHA256>`. The digest covers the
+typed manifest encoded as sorted-key JSON, including archive, agent, init, disk,
+conversion tools, generation, creation time and builder version. Inspection
+returns only that reference and the content manifest. Storage bindings, private
+blob references, process/cgroup observations and host paths stay private.
+
+Admission reuses the preparation state decoder, requires exactly Ready without
+an error, and compares the entire inventory with an administrator-pinned policy.
+Both the preparation request and storage reference must belong to the same job,
+generation and installation. Consuming a disk prepared with the development
+converter requires the explicit development opt-in again. The policy must come
+from the administrator's pinned converter, rather than the preparation job or a
+public request. These methods still require the trusted local Docker provider
+to confirm that the recorded source/converter resources remain absent.
+
+Materialization holds the existing permanent producer/collector lock while
+checking readiness, copying every verified blob chunk, syncing and independently
+rehashing the actual output, rechecking metadata revision and observing provider
+absence again. Its staging directory must already exist with root ownership,
+mode 0700 and trusted ancestry on an allowed local kernel filesystem. The
+output uses [`O_TMPFILE`](https://man7.org/linux/man-pages/man2/open.2.html)
+with mode 0600 and no named-file fallback. Success
+returns an owned anonymous file descriptor positioned at byte zero. A consumer
+can retain that independent copy after source-blob collection; the next receiver
+must validate its own descriptor and content before granting VM authority.
+Dropping all descriptors releases the copy, including on process death.
+
+The administrator CLI has `inspect-image --id ... --trusted-inventory ...` and
+`verify-image --image ... --trusted-inventory ... --staging-root ...` commands.
+The latter exercises the actual handoff and confirms descriptor closure; it is
+a preflight and does not publish a cache file or launch a VM. Library consumers
+receive the descriptor itself through `MaterializedImage`. Current local and
+actual conversion evidence is recorded in the progress log before publication.
+
+Public image placement remains a separate next increment: private descriptor
+transfer to the native manager, immutable per-generation selection/recovery,
+bounded cache/reservation ownership, public authorization and client bindings,
+and two different actual prepared disks selected on one profile. The existing
+public native create path still accepts its configured rootfs only. Snapshots,
+restore and templates retain their separate acceptance requirements.
+
+The [pinned upstream comparison](evidence/m4-ready-materialization-upstream-review.json)
+uses OpenSandbox's persisted Ready/scope checks and Firecracker's device-image
+separation to guide this bridge. The older firecracker-containerd repository is
+archived; it is an architectural comparison, not a GoldenHoop dependency.
+
 ## Conversion boundary
 
 The `image-builder` Docker target contains the converter, agent/init and e2fsprogs.

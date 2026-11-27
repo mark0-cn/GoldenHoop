@@ -130,6 +130,31 @@ mod tests {
     use super::*;
     #[test]
     fn native_root_claim_preserves_foreign_roots_and_recovers_only_its_durable_identity() {
+        const ISOLATED: &str = "GH_NATIVE_CLAIM_ISOLATED";
+        if std::env::var(ISOLATED).as_deref() != Ok("1") {
+            // A parallel Command spawn may temporarily inherit another test's
+            // flock description before exec closes its CLOEXEC descriptors.
+            // Run the unchanged close/reclaim assertions in a fresh process
+            // that has no other tests spawning children, rather than relaxing
+            // production nonblocking ownership or retrying a failed assertion.
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "lifecycle::metadata::tests::native_root_claim_preserves_foreign_roots_and_recovers_only_its_durable_identity",
+                    "--test-threads=1",
+                ])
+                .env(ISOLATED, "1")
+                .output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                output.status.success() && stdout.contains("test result: ok. 1 passed;"),
+                "isolated claim assertions failed: {}\n{stdout}\n{}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
         let installation = Uuid::new_v4();
         if unsafe { libc::geteuid() } != 0 {
             let directory = tempfile::tempdir().unwrap();

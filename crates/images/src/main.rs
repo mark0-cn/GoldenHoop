@@ -64,6 +64,26 @@ enum Action {
         #[arg(long)]
         id: uuid::Uuid,
     },
+    /// Inspect a Ready job against an administrator-pinned builder inventory.
+    InspectImage {
+        #[arg(long)]
+        id: uuid::Uuid,
+        #[arg(long)]
+        trusted_inventory: String,
+        #[arg(long)]
+        allow_runc_development: bool,
+    },
+    /// Preflight an actual anonymous disk handoff, then close the private copy.
+    VerifyImage {
+        #[arg(long)]
+        image: String,
+        #[arg(long)]
+        trusted_inventory: String,
+        #[arg(long)]
+        staging_root: PathBuf,
+        #[arg(long)]
+        allow_runc_development: bool,
+    },
 }
 #[cfg(target_os = "linux")]
 fn trusted_path(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -118,6 +138,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let blobs = BlobStore::local(&args.artifact_root, store.installation_id())?;
         let require_archive = matches!(&args.command, Action::Export { .. });
         let require_disk = matches!(&args.command, Action::Prepare { .. });
+        let policy = |raw: &str| -> Result<
+            goldenhoop_image_builder::BuilderInventory,
+            Box<dyn std::error::Error + Send + Sync>,
+        > {
+            if raw.len() > 65536 {
+                return Err("trusted inventory exceeds limit".into());
+            }
+            let inventory: goldenhoop_image_builder::BuilderInventory = serde_json::from_str(raw)?;
+            inventory.validate()?;
+            Ok(inventory)
+        };
         let outcome = async {
             let (result, passed) = match args.command {
                 Action::Export {
@@ -206,6 +237,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         .await?;
                     let passed = result.provider_cleanup == "complete" && !result.image_ready;
                     (serde_json::to_value(result)?, passed)
+                }
+                Action::InspectImage { id, trusted_inventory, allow_runc_development } => {
+                    let policy = policy(&trusted_inventory)?;
+                    let result = ImagePreparer::connect(store.clone(), blobs.clone(), allow_runc_development)
+                        .await?.inspect_ready(id, &policy).await?;
+                    (serde_json::to_value(result)?, true)
+                }
+                Action::VerifyImage { image, trusted_inventory, staging_root, allow_runc_development } => {
+                    use std::os::{fd::AsRawFd, unix::fs::MetadataExt};
+                    let reference = image.parse::<goldenhoop_images::PreparedImageReference>()?;
+                    let policy = policy(&trusted_inventory)?;
+                    let copy = ImagePreparer::connect(store.clone(), blobs.clone(), allow_runc_development)
+                        .await?.materialize_ready(&reference, &policy, &staging_root).await?;
+                    let metadata = copy.file().metadata()?;
+                    let image = copy.info().clone();
+                    let fd = copy.file().as_raw_fd();
+                    drop(copy);
+                    let closed = unsafe { libc::fcntl(fd, libc::F_GETFD) } == -1
+                        && std::io::Error::last_os_error().raw_os_error() == Some(libc::EBADF);
+                    (serde_json::json!({"image":image,"materialized":true,"size_bytes":metadata.len(),
+                        "anonymous":metadata.nlink()==0,"descriptor_closed":closed}), closed)
                 }
             };
             Ok::<_, Box<dyn std::error::Error + Send + Sync>>((result, passed))
