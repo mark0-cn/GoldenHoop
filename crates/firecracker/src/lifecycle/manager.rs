@@ -1,5 +1,6 @@
 //! Installation service. VM supervisors remain children of this persistent
 //! process when a worker or short-lived operator client exits.
+use super::recovery::{ManagerRecovery, PathIdentity};
 use super::*;
 use crate::{
     api::{PeerIdentity, authenticated_socket},
@@ -7,11 +8,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use goldenhoop_runtime::*;
-use std::{
-    os::unix::fs::{FileTypeExt, PermissionsExt},
-    sync::Arc,
-    time::Duration,
-};
+use std::{os::unix::fs::PermissionsExt, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncWriteExt, BufReader},
     net::{UnixListener, UnixStream},
@@ -33,6 +30,12 @@ struct ManagerRecord {
     cgroup: PathBuf,
     original_cgroup: PathBuf,
     ready: bool,
+    #[serde(default)]
+    socket_identity: Option<PathIdentity>,
+    #[serde(default)]
+    cgroup_identity: Option<PathIdentity>,
+    #[serde(default)]
+    recovery: Option<ManagerRecovery>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -67,6 +70,32 @@ fn manager_group(cfg: &DriverConfig, epoch: Uuid) -> PathBuf {
         cfg.installation_id.simple(),
         epoch.simple()
     ))
+}
+fn validate_manager_record(cfg: &DriverConfig, owner: &ManagerRecord) -> Result<()> {
+    if owner.format != 1
+        || owner.epoch.is_nil()
+        || owner.installation_id != cfg.installation_id
+        || owner.config_sha256 != config_sha(cfg)?
+        || owner.process.pid <= 1
+        || owner.process.pid > i32::MAX as u32
+        || owner.process.start_ticks == 0
+        || owner.process.uid != 0
+        || Uuid::parse_str(&owner.process.boot_id)
+            .ok()
+            .is_none_or(|id| id.is_nil() || id.to_string() != owner.process.boot_id)
+        || owner.process.executable_sha256 != cfg.supervisor.sha256
+        || owner.cgroup != manager_group(cfg, owner.epoch)
+        || !owner.original_cgroup.starts_with("/sys/fs/cgroup")
+        || owner.original_cgroup.components().any(|part| {
+            matches!(
+                part,
+                std::path::Component::ParentDir | std::path::Component::CurDir
+            )
+        })
+    {
+        return Err(invalid("native manager identity or configuration mismatch").into());
+    }
+    Ok(())
 }
 fn unavailable() -> ApiError {
     let mut error = ApiError::new(
@@ -108,14 +137,14 @@ impl FirecrackerDriver {
     fn manager(&self) -> Result<(ManagerRecord, OwnedFd)> {
         let cfg = &self.cfg;
         let owner: ManagerRecord = read_json(&cfg.data_root.join("manager.json"))?;
-        if owner.format != 1
-            || !owner.ready
-            || owner.epoch.is_nil()
-            || owner.installation_id != cfg.installation_id
-            || owner.config_sha256 != config_sha(cfg)?
-            || owner.process.uid != 0
-            || owner.process.executable_sha256 != cfg.supervisor.sha256
-            || owner.cgroup != manager_group(cfg, owner.epoch)
+        validate_manager_record(cfg, &owner)?;
+        if !owner.ready
+            || !PathIdentity::verify(
+                &cfg.data_root.join("manager.sock"),
+                owner.socket_identity.as_ref(),
+                true,
+            )?
+            || !PathIdentity::verify(&owner.cgroup, owner.cgroup_identity.as_ref(), false)?
         {
             return Err(invalid("native manager identity or configuration mismatch").into());
         }
@@ -376,38 +405,36 @@ async fn serve(
     Ok(())
 }
 
-fn remove_manager_group(record: &ManagerRecord) -> Result<()> {
-    if record.cgroup.try_exists()? {
-        let metadata = std::fs::symlink_metadata(&record.cgroup)?;
-        if record.process.boot_id != boot_id()?
-            || !metadata.is_dir()
-            || metadata.uid() != 0
-            || metadata.mode() & 0o022 != 0
-            || !supervisor::cgroup_empty(&record.cgroup)?
-        {
+fn check_manager_group(record: &ManagerRecord) -> Result<bool> {
+    if PathIdentity::verify(&record.cgroup, record.cgroup_identity.as_ref(), false)? {
+        if record.process.boot_id != boot_id()? || !supervisor::cgroup_empty(&record.cgroup)? {
             return Err(invalid("native manager cgroup collection unconfirmed").into());
         }
+        return Ok(true);
+    }
+    Ok(false)
+}
+fn remove_manager_group(record: &ManagerRecord) -> Result<()> {
+    if check_manager_group(record)? {
         std::fs::remove_dir(&record.cgroup)?;
     }
-    if record.cgroup.try_exists()? {
+    if !super::recovery::absent(&record.cgroup)? {
         return Err(invalid("native manager cgroup remains").into());
     }
     Ok(())
 }
-fn remove_socket(path: &Path) -> Result<()> {
-    match std::fs::symlink_metadata(path) {
-        Ok(metadata) => {
-            if !metadata.file_type().is_socket()
-                || metadata.uid() != 0
-                || metadata.mode() & 0o077 != 0
-            {
-                return Err(invalid("native manager socket ownership mismatch").into());
-            }
-            std::fs::remove_file(path)?;
-        }
-        Err(e) if e.kind() == io::ErrorKind::NotFound => (),
-        Err(e) => return Err(e.into()),
+fn remove_socket(path: &Path, recorded: Option<&PathIdentity>) -> Result<()> {
+    if PathIdentity::verify(path, recorded, true)? {
+        std::fs::remove_file(path)?;
     }
+    if !super::recovery::absent(path)? {
+        return Err(invalid("native manager socket remains").into());
+    }
+    File::open(
+        path.parent()
+            .ok_or_else(|| invalid("native manager socket has no parent"))?,
+    )?
+    .sync_all()?;
     Ok(())
 }
 
@@ -422,33 +449,57 @@ pub async fn run_manager(config: PathBuf) -> Result<()> {
     if process.executable_sha256 != cfg.supervisor.sha256 {
         return Err(invalid("native manager executable mismatch").into());
     }
-    let engine = super::driver::NativeEngine::connect(cfg.clone())?;
+    let lease = metadata::claim_installation(&cfg.data_root, cfg.installation_id)?;
     let marker = cfg.data_root.join("manager.json");
     let socket = cfg.data_root.join("manager.sock");
-    if marker.try_exists()? {
+    let old = if !super::recovery::absent(&marker)? {
         let old: ManagerRecord = read_json(&marker)?;
-        if old.format != 1
-            || old.installation_id != cfg.installation_id
-            || old.cgroup != manager_group(&cfg, old.epoch)
-        {
-            return Err(invalid("stale native manager marker ownership mismatch").into());
+        validate_manager_record(&cfg, &old)?;
+        let persisted: DriverConfig = read_json(&cfg.data_root.join("config.json"))?;
+        if config_sha(&persisted)? != old.config_sha256 {
+            return Err(invalid("native persisted configuration differs before recovery").into());
         }
-        if !engine.discover().await?.is_empty() {
-            return Err(invalid("unclean native manager has uncollected generations; service-parent recovery is required").into());
-        }
-        if old.process.boot_id == boot_id()?
-            && Path::new("/proc")
-                .join(old.process.pid.to_string())
-                .try_exists()?
-        {
+        if !super::reaper::process_absent(&old.process)? {
             return Err(invalid("previous native manager process absence is unconfirmed").into());
         }
-        remove_manager_group(&old)?;
-        remove_socket(&socket)?;
-        std::fs::remove_file(&marker)?;
-    } else if socket.try_exists()? {
-        return Err(invalid("unowned native manager socket exists").into());
+        check_manager_group(&old)?;
+        PathIdentity::verify(&socket, old.socket_identity.as_ref(), true)?;
+        Some(old)
+    } else {
+        if !super::recovery::absent(&socket)? {
+            return Err(invalid("unowned native manager socket exists").into());
+        }
+        None
+    };
+    let engine = super::driver::NativeEngine::connect(cfg.clone(), lease)?;
+    if engine.recovered_count() > 0
+        && old
+            .as_ref()
+            .is_none_or(|owner| owner.process.boot_id != process.boot_id)
+    {
+        return Err(invalid("native generations have no same-boot manager recovery fence").into());
     }
+    let recovery = if let Some(previous) = &old {
+        Some(ManagerRecovery {
+            previous_epoch: previous.epoch,
+            previous_process: previous.process.clone(),
+            observed_at: Utc::now(),
+            generations: engine.observe_recovery().await?,
+        })
+    } else {
+        None
+    };
+    if let Some(previous) = &old {
+        remove_manager_group(previous)?;
+        remove_socket(&socket, previous.socket_identity.as_ref())?;
+        let current: ManagerRecord = read_json(&marker)?;
+        if serde_json::to_value(current)? != serde_json::to_value(previous)? {
+            return Err(
+                invalid("native manager marker changed before recovery publication").into(),
+            );
+        }
+    }
+    atomic_json(&cfg.data_root.join("config.json"), &cfg)?;
     let epoch = Uuid::new_v4();
     let mut owner = ManagerRecord {
         format: 1,
@@ -459,12 +510,23 @@ pub async fn run_manager(config: PathBuf) -> Result<()> {
         cgroup: manager_group(&cfg, epoch),
         original_cgroup: supervisor::original_cgroup()?,
         ready: false,
+        socket_identity: None,
+        cgroup_identity: None,
+        recovery,
     };
-    atomic_json(&marker, &owner)?;
+    // Retain the old epoch until its replacement is durable. A crash cannot
+    // erase the only manager fence while live generation journals remain.
+    if old.is_some() {
+        atomic_json(&marker, &owner)?;
+    } else {
+        metadata::initial_json(&marker, &owner)?;
+    }
     let mut owns_group = false;
     let mut owns_socket = false;
     let result=async {
         std::fs::create_dir(&owner.cgroup)?;owns_group=true;
+        owner.cgroup_identity=Some(PathIdentity::capture(&owner.cgroup,false)?);
+        atomic_json(&marker,&owner)?;
         for (name,value) in [("cpu.max","100000 100000".to_owned()),("memory.max",MANAGER_MEMORY.to_string()),("memory.swap.max","0".into()),("pids.max","32".into())]{
             std::fs::write(owner.cgroup.join(name),&value)?;
             if std::fs::read_to_string(owner.cgroup.join(name))?.trim()!=value{return Err(invalid("native manager resource readback mismatch").into());}
@@ -473,6 +535,7 @@ pub async fn run_manager(config: PathBuf) -> Result<()> {
         if unsafe{libc::prctl(libc::PR_SET_NO_NEW_PRIVS,1,0,0,0)}!=0 || unsafe{libc::prctl(libc::PR_SET_CHILD_SUBREAPER,1,0,0,0)}!=0{return Err(io::Error::last_os_error().into());}
         let listener=UnixListener::bind(&socket)?;owns_socket=true;
         std::fs::set_permissions(&socket,std::fs::Permissions::from_mode(0o600))?;
+        owner.socket_identity=Some(PathIdentity::capture(&socket,true)?);
         owner.ready=true;atomic_json(&marker,&owner)?;
         let shutdown=Arc::new(Notify::new());
         let permits=Arc::new(Semaphore::new(8));
@@ -512,7 +575,7 @@ pub async fn run_manager(config: PathBuf) -> Result<()> {
         Ok::<_,Box<dyn std::error::Error+Send+Sync>>(())
     }.await;
     if owns_socket {
-        remove_socket(&socket)?;
+        remove_socket(&socket, owner.socket_identity.as_ref())?;
     }
     if owns_group {
         if std::fs::write(owner.original_cgroup.join("cgroup.procs"), b"0").is_err() {
@@ -521,10 +584,11 @@ pub async fn run_manager(config: PathBuf) -> Result<()> {
         remove_manager_group(&owner)?;
     }
     let actual: ManagerRecord = read_json(&marker)?;
-    if actual.epoch != owner.epoch || actual.process != owner.process {
+    if serde_json::to_value(actual)? != serde_json::to_value(&owner)? {
         return Err(invalid("native manager marker changed during collection").into());
     }
     std::fs::remove_file(&marker)?;
+    File::open(&cfg.data_root)?.sync_all()?;
     if marker.try_exists()? || socket.try_exists()? {
         return Err(invalid("native manager metadata collection incomplete").into());
     }
@@ -535,6 +599,121 @@ pub async fn run_manager(config: PathBuf) -> Result<()> {
 mod tests {
     use super::*;
     use base64::Engine;
+
+    #[test]
+    fn recovery_record_requires_exact_configuration_epoch_executable_and_scope() {
+        // Shape validation is not process/socket authentication or KVM proof.
+        let artifact = Artifact {
+            path: "/operator/artifact".into(),
+            sha256: "a".repeat(64),
+            size: 1,
+        };
+        let cfg = DriverConfig {
+            installation_id: Uuid::new_v4(),
+            data_root: "/var/lib/gm".into(),
+            artifacts: BootInput {
+                firecracker: artifact.clone(),
+                jailer: artifact.clone(),
+                kernel: artifact.clone(),
+                rootfs: artifact.clone(),
+            },
+            supervisor: artifact,
+            image: format!("sha256:{}", "a".repeat(64)),
+            max_resources: ResourceLimits {
+                cpu_millis: 1000,
+                memory_bytes: 256 * MIB,
+                pids: 32,
+            },
+            capacity: HostCapacity::default(),
+            max_ttl_seconds: 300,
+        };
+        cfg.validate().unwrap();
+        let epoch = Uuid::new_v4();
+        let mut record = ManagerRecord {
+            format: 1,
+            installation_id: cfg.installation_id,
+            epoch,
+            config_sha256: config_sha(&cfg).unwrap(),
+            process: ProcessIdentity {
+                pid: 42,
+                start_ticks: 1,
+                boot_id: boot_id().unwrap(),
+                executable_sha256: cfg.supervisor.sha256.clone(),
+                uid: 0,
+            },
+            cgroup: manager_group(&cfg, epoch),
+            original_cgroup: "/sys/fs/cgroup".into(),
+            ready: false,
+            socket_identity: None,
+            cgroup_identity: None,
+            recovery: None,
+        };
+        validate_manager_record(&cfg, &record).unwrap();
+        let mut changed = cfg.clone();
+        changed.capacity.cpu_millis += 1;
+        assert!(validate_manager_record(&changed, &record).is_err());
+        changed = cfg.clone();
+        changed.installation_id = Uuid::new_v4();
+        assert!(validate_manager_record(&changed, &record).is_err());
+        record.process.executable_sha256 = "b".repeat(64);
+        assert!(validate_manager_record(&cfg, &record).is_err());
+        record.process.executable_sha256 = cfg.supervisor.sha256.clone();
+        record.epoch = Uuid::nil();
+        assert!(validate_manager_record(&cfg, &record).is_err());
+        record.epoch = epoch;
+        record.cgroup = "/sys/fs/cgroup/foreign".into();
+        assert!(validate_manager_record(&cfg, &record).is_err());
+        record.cgroup = manager_group(&cfg, epoch);
+        record.process.boot_id = Uuid::nil().to_string();
+        assert!(validate_manager_record(&cfg, &record).is_err());
+    }
+
+    #[test]
+    fn actual_socket_receipt_preserves_replacement_symlink_and_unrecorded_endpoint() {
+        if unsafe { libc::geteuid() } != 0 {
+            return;
+        }
+        use std::os::unix::{fs::symlink, net::UnixListener as Listener};
+        let directory = tempfile::Builder::new()
+            .prefix("ghm-receipt-")
+            .tempdir_in("/var/lib")
+            .unwrap();
+        let socket = directory.path().join("manager.sock");
+        let old = Listener::bind(&socket).unwrap();
+        std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let receipt = PathIdentity::capture(&socket, true).unwrap();
+        assert!(remove_socket(&socket, None).is_err());
+        let saved = directory.path().join("saved.sock");
+        std::fs::rename(&socket, &saved).unwrap();
+        let replacement = Listener::bind(&socket).unwrap();
+        std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let replacement_receipt = PathIdentity::capture(&socket, true).unwrap();
+        assert!(remove_socket(&socket, Some(&receipt)).is_err());
+        assert!(PathIdentity::verify(&socket, Some(&replacement_receipt), true).unwrap());
+        let link = directory.path().join("link.sock");
+        symlink(&saved, &link).unwrap();
+        assert!(remove_socket(&link, Some(&receipt)).is_err());
+        assert!(
+            std::fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        drop(replacement);
+        remove_socket(&socket, Some(&replacement_receipt)).unwrap();
+        remove_socket(&socket, Some(&replacement_receipt)).unwrap();
+        drop(old);
+        remove_socket(&saved, Some(&receipt)).unwrap();
+        let first = directory.path().join("group");
+        std::fs::create_dir(&first).unwrap();
+        let group_receipt = PathIdentity::capture(&first, false).unwrap();
+        std::fs::rename(&first, directory.path().join("saved-group")).unwrap();
+        std::fs::create_dir(&first).unwrap();
+        assert!(PathIdentity::verify(&first, Some(&group_receipt), false).is_err());
+        let path = directory.path().to_owned();
+        directory.close().unwrap();
+        assert!(!path.exists());
+    }
 
     #[tokio::test]
     async fn manager_envelopes_cross_real_sockets_with_the_shared_frame_ceiling() {

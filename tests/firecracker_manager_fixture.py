@@ -16,8 +16,11 @@ class Manager:
         self.process = None
         self.owner = None
         self.stop_error = None
+        self.deaths = []
+        self.maintenance_restart = False
 
     def start(self):
+        assert self.process is None or self.process.poll() is not None, 'do not replace a live owned manager'
         with self.log.open('ab') as output:
             self.process = subprocess.Popen([str(self.binary), 'manage', '--config', str(self.config)],
                 stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
@@ -27,7 +30,7 @@ class Manager:
             marker = self.root / 'manager.json'
             if marker.exists():
                 value = json.loads(marker.read_text())
-                if value['ready']:
+                if value['ready'] and value['process']['pid'] == self.process.pid:
                     self.owner = value
                     break
             assert self.process.poll() is None and time.monotonic() < until, 'native manager did not become ready'
@@ -39,7 +42,27 @@ class Manager:
         group = Path(self.owner['cgroup'])
         assert (group / 'memory.max').read_text().strip() == str(768 * 1024**2)
         assert (group / 'pids.max').read_text().strip() == '32'
+        for path, field in [(self.root/'manager.sock','socket_identity'), (group,'cgroup_identity')]:
+            metadata = path.lstat()
+            assert self.owner[field] == {'device':metadata.st_dev,'inode':metadata.st_ino}
         return self.owner
+
+    def hard_kill(self):
+        assert self.process and self.process.poll() is None
+        assert self.owner['process']['pid'] == self.process.pid
+        previous = self.owner
+        self.process.kill()
+        status = self.process.wait(timeout=15)
+        assert status == -signal.SIGKILL
+        proc = Path('/proc')/str(self.process.pid)
+        assert not proc.exists(), 'the owned service parent must reap its killed manager'
+        observed = {'owner':previous,'exit_status':status,'actual_process_absent':True,
+                    'marker_retained':(self.root/'manager.json').exists(),
+                    'socket_retained':(self.root/'manager.sock').exists(),
+                    'cgroup_retained':Path(previous['cgroup']).exists()}
+        assert observed['marker_retained']
+        self.deaths.append(observed)
+        return observed
 
     def observe(self, value):
         assert value['owner']['installation_id'] == self.cfg['installation_id']
@@ -103,6 +126,11 @@ class Manager:
     def close(self):
         if not self.process:
             return
+        if self.process.poll() is not None and any(value['owner']['process']['pid']==self.process.pid for value in self.deaths):
+            # Preserve the original failure and use the production restart/drain
+            # path to collect this exact installation after an interrupted test.
+            self.maintenance_restart = True
+            self.start()
         if self.process.poll() is None:
             try:
                 stopped = subprocess.run([str(self.binary), 'manager-stop', '--config', str(self.config)],
@@ -134,5 +162,6 @@ class Manager:
                 source.seek(max(0, self.log.stat().st_size - 5000))
                 tail = source.read(5000).decode(errors='replace')
         return {'owner': self.owner, 'stderr_tail': tail, 'stop_error': self.stop_error,
+                'actual_manager_deaths':self.deaths,'maintenance_restart':self.maintenance_restart,
                 'process_collected': bool(self.process and self.process.poll() is not None
                                           and not (Path('/proc') / str(self.process.pid)).exists())}

@@ -27,6 +27,21 @@ fn stat(pid: u32) -> io::Result<(u32, u64)> {
             .map_err(|_| invalid("invalid process start"))?,
     ))
 }
+/// Read-only absence of the original identity, including PID reuse. Unlike a
+/// pidfd signal/reap target this never grants authority over the replacement.
+pub(super) fn process_absent(expected: &ProcessIdentity) -> Result<bool> {
+    if expected.pid <= 1 || expected.pid > i32::MAX as u32 || expected.start_ticks == 0 {
+        return Err(invalid("invalid original process identity").into());
+    }
+    if expected.boot_id != boot_id()? {
+        return Ok(true);
+    }
+    match stat(expected.pid) {
+        Ok((_, ticks)) => Ok(ticks != expected.start_ticks),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(true),
+        Err(error) => Err(error.into()),
+    }
+}
 fn open(pid: u32) -> io::Result<Option<OwnedFd>> {
     if pid <= 1 || pid > i32::MAX as u32 {
         return Err(invalid("invalid reaping PID"));

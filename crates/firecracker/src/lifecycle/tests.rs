@@ -18,12 +18,31 @@ fn tracked_actual_process_rejects_foreign_start_time_and_observes_reaped_exit() 
     let identity = process_identity(child.0.id()).unwrap();
     let fd = track_process(&identity).unwrap();
     assert!(!pidfd_exited(&fd).unwrap());
+    assert!(!reaper::process_absent(&identity).unwrap());
     let mut foreign = identity.clone();
     foreign.start_ticks += 1;
     assert!(track_process(&foreign).is_err());
+    assert!(reaper::process_absent(&foreign).unwrap());
     assert!(child.0.try_wait().unwrap().is_none());
     child.0.kill().unwrap();
+    let mut info = std::mem::MaybeUninit::<libc::siginfo_t>::uninit();
+    assert_eq!(
+        unsafe {
+            libc::waitid(
+                libc::P_PID,
+                identity.pid,
+                info.as_mut_ptr(),
+                libc::WEXITED | libc::WNOWAIT,
+            )
+        },
+        0
+    );
+    assert!(
+        !reaper::process_absent(&identity).unwrap(),
+        "a zombie is not absence"
+    );
     child.0.wait().unwrap();
+    assert!(reaper::process_absent(&identity).unwrap());
     assert!(pidfd_exited(&fd).unwrap());
     assert!(!Path::new("/proc").join(identity.pid.to_string()).exists());
 }

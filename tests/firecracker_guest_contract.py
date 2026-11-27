@@ -61,11 +61,14 @@ def main():
     parser.add_argument('--source-commit', required=True)
     parser.add_argument('--driver-contract', action='store_true')
     parser.add_argument('--public-contract', action='store_true')
+    parser.add_argument('--manager-recovery-contract', action='store_true')
     parser.add_argument('--control', type=Path)
     parser.add_argument('--cli', type=Path)
     args = parser.parse_args()
     if args.public_contract and (not args.driver_contract or not args.control or not args.cli):
         parser.error('public contract requires --driver-contract, --control and --cli')
+    if args.manager_recovery_contract and not args.public_contract:
+        parser.error('manager recovery requires the actual public contract')
     assert re.fullmatch(r'[0-9a-f]{40}', args.source_commit)
     assert re.fullmatch(r'[0-9]+-[0-9]+', args.owner)
     root = Path(__file__).resolve().parent.parent
@@ -82,6 +85,8 @@ def main():
         # compile fixture JSON. Bind every crate input rather than Rust alone.
         sources += sorted(p for p in (root / 'crates').rglob('*') if p.is_file() and '__pycache__' not in p.parts)
         sources += sorted((root / 'sdk/python').rglob('*.py')) + [root / 'sdk/python/pyproject.toml']
+    if args.manager_recovery_contract:
+        sources += [root/'tests/firecracker_manager_recovery_contract.py',root/'.github/workflows/firecracker-manager-recovery.yml']
     sources += sorted((root / 'images/microvm').glob('*.json'))
     report = {
         'suite': 'actual jailed Firecracker guest bootstrap',
@@ -213,13 +218,15 @@ def main():
                 tools.append(target)
             report['public_binaries_sha256'] = {tool.name: digest(tool) for tool in tools}
             guest_collected = False
-            public = public_suite(*tools, binary, boot, fixture)
+            public = public_suite(*tools, binary, boot, fixture, manager_recovery=args.manager_recovery_contract)
             report['public'] = public
             guest_collected = public['cleanup'] == 'complete'
             report['cases'] += ['public:' + case for case in public['cases']]
             report['scope'] = 'actual basic native public API/SDK/CLI lifecycle; snapshots/templates and full M4 remain unaccepted'
             assert public['result'] == 'passed' and guest_collected, public.get('error', 'native public collection unconfirmed')
             report['runtime_capabilities_verified'] = True
+            if args.manager_recovery_contract:
+                report['scope'] = 'actual basic native public lifecycle and same-boot manager crash recovery; earlier unacknowledged allocation, snapshots/templates and full M4 remain unaccepted'
     except Exception as error:
         report['result'] = 'failed'
         report['error'] = str(error)

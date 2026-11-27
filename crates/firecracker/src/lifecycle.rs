@@ -5,6 +5,7 @@ mod manager;
 mod metadata;
 pub(crate) use metadata::atomic_json;
 pub(crate) mod reaper;
+mod recovery;
 mod supervisor;
 #[cfg(test)]
 mod tests;

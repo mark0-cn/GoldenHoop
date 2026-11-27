@@ -20,6 +20,7 @@ struct Inner {
     vm_locks: Mutex<std::collections::HashMap<Uuid, std::sync::Weak<Mutex<()>>>>,
     profile: RwLock<RuntimeProfile>,
     children: std::sync::Mutex<std::collections::HashMap<Uuid, OwnedChild>>,
+    recovered: std::collections::BTreeSet<Uuid>,
 }
 struct OwnedChild {
     pid: u32,
@@ -30,6 +31,27 @@ enum ChildState {
     NotOwned,
     Running,
     Exited(String),
+}
+fn inventory(cfg: &DriverConfig) -> Result<Vec<VmJournal>> {
+    let mut records = Vec::new();
+    for entry in std::fs::read_dir(cfg.data_root.join("records"))? {
+        let path = entry?.path();
+        if path.extension().is_none_or(|extension| extension != "json") {
+            continue;
+        }
+        let stem = path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .ok_or_else(|| invalid("invalid native record filename"))?;
+        let id = Uuid::parse_str(stem)?;
+        if id.to_string() != stem {
+            return Err(invalid("noncanonical native record filename").into());
+        }
+        let record: VmJournal = read_json(&cfg.record_path(id))?;
+        record.validate(cfg, id)?;
+        records.push(record);
+    }
+    Ok(records)
 }
 #[derive(Clone)]
 pub(super) struct NativeEngine {
@@ -60,12 +82,11 @@ pub(super) fn profile(cfg: &DriverConfig) -> RuntimeProfile {
 }
 
 impl NativeEngine {
-    pub fn connect(cfg: DriverConfig) -> Result<Self> {
+    pub fn connect(cfg: DriverConfig, lock: File) -> Result<Self> {
         cfg.validate()?;
         if unsafe { libc::geteuid() } != 0 {
             return Err(invalid("native driver requires Linux root").into());
         }
-        let lock = metadata::claim_installation(&cfg.data_root, cfg.installation_id)?;
         for name in ["vm", "records"] {
             private_directory(&cfg.data_root.join(name))?;
         }
@@ -75,7 +96,11 @@ impl NativeEngine {
         {
             return Err(invalid("native supervisor artifact mismatch").into());
         }
-        atomic_json(&cfg.data_root.join("config.json"), &cfg)?;
+        let recovered = inventory(&cfg)?
+            .into_iter()
+            .filter(|record| record.phase != "collected")
+            .map(|record| record.owner.sandbox_id)
+            .collect();
         let observed = profile(&cfg);
         Ok(Self {
             inner: Arc::new(Inner {
@@ -85,8 +110,85 @@ impl NativeEngine {
                 vm_locks: Mutex::new(Default::default()),
                 profile: RwLock::new(observed),
                 children: std::sync::Mutex::new(Default::default()),
+                recovered,
             }),
         })
+    }
+    pub(super) fn recovered_count(&self) -> usize {
+        self.inner.recovered.len()
+    }
+
+    /// Authenticate acknowledged live generations independently. An uncertain
+    /// or unresponsive generation retains its reservation and journal rather
+    /// than preventing unrelated installation operations from becoming ready.
+    pub(super) async fn observe_recovery(
+        &self,
+    ) -> Result<Vec<super::recovery::GenerationRecovery>> {
+        let records: Vec<_> = self
+            .records()?
+            .into_iter()
+            .filter(|record| record.phase != "collected")
+            .collect();
+        if records.len() > self.inner.cfg.capacity.max_vms as usize {
+            return Err(invalid("native recovery inventory exceeds configured capacity").into());
+        }
+        let permits = Arc::new(tokio::sync::Semaphore::new(8));
+        let mut tasks = tokio::task::JoinSet::new();
+        for record in records {
+            let actor = self.clone();
+            let permits = permits.clone();
+            tasks.spawn(async move {
+                let _permit = permits
+                    .acquire_owned()
+                    .await
+                    .map_err(|_| invalid("native recovery observation closed"))?;
+                let mut observed = super::recovery::GenerationRecovery {
+                    sandbox_id: record.owner.sandbox_id,
+                    generation: record.owner.generation,
+                    previous_phase: record.phase.clone(),
+                    previous_error_sha256: record
+                        .error
+                        .as_ref()
+                        .map(|text| format!("{:x}", Sha256::digest(text.as_bytes()))),
+                    observed_state: ObservedState::Unknown,
+                    authenticated: false,
+                };
+                let check = async {
+                    let cfg = &actor.inner.cfg;
+                    if !record.ever_ready
+                        || !["running", "paused"].contains(&record.phase.as_str())
+                        || record.expired()?
+                        || record.process.is_none()
+                        || record.artifacts != cfg.artifacts
+                        || record.supervisor_artifact != cfg.supervisor
+                    {
+                        return Err(
+                            invalid("native generation requires further reconciliation").into()
+                        );
+                    }
+                    let state = actor
+                        .supervisor_call(&record, SupervisorOperation::Status)
+                        .await?;
+                    if ![ObservedState::Running, ObservedState::Paused].contains(&state) {
+                        return Err(
+                            invalid("native VMM observation is not running or paused").into()
+                        );
+                    }
+                    Ok::<_, Box<dyn std::error::Error + Send + Sync>>(state)
+                };
+                if let Ok(Ok(state)) = tokio::time::timeout(Duration::from_secs(3), check).await {
+                    observed.observed_state = state;
+                    observed.authenticated = true;
+                }
+                Ok::<_, Box<dyn std::error::Error + Send + Sync>>(observed)
+            });
+        }
+        let mut result = Vec::new();
+        while let Some(observed) = tasks.join_next().await {
+            result.push(observed.map_err(|_| invalid("native recovery observer failed"))??);
+        }
+        result.sort_by_key(|record| record.sandbox_id);
+        Ok(result)
     }
 
     async fn vm_lock(&self, id: Uuid) -> Arc<Mutex<()>> {
@@ -172,23 +274,7 @@ impl NativeEngine {
         Ok(record)
     }
     fn records(&self) -> Result<Vec<VmJournal>> {
-        let mut records = Vec::new();
-        for entry in std::fs::read_dir(self.inner.cfg.data_root.join("records"))? {
-            let path = entry?.path();
-            if path.extension().is_none_or(|extension| extension != "json") {
-                continue;
-            }
-            let stem = path
-                .file_stem()
-                .and_then(|v| v.to_str())
-                .ok_or_else(|| invalid("invalid native record filename"))?;
-            let id = Uuid::parse_str(stem)?;
-            if id.to_string() != stem {
-                return Err(invalid("noncanonical native record filename").into());
-            }
-            records.push(self.load(id)?);
-        }
-        Ok(records)
+        inventory(&self.inner.cfg)
     }
 
     fn admit(&self, resources: &ResourceLimits) -> Result<()> {
@@ -320,11 +406,19 @@ impl NativeEngine {
             .ok_or_else(|| invalid("native supervisor identity is not recorded"))?;
         let fd = track_process(expected)?;
         if expected.uid != 0
-            || expected.executable_sha256 != record.supervisor_artifact.sha256
+            || expected.executable_sha256 != self.inner.cfg.supervisor.sha256
+            || record.supervisor_artifact != self.inner.cfg.supervisor
             || pidfd_exited(&fd)?
         {
             return Err(invalid("native supervisor is not live and authenticated").into());
         }
+        let group = self
+            .inner
+            .cfg
+            .paths(record.owner.generation)?
+            .supervisor_cgroup;
+        let _membership = super::reaper::group_child(expected.pid, Some(&group), false)?
+            .ok_or_else(|| invalid("native supervisor generation group is absent"))?;
         let path = self
             .inner
             .cfg
@@ -500,7 +594,10 @@ impl NativeEngine {
                 )
                 .into());
             }
-            if record.supervisor.is_none() && record.phase == "reserved" {
+            if record.supervisor.is_none()
+                && record.phase == "reserved"
+                && !self.inner.recovered.contains(&sandbox.id)
+            {
                 let paths = cfg.paths(record.owner.generation)?;
                 if !paths.root.try_exists()?
                     && !paths.vm_cgroup.try_exists()?
@@ -576,6 +673,12 @@ impl NativeEngine {
         let Some(expected) = &record.supervisor else {
             return Ok(false);
         };
+        if expected.uid != 0
+            || expected.executable_sha256 != self.inner.cfg.supervisor.sha256
+            || record.supervisor_artifact != self.inner.cfg.supervisor
+        {
+            return Err(invalid("native supervisor artifact or root identity differs").into());
+        }
         if expected.boot_id != boot_id()?
             || !Path::new("/proc")
                 .join(expected.pid.to_string())
@@ -761,11 +864,24 @@ impl NativeEngine {
             if ["reserved", "preparing", "launch_intent", "tracked"]
                 .contains(&record.phase.as_str())
             {
+                if matches!(
+                    self.child_state(record.owner.sandbox_id, record.supervisor.as_ref())?,
+                    ChildState::NotOwned
+                ) {
+                    return Err(invalid("unacknowledged adopted supervisor must settle its original effect before stop").into());
+                }
                 let identity = record
                     .supervisor
                     .as_ref()
                     .ok_or_else(|| invalid("native supervisor identity missing"))?;
                 let fd = track_process(identity)?;
+                let group = self
+                    .inner
+                    .cfg
+                    .paths(record.owner.generation)?
+                    .supervisor_cgroup;
+                let _membership = super::reaper::group_child(identity.pid, Some(&group), false)?
+                    .ok_or_else(|| invalid("owned supervisor generation group is absent"))?;
                 let result = unsafe {
                     libc::syscall(
                         libc::SYS_pidfd_send_signal,
@@ -1119,5 +1235,152 @@ impl AgentTransport for NativeEngine {
             return Err(unavailable("native response arrived after absolute expiry"));
         }
         Ok(reply)
+    }
+}
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn recovered_unacknowledged_reservation_waits_without_spawning_or_advertising_a_runtime()
+    {
+        if unsafe { libc::geteuid() } != 0 {
+            return;
+        }
+        let directory = tempfile::Builder::new()
+            .prefix("gm-")
+            .tempdir_in("/var/lib")
+            .unwrap();
+        let artifact_path = PathBuf::from("/usr/bin/true");
+        let (sha256, size) = digest(trusted_file(&artifact_path).unwrap()).unwrap();
+        let artifact = Artifact {
+            path: artifact_path,
+            sha256,
+            size,
+        };
+        let resources = ResourceLimits {
+            cpu_millis: 500,
+            memory_bytes: 256 * MIB,
+            pids: 32,
+        };
+        let cfg = DriverConfig {
+            installation_id: Uuid::new_v4(),
+            data_root: directory.path().join("d"),
+            artifacts: BootInput {
+                firecracker: artifact.clone(),
+                jailer: artifact.clone(),
+                kernel: artifact.clone(),
+                rootfs: artifact.clone(),
+            },
+            image: format!("sha256:{}", artifact.sha256),
+            supervisor: artifact,
+            max_resources: resources.clone(),
+            capacity: HostCapacity::default(),
+            max_ttl_seconds: 300,
+        };
+        let mut request = CreateSandbox::new(PROFILE, cfg.image.clone());
+        request.resources = resources.clone();
+        request.ttl_seconds = 120;
+        let now = Utc::now();
+        let id = Uuid::new_v4();
+        let generation = Uuid::new_v4();
+        let sandbox = Sandbox {
+            id,
+            profile: PROFILE.into(),
+            image: cfg.image.clone(),
+            state: SandboxState::Pending,
+            desired_state: DesiredState::Running,
+            cleanup: CleanupState::Pending,
+            created_at: now,
+            expires_at: now + chrono::Duration::seconds(120),
+            observed_at: None,
+            resources: resources.clone(),
+            metadata: Default::default(),
+            reason: None,
+        };
+        let lease = metadata::claim_installation(&cfg.data_root, cfg.installation_id).unwrap();
+        for name in ["records", "vm"] {
+            private_directory(&cfg.data_root.join(name)).unwrap();
+        }
+        let record = VmJournal {
+            format: 1,
+            owner: VmOwner {
+                installation_id: cfg.installation_id,
+                sandbox_id: id,
+                generation,
+                request_sha256: request_digest(&request).unwrap(),
+                expires_at: sandbox.expires_at,
+                host_boot_id: boot_id().unwrap(),
+                boot_deadline_ns: boottime_ns().unwrap() + 120_000_000_000,
+            },
+            artifacts: cfg.artifacts.clone(),
+            resources,
+            supervisor: None,
+            supervisor_artifact: cfg.supervisor.clone(),
+            original_cgroup: supervisor::original_cgroup().unwrap(),
+            process: None,
+            phase: "reserved".into(),
+            ever_ready: false,
+            error: None,
+            console_tail: String::new(),
+            supervisor_stderr_tail: String::new(),
+            supervisor_cgroup_events: Default::default(),
+        };
+        atomic_json(&cfg.record_path(id), &record).unwrap();
+        let engine = NativeEngine::connect(cfg.clone(), lease).unwrap();
+        let paths = cfg.paths(generation).unwrap();
+        assert!(
+            !paths.root.exists() && !paths.vm_cgroup.exists() && !paths.supervisor_cgroup.exists()
+        );
+        let snapshot = std::fs::read(cfg.record_path(id)).unwrap();
+        let observed = engine.observe_recovery().await.unwrap();
+        assert_eq!(observed.len(), 1);
+        assert!(!observed[0].authenticated && observed[0].observed_state == ObservedState::Unknown);
+        let outcome = tokio::time::timeout(
+            Duration::from_millis(80),
+            engine.create_owned(&sandbox, &request),
+        )
+        .await;
+        let unchanged = std::fs::read(cfg.record_path(id)).unwrap() == snapshot;
+        let absent =
+            !paths.root.exists() && !paths.vm_cgroup.exists() && !paths.supervisor_cgroup.exists();
+        let no_children = engine.inner.children.lock().unwrap().is_empty();
+        // The fixture uses no KVM and grants no runtime capability. If a
+        // regression dispatched its inert helper, use only normal owned drain.
+        if !absent || !no_children {
+            let handle = engine.handle(&record);
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+            loop {
+                let _ = engine.reap_children();
+                if engine.remove(&handle).await.is_ok() {
+                    break;
+                }
+                if tokio::time::Instant::now() >= deadline {
+                    let retained = directory.keep();
+                    panic!(
+                        "unexpected owned dispatch retained for reconciliation: {}",
+                        retained.display()
+                    );
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        }
+        assert!(
+            outcome.is_err(),
+            "must wait for the original effect instead of replaying create"
+        );
+        assert!(
+            unchanged && absent && no_children,
+            "recovery dispatched or rewrote an unacknowledged reservation"
+        );
+        assert_eq!(
+            engine.inner.profile.read().await.availability,
+            Availability::Unverified
+        );
+        drop(engine);
+        let path = directory.path().to_owned();
+        directory.close().unwrap();
+        assert!(!path.exists());
     }
 }

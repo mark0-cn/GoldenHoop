@@ -23,7 +23,7 @@ def recovery_program(nonce, workspace='/workspace'):
             "print('once',end='')")
 
 
-def suite(control, cli, native, boot, fixture):
+def suite(control, cli, native, boot, fixture, manager_recovery=False):
     report = {'result': 'failed', 'cleanup': 'unknown', 'cases': [], 'observations': {},
               'scope': 'basic native public lifecycle only; full M4 remains unaccepted'}
     database = fixture / 'public.db'
@@ -223,6 +223,13 @@ def suite(control, cli, native, boot, fixture):
         assert client.read_file(sid, 'native-public.bin') == binary
         report['cases'].append('public_worker_SIGKILL_recovers_same_VM_and_execution_without_replay')
 
+        if manager_recovery:
+            from firecracker_manager_recovery_contract import exercise
+            observations = report['observations']['manager_crash_recovery'] = {}
+            checks, observations = exercise(native, cfg, config, root, manager, client, sid, complete, observed=observations)
+            report['cases'] += ['manager_recovery:'+check for check in checks]
+            report['observations']['manager_crash_recovery'] = observations
+
         captured = client.create_artifact(sid, CreateArtifact('native-public.bin', 'native-public.bin'), str(uuid.uuid4()))
         complete(captured['operation']); artifact_id = captured['artifact']['id']
         assert client.artifact_bytes(artifact_id) == binary
@@ -239,9 +246,18 @@ def suite(control, cli, native, boot, fixture):
         complete(client.pause(eid, str(uuid.uuid4())))
         expired_record = record(eid)
         stop('worker', kill=True)
+        if manager_recovery:
+            report['observations']['expiry_actual_manager_death'] = manager.hard_kill()
         until = time.monotonic() + 90
         samples = report['observations']['independent_expiry'] = []
         manager.wait_collected(expired_record, until, samples)
+        if manager_recovery:
+            owner = manager.start()
+            previous = report['observations']['expiry_actual_manager_death']['owner']
+            assert owner['epoch'] != previous['epoch'] and owner['recovery']['previous_process']==previous['process']
+            assert not Path(previous['cgroup']).exists()
+            report['observations']['expiry_recovered_manager'] = owner
+            report['cases'].append('paused_VM_expires_with_worker_and_manager_dead_before_fenced_restart_and_collection')
         start('worker')
         terminate(eid)
         report['cases'].append('paused_VM_expires_with_worker_dead_and_public_recovery_confirms_physical_collection')

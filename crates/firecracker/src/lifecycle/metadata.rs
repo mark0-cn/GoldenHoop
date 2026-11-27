@@ -88,6 +88,9 @@ fn json(path: &Path, value: &impl Serialize, replace: bool) -> Result<()> {
 pub(crate) fn atomic_json(path: &Path, value: &impl Serialize) -> Result<()> {
     json(path, value, true)
 }
+pub(super) fn initial_json(path: &Path, value: &impl Serialize) -> Result<()> {
+    json(path, value, false)
+}
 
 fn marker(root: &Path, installation: Uuid) -> Result<bool> {
     let path = root.join("installation.json");

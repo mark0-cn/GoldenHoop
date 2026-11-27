@@ -71,3 +71,60 @@ All 23 retained bootstrap/private/public groups pass with Complete collection,
 including worker restart and expiry. This accepts the existing lifecycle under
 the new root/atomic boundary; hard-manager death, abandoned pending-file
 reconciliation, snapshots and complete M4 remain unaccepted.
+
+## Same-boot installation manager recovery
+
+The next manager implementation holds the existing installation lease before
+recovery. It checks the prior manager's installation, epoch, executable and
+exact declared/persisted configuration before writing configuration or replacing
+control metadata. The original PID/start identity must be gone; a zombie still
+refuses recovery. A reused PID only establishes read-only absence of the old
+identity and grants no signal/reap authority over its replacement.
+
+Manager socket and cgroup records now retain device/inode receipts. Existing
+unrecorded objects and replacements are preserved. The prior epoch remains on
+disk until its replacement is durably published, so restart cannot erase the
+only manager fence while generations remain. A fresh marker uses no-replace
+publication. Every live manager client checks those control-object identities
+and authenticates the actual root process and epoch.
+
+| Observation | Restart behavior |
+| --- | --- |
+| Previous manager identity is present | Refuse without taking control |
+| Configuration, socket or cgroup identity differs | Preserve and refuse |
+| Acknowledged running/paused supervisor authenticates | Reconnect to the same supervisor/VMM and record the observed state |
+| Valid generation is unconfirmed or unresponsive | Retain its journal/reservation; no replacement launch or guessed success |
+| Pre-existing unacknowledged creation | Wait for its original effect; never replay create |
+| Adopted early supervisor lacks direct-child authority | Retain until its original effect settles; no forced early signal |
+
+Supervisor observations are independent, limited to eight concurrent exchanges
+and three seconds each. The supervisor retains journal writes and actual VMM
+parenthood. Every control request checks the pinned executable, root PID/start,
+generation cgroup membership, socket peer and owner. Graceful collection still
+requires actual VMM/supervisor process absence and owned cgroup/jail removal.
+The new manager rotates its own epoch; VM identity and guest state are preserved.
+Its Ready flag publishes control readiness, while runtime capabilities still
+require a successful actual probe.
+
+This follows the reconnect/independent-runtime-parent pattern in the
+[pinned containerd shim loader](https://github.com/containerd/containerd/blob/59228e1af476a2b67cd80319e7e7249842413a05/core/runtime/v2/shim.go).
+The [upstream applicability review](evidence/m4-manager-recovery-upstream-review.json)
+records the additional GoldenHoop ownership fences.
+
+The [current validation summary](evidence/m4-manager-recovery-acceptance-summary.json)
+verifies Windows281/Linux-root348 tests with formatting, strict all-target
+workspace Clippy and 316 byte-exact inputs each. Root tests execute real socket
+replacement/refusal and PID kill/zombie/reap checks. An unacknowledged-reservation
+test exercises actual dispatch code under a bounded wait and proves no helper,
+provider path, journal rewrite or runtime advertisement. It does not use KVM.
+The earlier successful check and test-module-placement lint failure are retained;
+the final checks use the fenced source. Both temporary check tags are
+ownership-verified and collected; useful caches remain.
+
+The dedicated `firecracker-manager-recovery.yml` gate still needs actual KVM
+acceptance. It covers public command continuation, manager SIGKILL, live-owner
+exclusion, changed configuration/control objects/supervisor identity, stale
+epoch refusal, paused state and expiry while both worker and manager are dead.
+Host/configuration migration, earlier abandoned allocation/metadata recovery,
+snapshots/restore/templates/production placement, complete M4 and M5-M6 remain
+unaccepted.
