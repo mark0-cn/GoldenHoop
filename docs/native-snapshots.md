@@ -12,7 +12,10 @@ targeted native6/shared-guest6 gate passes12/90/Complete at0caa8a7. The independ
 actual missing-writer cut also passes9/90/Complete at2f3a8a5, including a live VMM
 unacknowledged by both native journal and store, original collection proof and
 Closed/Unconfirmed with exact quota/GC and no relaunch.
-Public native snapshot/restore/template capabilities are not implemented or advertised.
+Public native snapshot/restore/template execution and capability registration
+remain unavailable. The [public operation foundation](public-snapshot-operations.md)
+now persists capture intent, source fencing and immutable execution candidates;
+worker/backend orchestration, public clients and actual acceptance remain required.
 The complete M0-M6 objective in [roadmap.md](roadmap.md) is unchanged.
 
 ## Upstream constraints

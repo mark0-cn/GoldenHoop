@@ -121,11 +121,24 @@ impl Store {
     }
 
     pub async fn cancel_execution(&self, id: Uuid) -> Result<Execution, ApiError> {
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+        let source: String = sqlx::query_scalar("SELECT sandbox_id FROM executions WHERE id=?")
+            .bind(id.to_string())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(db)?
+            .ok_or_else(|| not_found("execution"))?;
+        super::snapshots::require_dispatch(
+            &mut tx,
+            Uuid::parse_str(&source).map_err(|_| internal())?,
+        )
+        .await?;
         sqlx::query("UPDATE executions SET cancel_requested=1 WHERE id=?")
             .bind(id.to_string())
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(db)?;
+        tx.commit().await.map_err(db)?;
         Ok(self.execution(id).await?.execution)
     }
 

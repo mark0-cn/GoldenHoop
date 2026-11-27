@@ -69,6 +69,11 @@ use utoipa::OpenApi;
     FileKind,
     SnapshotKind,
     SnapshotManifest,
+    CreateSnapshot,
+    Snapshot,
+    SnapshotState,
+    SnapshotCreated,
+    SnapshotPage,
     Operation,
     OperationState
 )))]

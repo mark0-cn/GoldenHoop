@@ -244,6 +244,7 @@ impl Store {
             super::networks::require_collected(&mut tx, stored.sandbox.id).await?;
             super::isolated::confirm_children_absent(&mut tx, stored.sandbox.id).await?;
         }
+        super::snapshots::observe_source(&mut tx, &previous, &stored).await?;
         // The worker only supplies observations; request identity and absolute TTL
         // remain the values committed by the API, even when its snapshot is stale.
         let reported = stored.sandbox;
@@ -311,6 +312,7 @@ impl Store {
             .ok_or_else(|| not_found("sandbox"))?;
         let mut stored = sandbox_row(&row)?;
         if desired != DesiredState::Terminated {
+            super::snapshots::require_dispatch(&mut tx, id).await?;
             super::isolated::require_feature_limit(&mut tx, id, Capability::Pause).await?;
         }
         if stored.sandbox.desired_state == desired {

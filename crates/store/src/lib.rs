@@ -20,9 +20,11 @@ mod credentials;
 mod pool_tests;
 mod security;
 mod sessions;
+mod snapshots;
 pub use networks::{
     NetworkAbsence, NetworkAllocation, NetworkBinding, NetworkNativeBinding, NetworkPhase,
 };
+pub use snapshots::{SnapshotCaptureDispatch, SnapshotExecutionCandidate, StoredSnapshot};
 
 use std::{path::Path, time::Duration};
 
@@ -273,7 +275,7 @@ impl Store {
                 .await
                 .map_err(db)?;
         let version: u32 = version.parse().map_err(|_| internal())?;
-        if !(1..=17).contains(&version) {
+        if !(1..=18).contains(&version) {
             return Err(ApiError::new(
                 ErrorCode::UnsupportedCapability,
                 "database schema version is unsupported",
@@ -296,6 +298,7 @@ impl Store {
             (15, include_str!("schema-v15.sql")),
             (16, include_str!("schema-v16.sql")),
             (17, include_str!("schema-v17.sql")),
+            (18, include_str!("schema-v18.sql")),
         ];
         for (target, migration) in migrations {
             if version < target {

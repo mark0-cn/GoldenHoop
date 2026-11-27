@@ -157,6 +157,9 @@ impl Worker {
         handle: &RuntimeHandle,
         request: &AgentRequest,
     ) -> Result<AgentResponse, ApiError> {
+        self.store
+            .require_snapshot_dispatch(handle.sandbox_id)
+            .await?;
         self.require_network_dispatch(handle.sandbox_id).await?;
         driver.rpc(handle, request).await
     }
@@ -166,6 +169,9 @@ impl Worker {
         handle: &RuntimeHandle,
         request: &AgentRequest,
     ) -> Result<AgentReply, ApiError> {
+        self.store
+            .require_snapshot_dispatch(handle.sandbox_id)
+            .await?;
         self.require_network_dispatch(handle.sandbox_id).await?;
         driver.rpc_reply(handle, request).await
     }

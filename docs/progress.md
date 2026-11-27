@@ -1,5 +1,34 @@
 # Progress
 
+The [public snapshot operation foundation](public-snapshot-operations.md) adds
+domain/schema resources and SQLite v18 capture intent, idempotent operations,
+original source identity, durable dispatch markers and source admission fencing.
+Observed running command candidates persist independently of later source state;
+they are not guest presence or replay authority. Ready references are immutable
+and private. Original source collection atomically releases its admission fence
+without claiming snapshot content collection. Work/RPC gates and ordinary
+lifecycle reconciliation honor the fence; explicit termination and absolute
+expiry can still collect the source.
+
+The [implementation summary](evidence/m4-public-snapshot-implementation-summary.json)
+binds identical348 inputs to full Windows295/GNU-root409 checks and scoped musl21
+plus all4 static guest releases. Formatting and strict all-target clippy pass.
+All84 Store tests pass, including five new concurrent/persistent SQLite tests.
+Both successful owned check tags and the initial failed host tag are positively
+absent. Original E0716 fixture compilation and old-schema fixture failures remain
+preserved. A subsequent Windows policy-suite failure did not reproduce in
+same-source focused13/full295 rechecks; its assertion was lost by the old output
+capture and its cause remains unverified. The observation helper now merges
+stdout/stderr before hashing and saving the diagnostic tail. No Rust assertion or
+production limit was changed for those rechecks.
+
+This accepts the storage/admission increment only. SQLite runtime observations
+are synthetic, and a SQL fence does not drain already accepted RPC effects.
+Worker capture/restore/GC, public REST/CLI/Rust/Python interfaces, restored
+execution identity bindings and actual public profile/KVM acceptance remain
+required. MemorySnapshot stays unadvertised. Rootfs/volume snapshots, templates,
+combined M4 and all remaining M5-M6 work stay active.
+
 The independent [writer-ack cut46066555955](https://github.com/mark0-cn/GoldenHoop/actions/runs/46066555955)
 passes9 groups/90 verified inputs at2f3a8a5 with Complete collection. Before
 SIGKILL, UID10000 VMM19898/start76962 is actually running in the original owned
@@ -86,8 +115,9 @@ remain retained.
 
 Native persistent manager/supervisor restoration, public snapshots and execution/
 session rebinding, rootfs/volume snapshots, templates, combined M4 and complete
-M5-M6 remain active. A separate uncommitted worktree implements manager restoration;
-its compilation/intent tests do not accept hardware recovery.
+M5-M6 remain active. The private manager restoration implementation and its
+separate actual recovery/collection gates are accepted above; public integration
+remains required.
 
 Native public selected-image placement and private protocol2 quiescence remain independently accepted at376328c: actual KVM placement53/366 inputs and barrier52/365 inputs both pass with Complete collection; CI46009520892 also passes. Protocol3 and private full capture have their separate acceptance above. Host restore authority, public snapshots/templates, combined M4 and complete M5-M6 remain active.
 

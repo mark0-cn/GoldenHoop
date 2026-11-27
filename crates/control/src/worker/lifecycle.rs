@@ -142,6 +142,11 @@ impl Worker {
                 .stop(stored, driver, "sandbox termination requested", state)
                 .await;
         }
+        // Snapshot ownership fences ordinary resume/agent synchronization.
+        // Absolute expiry and explicit termination still collect the source.
+        if self.store.snapshot_source_fenced(id).await? && !expired(&stored.sandbox, Utc::now()) {
+            return Ok(());
+        }
         stored.handle = self.recovered_handle(&stored, driver).await?;
         let observation = if let Some(handle) = &stored.handle {
             Some(driver.inspect(handle).await?)

@@ -7,6 +7,7 @@ mod isolated;
 mod models;
 mod security;
 mod sessions;
+mod snapshots;
 
 pub use agent::*;
 pub use artifacts::*;
@@ -16,3 +17,4 @@ pub use isolated::*;
 pub use models::*;
 pub use security::*;
 pub use sessions::*;
+pub use snapshots::*;

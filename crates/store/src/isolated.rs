@@ -106,6 +106,7 @@ pub(super) async fn require_running_tree(
             return Ok(());
         };
         let record = source(tx, id).await?.sandbox;
+        super::snapshots::require_dispatch(tx, id).await?;
         if record.desired_state != DesiredState::Running
             || record.state != SandboxState::Running
             || expired(&record, Utc::now())

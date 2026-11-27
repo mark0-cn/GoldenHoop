@@ -681,6 +681,18 @@
         },
         "additionalProperties": false
       },
+      "CreateSnapshot": {
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/SnapshotKind"
+          }
+        },
+        "additionalProperties": false
+      },
       "DesiredState": {
         "type": "string",
         "enum": [
@@ -908,6 +920,46 @@
             "items": {
               "$ref": "#/components/schemas/NetworkRule"
             }
+          }
+        },
+        "additionalProperties": false
+      },
+      "NetworkPolicyChanged": {
+        "type": "object",
+        "required": [
+          "policy",
+          "operation"
+        ],
+        "properties": {
+          "operation": {
+            "$ref": "#/components/schemas/Operation"
+          },
+          "policy": {
+            "$ref": "#/components/schemas/NetworkPolicyState"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NetworkPolicyState": {
+        "type": "object",
+        "description": "Desired user policy only; this response carries no runtime lease or host\ncontroller identity. Ancestor and administrator constraints still apply.",
+        "required": [
+          "sandbox_id",
+          "revision",
+          "policy"
+        ],
+        "properties": {
+          "policy": {
+            "$ref": "#/components/schemas/NetworkPolicy"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "sandbox_id": {
+            "type": "string",
+            "format": "uuid"
           }
         },
         "additionalProperties": false
@@ -1659,6 +1711,100 @@
         },
         "additionalProperties": false
       },
+      "SetNetworkPolicy": {
+        "type": "object",
+        "required": [
+          "expected_revision",
+          "policy"
+        ],
+        "properties": {
+          "expected_revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "policy": {
+            "$ref": "#/components/schemas/NetworkPolicy"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Snapshot": {
+        "type": "object",
+        "required": [
+          "id",
+          "source_sandbox_id",
+          "kind",
+          "state",
+          "cleanup",
+          "created_at"
+        ],
+        "properties": {
+          "cleanup": {
+            "$ref": "#/components/schemas/CleanupState"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "error": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ApiError"
+              }
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/SnapshotKind"
+          },
+          "manifest": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SnapshotManifest"
+              }
+            ]
+          },
+          "observed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "source_sandbox_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "state": {
+            "$ref": "#/components/schemas/SnapshotState"
+          }
+        }
+      },
+      "SnapshotCreated": {
+        "type": "object",
+        "required": [
+          "snapshot",
+          "operation"
+        ],
+        "properties": {
+          "operation": {
+            "$ref": "#/components/schemas/Operation"
+          },
+          "snapshot": {
+            "$ref": "#/components/schemas/Snapshot"
+          }
+        }
+      },
       "SnapshotKind": {
         "type": "string",
         "enum": [
@@ -1724,6 +1870,39 @@
             "format": "uuid"
           }
         }
+      },
+      "SnapshotPage": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Snapshot"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        }
+      },
+      "SnapshotState": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "capturing",
+          "ready",
+          "failed",
+          "unknown",
+          "collecting",
+          "collected"
+        ]
       },
       "TerminalSize": {
         "type": "object",
