@@ -1,7 +1,8 @@
 # Native snapshots and restore: remaining implementation contract
 
-This is the next M4 implementation plan. Snapshot API wire bindings exist, but
-native snapshot/restore/template capabilities are not implemented or advertised.
+This is the remaining M4 implementation contract. Private native capture and
+storage are under separate validation. Public native snapshot/restore/template
+capabilities are not implemented or advertised.
 The complete M0-M6 objective in [roadmap.md](roadmap.md) is unchanged.
 
 ## Upstream constraints
@@ -25,10 +26,10 @@ separate implementation and acceptance requirement.
 | Increment | Concrete implementation | Required observation |
 | --- | --- | --- |
 | Earlier native allocation/metadata recovery | Bind pending writes and generation allocations to durable producer/object receipts; reconcile only after writer absence | Kill at write/dispatch boundaries; preserve ambiguous/replaced objects; no create or signal replay |
-| Guest quiescence | Protocol2 accepted at376328c; separate PID1/control from agent/workloads, fence admission and drain accepted effects | Actual barrier/root52 passes with365 inputs and Complete collection; protocol3 requires its separate gate |
-| Guest authority protocol | Protocol3 generation-bound native frames and frozen transition implemented | New same-VMM private protocol gate pending; not host restore/source-termination proof |
+| Guest quiescence | Protocol2 accepted at376328c and protocol3 retained at6c32d1a; separate PID1/control from agent/workloads, fence admission and drain accepted effects | Original barrier/root52/365 and subsequent authority55/371 both pass with Complete collection |
+| Guest authority protocol | Protocol3 generation-bound native frames and frozen transition accepted at6c32d1a | Actual same-VMM55/371/Complete; not host restore/source-termination proof |
 | Independent content admission | Private pinned manifest and descriptor-based anonymous state/memory/disk copies; final335-source Windows290/Linux-root390 and musl21/static4 checks pass | Actual independent source deletion, exact bytes and read-only output; corrupt/truncated/untrusted inputs leave no outputs; guest provenance remains synthetic |
-| Private checkpoint | Pause the actual VMM; capture full state/memory plus a stable drive copy into a bounded owned generation | Independent content/length checks, actual Paused state, unchanged immutable source assets, complete scoped collection |
+| Private checkpoint | Owned Machine capture/local store; local339-source Windows290/Linux-root394 and musl21/static4 checks pass | Actual Paused full capture, independent RAM/drive checks after source collection, quota/producer/inode fences and exact collection still require their separate KVM gate |
 | Private single-use memory restore | Claim once; load paused into a new jailed VMM; transition guest authority before workload RPC admission | Real retained memory/file state, new identity, old authority refusal, one target after retries/crashes |
 | Public integration | Persist operations, idempotency, quota and object references; add REST/CLI/Rust/Python clients and actual capability probe | Public success/failure/recovery and deletion on the supported real profile |
 | Rootfs/volume snapshots and templates | Distinguish fresh boot from memory continuation; bind volume identity and immutable template versions | Kind-specific consistency/isolation, independent instances and template update/deletion behavior |
@@ -39,7 +40,7 @@ separate implementation and acceptance requirement.
 The protocol2 quiesce/status/thaw barrier is accepted at376328c as described in
 [native quiescence](native-quiescence.md). Protocol3 now binds every native RPC
 to generation and provides a frozen [guest authority transition](native-authority.md);
-its separate real protocol gate remains required. Initial identity still comes
+its same-VMM55/371/Complete gate is accepted at6c32d1a. Initial identity still comes
 from guest boot arguments; changing a host VMM ID alone cannot change it.
 Host restore coordination, single-use claims and source termination remain
 unimplemented. Old guests refuse requests requiring unsupported semantics.
@@ -76,9 +77,11 @@ references. Keep restore authority separate from the immutable content manifest.
 Persistent captured content must live outside the source VM's collected jail.
 The private [content admission/materializer](native-checkpoint-content.md) can
 produce independently verified anonymous copies without depending on a source
-pathname or live producer. Durable publication, shared quota, capture producer
-fencing and restore claims are still absent; anonymous staging is not persistent
-snapshot storage.
+pathname or live producer. That materializer does not implement durable publication,
+shared quota, capture producer fencing or restore claims; anonymous staging is not persistent
+snapshot storage. The next [persistent store and owned capture](native-checkpoint-store.md)
+implementation is under separate validation; its capture workflow and full
+native-manager/public integration remain unaccepted.
 The existing VM-root receipt deliberately binds a host boot and PID namespace;
 it is not a persistent snapshot-reader contract. Separate immutable-object
 identity from the original producer's write/collection fence. A Ready reader

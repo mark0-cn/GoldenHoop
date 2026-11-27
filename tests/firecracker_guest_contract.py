@@ -67,6 +67,7 @@ def main():
     parser.add_argument('--root-recovery-contract', action='store_true')
     parser.add_argument('--guest-barrier-contract', action='store_true')
     parser.add_argument('--guest-authority-contract', action='store_true')
+    parser.add_argument('--checkpoint-contract', action='store_true')
     parser.add_argument('--prepared-image-placement', action='store_true')
     parser.add_argument('--images-binary', type=Path)
     parser.add_argument('--builder-image')
@@ -90,6 +91,8 @@ def main():
         parser.error('guest barrier requires the retained root47 and actual native driver contract')
     if args.guest_authority_contract and not args.guest_barrier_contract:
         parser.error('guest authority requires the retained actual guest-barrier and root47 contract')
+    if args.checkpoint_contract and not args.guest_authority_contract:
+        parser.error('private capture requires the retained actual authority55 contract')
     assert re.fullmatch(r'[0-9a-f]{40}', args.source_commit)
     assert re.fullmatch(r'[0-9]+-[0-9]+', args.owner)
     root = Path(__file__).resolve().parent.parent
@@ -120,6 +123,8 @@ def main():
         sources += [root/'tests/firecracker_barrier_contract.py',root/'.github/workflows/firecracker-guest-barrier.yml']
     if args.guest_authority_contract:
         sources += [root/'tests/firecracker_authority_contract.py',root/'.github/workflows/firecracker-guest-authority.yml']
+    if args.checkpoint_contract:
+        sources += [root/'tests/firecracker_checkpoint_contract.py',root/'.github/workflows/firecracker-checkpoint-capture.yml']
     sources += sorted((root / 'images/microvm').glob('*.json'))
     report = {
         'suite': 'actual jailed Firecracker guest bootstrap',
@@ -315,6 +320,15 @@ def main():
             report['cases']+=['image:'+case for case in placement['cases']]
             assert placement['result']=='passed' and guest_collected,placement.get('error','image placement collection unconfirmed')
             report['scope']='actual public two-image native placement and selected-generation recovery plus retained root47; snapshots/restore/templates and complete M4-M6 remain unaccepted'
+
+        if args.checkpoint_contract:
+            from firecracker_checkpoint_contract import suite as checkpoint_suite
+            guest_collected=False
+            checkpoint=checkpoint_suite(binary,boot,fixture)
+            report['checkpoint_capture']=checkpoint;guest_collected=checkpoint['cleanup']=='complete'
+            report['cases']+=['capture:'+case for case in checkpoint['cases']]
+            assert checkpoint['result']=='passed' and guest_collected,checkpoint.get('error','capture collection unconfirmed')
+            report['scope']='actual private paused full capture and persistent RAM/drive content after source collection plus retained authority55; no fresh target load, host restore claim, public snapshot integration or complete M4-M6 acceptance'
 
     except Exception as error:
         report['result'] = 'failed'

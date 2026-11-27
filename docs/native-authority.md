@@ -3,7 +3,9 @@
 Protocol3 implements generation-bound native RPC and a private guest authority
 transition. It is a prerequisite for capture/restore, not an implemented native
 memory restore or public snapshot capability. Its separate real guest protocol
-gate is still required. Full M4-M6 remains active.
+gate passes55 actual groups with371 verified inputs and Complete collection at
+6c32d1a (run46025026061). Full M4-M6 remains active. The newer private capture/store
+implementation is separate and cannot inherit that acceptance.
 
 The first protocol3 gate46019365079 at b18bd35 failed before completed groups.
 Its real private guest kernel boot omitted generation/task arguments because
@@ -14,6 +16,13 @@ harness additionally checks the actual kernel command line. The original
 failure has Complete collection and367 verified inputs; it remains Failed and
 does not accept authority transfer. See the
 [diagnosis](evidence/m4-guest-authority-probe-generation-diagnosis.json).
+
+The corrected immutable source6c32d1a subsequently passes
+[run46025026061](https://github.com/mark0-cn/GoldenHoop/actions/runs/46025026061):
+the actual kernel command line contains its generation/task ceiling, old partial
+and new old-generation writes leave no file effects after target thaw, target
+effects and retained files verify, and Rust collects the original physical owner.
+See the [acceptance summary](evidence/m4-guest-authority-acceptance-summary.json).
 
 ## Request boundary
 

@@ -129,6 +129,7 @@ pub struct SnapshotCreate {
     snapshot_type: &'static str,
     snapshot_path: String,
     mem_file_path: String,
+    sync_snapshot_files: bool,
 }
 
 impl SnapshotCreate {
@@ -142,6 +143,7 @@ impl SnapshotCreate {
             snapshot_type: "Full",
             snapshot_path,
             mem_file_path,
+            sync_snapshot_files: true,
         })
     }
 }

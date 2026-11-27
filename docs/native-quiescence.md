@@ -2,7 +2,9 @@
 
 The protocol2 barrier is accepted at `376328c`: the actual KVM gate passes52
 groups, verifies365 source inputs and confirms Complete collection. The newer
-protocol3 generation scope and authority transition require their own real gate.
+protocol3 generation scope, retained barrier and authority transition pass their
+own actual same-VMM55/371/Complete gate at6c32d1a. See the
+[acceptance summary](evidence/m4-guest-authority-acceptance-summary.json).
 This prerequisite does not implement snapshot creation, restore, templates or a
 public snapshot capability.
 The complete M0-M6 scope remains in [roadmap.md](roadmap.md).

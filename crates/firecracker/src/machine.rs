@@ -23,8 +23,10 @@ use uuid::Uuid;
 
 #[cfg(test)]
 mod cgroup_tests;
+mod checkpoint;
 #[cfg(test)]
 mod root_tests;
+pub use checkpoint::CheckpointCaptureReport;
 
 use crate::{
     agent::AgentClient,
@@ -86,6 +88,8 @@ pub struct GuestReport {
     pub console: String,
     pub console_truncated: bool,
     pub runtime_profile_published: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checkpoint: Option<CheckpointCaptureReport>,
 }
 
 impl GuestReport {
@@ -104,6 +108,7 @@ impl GuestReport {
             console: String::new(),
             console_truncated: false,
             runtime_profile_published: false,
+            checkpoint: None,
         }
     }
 }
@@ -1179,6 +1184,13 @@ async fn rpc(agent: &AgentClient, request: AgentRequest) -> Result<AgentResponse
 /// Real hardware gate, with failure-path collection and a report even on error.
 /// The caller must provide trusted, immutable image artifacts; no fallback exists.
 pub async fn validate_guest(input: BootInput) -> GuestReport {
+    validate_guest_with_checkpoint(input, None).await
+}
+
+pub async fn validate_guest_with_checkpoint(
+    input: BootInput,
+    checkpoint: Option<crate::checkpoint::CheckpointProbeConfig>,
+) -> GuestReport {
     let mut machine = Machine::new();
     let mut report = GuestReport {
         generation: machine.generation,
@@ -1194,12 +1206,22 @@ pub async fn validate_guest(input: BootInput) -> GuestReport {
         console: String::new(),
         console_truncated: false,
         runtime_profile_published: false,
+        checkpoint: None,
     };
     let result = match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
-        Ok(mut terminate) => tokio::select! {
-            result=machine.run(&input, &mut report)=>result,
-            _=terminate.recv()=>Err(invalid("guest operation interrupted; collecting owned generation").into()),
-        },
+        Ok(mut terminate) => {
+            let operation = async {
+                machine.run(&input, &mut report).await?;
+                if let Some(config) = &checkpoint {
+                    machine.capture(&input, config, &mut report).await?;
+                }
+                Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+            };
+            tokio::select! {
+                result=operation=>result,
+                _=terminate.recv()=>Err(invalid("guest operation interrupted; collecting owned generation").into()),
+            }
+        }
         Err(error) => Err(error.into()),
     };
     report.process = machine.process.clone();
@@ -1207,6 +1229,12 @@ pub async fn validate_guest(input: BootInput) -> GuestReport {
     if cleanup.is_ok() {
         report.cleanup = CleanupState::Complete;
     }
+    let result = result.and_then(|()| {
+        if let Some(config) = &checkpoint {
+            machine.verify_capture_after_collection(config, &mut report)?;
+        }
+        Ok(())
+    });
     report.passed = result.is_ok() && cleanup.is_ok();
     report.error = match (result, cleanup) {
         (Ok(()), Ok(())) => None,

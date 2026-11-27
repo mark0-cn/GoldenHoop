@@ -25,6 +25,18 @@ enum Action {
     ProbeGuest {
         #[arg(long)]
         config: std::path::PathBuf,
+        #[arg(long)]
+        checkpoint_config: Option<std::path::PathBuf>,
+    },
+    /// Verify a private retained capture; never grants restore authority.
+    CheckpointInspect {
+        #[arg(long)]
+        config: std::path::PathBuf,
+    },
+    /// Collect exact owned objects after the original writer and jail are gone.
+    CheckpointCollect {
+        #[arg(long)]
+        config: std::path::PathBuf,
     },
     /// Private root lifecycle service, launched only from a durable driver intent.
     Supervise {
@@ -44,6 +56,28 @@ enum Action {
         #[arg(long)]
         request: std::path::PathBuf,
     },
+}
+
+fn checkpoint_store(
+    config: std::path::PathBuf,
+    collect: bool,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    #[cfg(target_os = "linux")]
+    {
+        let config = goldenhoop_firecracker::checkpoint::CheckpointProbeConfig::read(&config)?;
+        let value = if collect {
+            goldenhoop_firecracker::checkpoint::collect_store(&config)?
+        } else {
+            goldenhoop_firecracker::checkpoint::inspect_store(&config)?
+        };
+        println!("{}", serde_json::to_string(&value)?);
+        Ok(())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (config, collect);
+        Err("native checkpoint store requires Linux root".into())
+    }
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -121,7 +155,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 std::process::exit(2);
             }
         }
-        Action::ProbeGuest { config } => {
+        Action::CheckpointInspect { config } => checkpoint_store(config, false)?,
+        Action::CheckpointCollect { config } => checkpoint_store(config, true)?,
+        Action::ProbeGuest {
+            config,
+            checkpoint_config,
+        } => {
             #[cfg(target_os = "linux")]
             {
                 use std::io::Read;
@@ -132,7 +171,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     return Err("boot configuration exceeds limit".into());
                 }
                 let input = serde_json::from_slice(&bytes)?;
-                let report = goldenhoop_firecracker::machine::validate_guest(input).await;
+                let checkpoint = checkpoint_config
+                    .map(|path| {
+                        goldenhoop_firecracker::checkpoint::CheckpointProbeConfig::read(&path)
+                    })
+                    .transpose()?;
+                let report = goldenhoop_firecracker::machine::validate_guest_with_checkpoint(
+                    input, checkpoint,
+                )
+                .await;
                 println!("{}", serde_json::to_string(&report)?);
                 if !report.passed {
                     std::process::exit(2);
@@ -140,7 +187,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             }
             #[cfg(not(target_os = "linux"))]
             {
-                let _ = config;
+                let _ = (config, checkpoint_config);
                 return Err("jailed guest validation requires Linux x86_64 KVM".into());
             }
         }

@@ -4,8 +4,8 @@ use super::*;
 use std::io::{Seek, SeekFrom};
 
 mod atomic;
-pub(super) use atomic::Recovery;
-pub(super) fn recover_entries(
+pub(crate) use atomic::Recovery;
+pub(crate) fn recover_entries(
     root: &Path,
     targets: &[&str],
     allow_unconfirmed: bool,
@@ -19,7 +19,7 @@ fn json(path: &Path, value: &impl Serialize, replace: bool) -> Result<()> {
 pub(crate) fn atomic_json(path: &Path, value: &impl Serialize) -> Result<()> {
     json(path, value, true)
 }
-pub(super) fn initial_json(path: &Path, value: &impl Serialize) -> Result<()> {
+pub(crate) fn initial_json(path: &Path, value: &impl Serialize) -> Result<()> {
     json(path, value, false)
 }
 

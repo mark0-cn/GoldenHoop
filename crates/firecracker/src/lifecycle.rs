@@ -7,7 +7,7 @@ mod image;
 pub use image::PreparedImagePolicy;
 pub use image::inherited_input;
 mod manager;
-mod metadata;
+pub(crate) mod metadata;
 pub(crate) use metadata::atomic_json;
 pub(crate) mod reaper;
 pub(crate) mod recovery;

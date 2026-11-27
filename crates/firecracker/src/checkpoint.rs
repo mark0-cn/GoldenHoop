@@ -9,7 +9,11 @@ use uuid::Uuid;
 #[cfg(target_os = "linux")]
 mod staging;
 #[cfg(target_os = "linux")]
+pub(crate) mod storage;
+#[cfg(target_os = "linux")]
 pub use staging::{CheckpointFiles, StagedCheckpoint};
+#[cfg(target_os = "linux")]
+pub use storage::{CheckpointProbeConfig, CheckpointStorePolicy, collect_store, inspect_store};
 
 const MIB: u64 = 1024 * 1024;
 pub const MAX_CHECKPOINT_STATE_BYTES: u64 = 16 * MIB;

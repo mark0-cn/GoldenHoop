@@ -1,10 +1,34 @@
 # Progress
 
-Native public selected-image placement and private protocol2 quiescence are accepted at376328c: actual KVM placement53/366 inputs and barrier52/365 inputs both pass with Complete collection; CI46009520892 also passes. Protocol3 generation-bound RPC and frozen guest authority transition are now implemented with their own verification in progress. Memory capture, host restore authority, snapshots/templates, combined M4 and complete M5-M6 remain active.
+Protocol3 private authority is accepted at6c32d1a: actual same-VMM gate46025026061
+passes55 groups/371 inputs with Complete collection, and CI46024920923 passes.
+The original b18bd35 missing-probe-generation failure remains Failed. The new
+owned-Machine full-capture and persistent-store code is locally verified on339
+inputs with Windows290/Linux-root394 and musl21/static4; its separate actual
+capture gate is unexecuted. Native-manager/public snapshot integration, actual restore,
+templates, combined M4 and complete M5-M6 remain active. See the
+[authority acceptance](evidence/m4-guest-authority-acceptance-summary.json) and
+[capture/store contract](native-checkpoint-store.md).
+
+Native public selected-image placement and private protocol2 quiescence remain independently accepted at376328c: actual KVM placement53/366 inputs and barrier52/365 inputs both pass with Complete collection; CI46009520892 also passes. Protocol3 has its separate6c32d1a acceptance above. Full capture, host restore authority, snapshots/templates, combined M4 and complete M5-M6 remain active.
 
 ## Active objective
 
-The next private checkpoint-content increment adds a pinned versioned manifest,
+Implement the complete M0-M6 design in the dedicated mark0-cn/GoldenHoop repository and push staged, verified commits.
+
+The current capture/store increment adds actual owned-Machine snapshot dispatch,
+source-independent durable publication, per-capture intent/object receipts and
+shared disk reservations. Targeted GNU-root4 tests pass; final339-source Windows290
+and Linux-root394 workspace checks pass, including formatting and strict all-target
+clippy. Musl21 scoped tests, strict clippy and all4 static guest release builds
+pass on identical339 inputs. All3 successful local images and both failed tags
+are observed absent, with useful caches and original failures retained. See the
+[implementation summary](evidence/m4-checkpoint-capture-implementation-summary.json).
+Its new real KVM capture
+workflow is unexecuted. Native-manager/public integration, unique host restore
+authority and fresh target load remain unimplemented.
+
+The preceding6c32d1a private checkpoint-content increment adds a pinned versioned manifest,
 exact runtime and reserved-byte admission, and independently verified read-only
 anonymous state/memory/disk copies. After correcting private boot identity below,
 final formatting, strict all-target workspace clippy and full tests pass Windows290
@@ -24,10 +48,8 @@ those arguments and confirms control identity for every native boot; the retaine
 harness also checks the actual kernel command line. Original367-input failure
 bytes are retained in the [archive](evidence/m4-guest-authority-46019365079-archive.json)
 and [diagnosis](evidence/m4-guest-authority-probe-generation-diagnosis.json).
-The corrected source requires its own real gate and cannot inherit acceptance
-from source376 or portable checks.
-
-Implement the complete M0-M6 design in the dedicated mark0-cn/GoldenHoop repository and push staged, verified commits.
+The corrected6c32d1a source now passes its own55/371/Complete gate above; it does
+not inherit acceptance from source376 or portable checks.
 
 ## Current stage
 
@@ -35,9 +57,10 @@ Protocol3 binds every native workload frame to its current generation at the
 guest effect admission guard. A frozen transition records exact source/target,
 barrier and restoration intent without opening workloads; old or delayed frames
 cannot gain target authority after thaw. The host method also authenticates the
-physical target VMM and requires a confirmed frozen response. Source-absence
-proof, a durable single-use host claim, memory/state/disk capture and actual
-fresh-VMM restore remain unimplemented. Final Windows287/Linux-root383 formatting, strict all-target clippy and
+physical target VMM and requires a confirmed frozen response. A durable single-use
+host claim, actual fresh-VMM restore and public snapshot integration remain
+unimplemented. New private capture/store code has its own pending gate above.
+Historical b18bd35 Windows287/Linux-root383 formatting, strict all-target clippy and
 workspace tests pass with331 exact inputs after updating the transport fixture
 for generation scope and physical-target no-dispatch. Final musl21
 (descriptor3/control-wire5/init13), strict all-target clippy and four static
@@ -45,7 +68,8 @@ release binaries also pass on those same331 inputs. All four successful local
 check images are removed and positively observed absent; useful caches and all
 original pass/fail evidence are retained. See the
 [implementation summary](evidence/m4-guest-authority-implementation-summary.json). The first same-VMM gate at b18bd35 fails in the preceding private probe;
-authority transition cases were not reached. The corrected gate remains required. See
+authority transition cases were not reached. Corrected6c32d1a passes the actual
+authority55 gate; the new full-capture gate remains required. See
 [guest authority](native-authority.md). This does not accept a memory restore.
 
 The preceding source376328c is independently accepted:

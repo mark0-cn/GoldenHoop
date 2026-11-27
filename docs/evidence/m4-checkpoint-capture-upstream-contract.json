@@ -1,0 +1,34 @@
+{
+  "scope": "Primary upstream constraints applied to private full capture and local durable publication. No target restore/public snapshot acceptance.",
+  "upstream": "Firecracker",
+  "revision": "eaf83bb718a559d324613d566eaf776b31a62340",
+  "sources": [
+    "https://github.com/firecracker-microvm/firecracker/blob/eaf83bb718a559d324613d566eaf776b31a62340/src/vmm/src/persist.rs",
+    "https://github.com/firecracker-microvm/firecracker/blob/eaf83bb718a559d324613d566eaf776b31a62340/src/vmm/src/vstate/memory.rs",
+    "https://github.com/firecracker-microvm/firecracker/blob/eaf83bb718a559d324613d566eaf776b31a62340/docs/snapshotting/snapshot-support.md"
+  ],
+  "observations": [
+    {
+      "upstream": "create_snapshot saves separate state and guest-memory outputs. State output opens with create/write/truncate; snapshot file paths can overwrite prior files.",
+      "implementation": "Require fresh bounded names in the owned source jail, never pass retained store objects as snapshot output, and refuse occupied/unconfirmed paths before dispatch."
+    },
+    {
+      "upstream": "Snapshot capture requires Paused. Snapshot file sync defaults true, while drives are separately managed and synced by the VMM.",
+      "implementation": "Require exact completed protocol3 guest barrier and actual Paused observations, explicitly serialize sync_snapshot_files=true, then hash and copy state/memory/drive descriptors independently."
+    },
+    {
+      "upstream": "Full memory dump writes every plugged memory slot to its writer. Persisted memory/state do not include managed drive lifecycle.",
+      "implementation": "Store reservation covers raw memory/state plus independent memory/state/drive copies; do not free raw-output capacity merely because a source PID stopped while its jail still exists."
+    },
+    {
+      "upstream": "Restored guests use private memory mappings backed by the snapshot file over their runtime lifetime; snapshot integrity/lifecycle belong to the integrator.",
+      "implementation": "Persistent object inode/birth receipts and per-capture coordination remain distinct from producer death/context. Ready reads verify exact bytes without requiring source liveness; unique restore claims, target load and mapped-memory lifetime are still separate required work."
+    }
+  ],
+  "local_scope": "Targeted GNU-root4 tests pass actual filesystem, child producer SIGSTOP/SIGKILL, writer/source-directory absence, immutable intent/mutex and replacement/corruption controls. Guest metadata in those tests is synthetic.",
+  "retained_failures": [
+    "m4-checkpoint-capture-targeted-initial.json: Linux wiring compile errors, zero tests",
+    "m4-checkpoint-capture-targeted-corrected.json: test incorrectly expected a changed immutable intent to pass the original mutex digest; guard correctly refused; original failure retained"
+  ],
+  "remaining_gate": "New source-bound firecracker-checkpoint-capture.yml is implemented but unexecuted. Prior protocol55/371/Complete at6c32 is accepted separately."
+}

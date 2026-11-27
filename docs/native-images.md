@@ -5,7 +5,9 @@ actual default-runsc pipeline passes ten groups with Complete collection and
 329 verified inputs. [Raw archive](evidence/m4-image-prepare-45990105658-archive.json).
 The native selection path is accepted at `376328c`: its actual public/KVM gate
 passes53 groups with366 verified inputs and Complete collection. This does not
-accept subsequent protocol3 changes or complete M4. Snapshots, restore, templates
+accept subsequent changes or complete M4. Protocol3 barrier/authority has its
+separate same-VMM55/371 acceptance at6c32d1a; it does not repeat the selected-image
+placement gate on that source. Snapshots, restore, templates
 and M5-M6 retain their original requirements.
 
 The first public placement run at `c4b8d87` failed while compiling static musl

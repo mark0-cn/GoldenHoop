@@ -10,7 +10,7 @@ fn pinned_wire_shapes_keep_full_snapshots_and_paused_restore_explicit() {
     assert_eq!(
         serde_json::to_value(SnapshotCreate::full("/state".into(), "/memory".into()).unwrap())
             .unwrap(),
-        json!({"snapshot_type":"Full","snapshot_path":"/state","mem_file_path":"/memory"})
+        json!({"snapshot_type":"Full","snapshot_path":"/state","mem_file_path":"/memory","sync_snapshot_files":true})
     );
     assert_eq!(
         serde_json::to_value(SnapshotLoad::paused("/state".into(), "/memory".into()).unwrap())
