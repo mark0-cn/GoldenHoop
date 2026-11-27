@@ -20,6 +20,24 @@
       "url": "https://docs.kernel.org/admin-guide/cgroup-v2.html",
       "finding": "cgroup.kill SIGKILLs the cgroup tree; deleted groups can remain dying and cannot revive",
       "application": "acknowledge actual inode and boot before limits/join/spawn or kill; actual child reaping and final path absence are additional requirements"
+    },
+    {
+      "project": "Cargo Book",
+      "url": "https://doc.rust-lang.org/cargo/reference/external-tools.html",
+      "finding": "compiler-artifact JSON exposes package/manifest/target/profile/filenames/executable; these are supported external-tool interfaces",
+      "application": "select the exact library test artifact and bind it to its declared workspace package and source"
+    },
+    {
+      "project": "Cargo Book",
+      "url": "https://doc.rust-lang.org/cargo/commands/cargo-metadata.html",
+      "finding": "format-version1 exposes configured target_directory and build_directory",
+      "application": "validate the actual executable against Cargo-declared roots inside this workflow workspace target rather than a private deps path"
+    },
+    {
+      "project": "Cargo Book",
+      "url": "https://doc.rust-lang.org/cargo/reference/build-cache.html",
+      "finding": "the internal build layout is unstable and changed in Cargo1.100",
+      "application": "do not infer artifact location from an older internal subdirectory layout; the original failed report did not capture its exact actual executable path"
     }
   ],
   "implemented": [
@@ -44,8 +62,31 @@
     "crates/firecracker/src/lifecycle/supervisor.rs": "3f87c96c24479a5b0ec743f973e0f04f9cdf90e00e72d244e7dc64d6f65fad44",
     "crates/firecracker/src/machine.rs": "356add2369b1cbf98250d8d31991ecf942a479f9710ecb507a4a578a6e21407c",
     "crates/firecracker/src/machine/cgroup_tests.rs": "4a602fb3487153d8a0cb7c394c1d52796fca98f8ff0fe7d9bd6ebab1573891e9",
-    "tests/firecracker_cgroup_contract.py": "03cc51bf8ed638e4f85c761ece725458005c79b065e367a55bbbf88b90d1df6e",
+    "tests/firecracker_cgroup_contract.py": "413356d8623c66379788d07535f3972bb43259d3eec97f6ec12158eceb9ee198",
     "tests/firecracker_guest_contract.py": "693ddded5e290f6fb316c9b055c3d42ceae361be1b464f568364fe7ce73463ef",
     ".github/workflows/firecracker-cgroup-receipts.yml": "c9c0332a6fd2c74200a365fa2a2ffc4bb399bd290ac73f9e7be0dd1feec7dd97"
+  },
+  "first_gate": {
+    "run_id": 45968932022,
+    "source_commit": "e247c53cb7a30046f1f6e488887a9fc882629c69",
+    "archive": "m4-cgroup-receipts-45968932022-archive.json",
+    "failed_step_log": "m4-cgroup-receipts-45968932022-failed-build.log",
+    "raw_failed_log_sha256": "a5196a6884f9411ec430c6a552cf9e3719a3db9b954e3f216c804f8320c35787",
+    "result": "failed_build_fixture",
+    "runtime_started": false,
+    "actual_groups_executed": 0,
+    "runtime_report_uploaded": false,
+    "observation": "Cargo test compilation succeeds; helper line42 rejects the executable path because of a hardcoded target/release/deps assumption. The old exact executable path was not recorded. Guest/image/runtime steps are skipped; auxiliary upload also fails because no JSON was produced.",
+    "correction": "bind actual Cargo artifact to package/manifest/lib-source/profile and Cargo metadata target/build directories; keep source/binary digests and workspace target containment; emit source-fenced build-only JSON on build-step success or failure",
+    "ci_run_id": 45968723485,
+    "ci_status": "completed",
+    "ci_conclusion": "success"
+  },
+  "cargo_artifact_observation": {
+    "path": "m4-cgroup-receipts-cargo-artifact-observation-windows.json",
+    "raw_sha256": "8d46b51209adc5fcb70451ebf53fc671c237f7b3cbe44ba5feceee33bb1732b2",
+    "cargo_version": "cargo 1.99.1 (5f94df478 2026-08-27)",
+    "scope": "Windows cached debug library-test compilation and exact Cargo package/source/profile/filename/configured-root bindings only; no release or cgroup/KVM claim",
+    "declared_target_relative_executable": "debug/deps/goldenhoop_firecracker-43b512c86b7c00c3.exe"
   }
 }

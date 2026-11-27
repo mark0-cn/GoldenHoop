@@ -33,19 +33,59 @@ def build(destination, owner):
     assert destination == ROOT/f'.goldenhoop-cgroup-test-{owner}.json' and not destination.exists()
     before = inputs()
     command = ['cargo','test','--locked','--release','-p','goldenhoop-firecracker','--lib','--no-run','--message-format=json']
-    result = subprocess.run(command, cwd=ROOT, capture_output=True, check=True)
-    artifacts = [json.loads(line) for line in result.stdout.splitlines() if line.startswith(b'{')]
-    candidates = [v for v in artifacts if v.get('reason')=='compiler-artifact'
-                  and v['target']['name']=='goldenhoop_firecracker' and v['profile']['test'] and v.get('executable')]
-    assert len(candidates)==1 and inputs()==before
-    binary = Path(candidates[0]['executable']).resolve(strict=True)
-    assert binary.is_relative_to(ROOT/'target/release/deps') and binary.is_file()
-    manifest = {'format':1,'owner':owner,'binary':binary.relative_to(ROOT).as_posix(),
-                'binary_sha256':digest(binary),'binary_size':binary.stat().st_size,
-                'source_files_sha256':before,'build_command':command,
-                'build_output_sha256':hashlib.sha256(result.stdout+result.stderr).hexdigest(),'test':TEST}
-    with destination.open('x',encoding='utf-8',newline='\n') as output:
-        output.write(json.dumps(manifest,indent=2)+'\n')
+    sources = dict(before)
+    for name in ['tests/firecracker_cgroup_contract.py','.github/workflows/firecracker-cgroup-receipts.yml']:
+        sources[name]=digest(ROOT/name)
+    report = {'suite':'source-fenced release cgroup test compilation','source_commit':os.environ['GITHUB_SHA'],
+              'source_files_sha256':sources,'result':'failed','cleanup':'not_applicable','cases':[],
+              'runtime_started':False,'scope':'compilation and executable discovery only; no actual cgroup or KVM result',
+              'build_command':command}
+    try:
+        result = subprocess.run(command, cwd=ROOT, capture_output=True, check=True)
+        report['build_output_sha256']=hashlib.sha256(result.stdout+result.stderr).hexdigest()
+        artifacts = [json.loads(line) for line in result.stdout.splitlines() if line.startswith(b'{')]
+        candidates = [v for v in artifacts if v.get('reason')=='compiler-artifact'
+                      and v['target']['name']=='goldenhoop_firecracker' and v['profile']['test'] and v.get('executable')]
+        assert len(candidates)==1 and inputs()==before
+        artifact = candidates[0]
+        metadata = json.loads(subprocess.check_output(['cargo','metadata','--locked','--no-deps','--format-version','1'],cwd=ROOT))
+        assert metadata['version']==1 and Path(metadata['workspace_root']).resolve()==ROOT
+        packages = [p for p in metadata['packages'] if Path(p['manifest_path']).resolve()==ROOT/'crates/firecracker/Cargo.toml']
+        assert len(packages)==1 and artifact['package_id']==packages[0]['id']
+        assert Path(artifact['manifest_path']).resolve()==ROOT/'crates/firecracker/Cargo.toml'
+        assert Path(artifact['target']['src_path']).resolve()==ROOT/'crates/firecracker/src/lib.rs'
+        assert 'lib' in artifact['target']['kind'] and artifact['profile']['debug_assertions'] and artifact['profile']['overflow_checks']
+        binary = Path(artifact['executable']).resolve(strict=True)
+        report['artifact_executable']=str(binary)
+        # Cargo's internal layout changed in 1.100. Use its actual artifact and
+        # configured roots; a deps/ subdirectory is not a stable interface.
+        locations = [Path(metadata[k]).resolve() for k in ['target_directory','build_directory'] if k in metadata]
+        assert all(p.is_relative_to(ROOT/'target') for p in locations)
+        assert any(binary.is_relative_to(p) for p in locations) and binary.is_file()
+        assert any(Path(name).resolve(strict=True)==binary for name in artifact['filenames'])
+        assert all(digest(ROOT/name)==sha for name,sha in sources.items()), 'build source inputs changed'
+        manifest = {'format':1,'owner':owner,'binary':binary.relative_to(ROOT).as_posix(),
+                    'binary_sha256':digest(binary),'binary_size':binary.stat().st_size,
+                    'source_files_sha256':before,'build_command':command,
+                    'build_output_sha256':report['build_output_sha256'],'test':TEST}
+        with destination.open('x',encoding='utf-8',newline='\n') as output:
+            output.write(json.dumps(manifest,indent=2)+'\n')
+        report['result']='passed';report['binary_sha256']=manifest['binary_sha256']
+    except Exception as error:
+        report['error']=f'{type(error).__name__}: {error}'
+        if isinstance(error,subprocess.CalledProcessError):
+            raw=(error.stdout or b'')+(error.stderr or b'')
+            report['build_output_sha256']=hashlib.sha256(raw).hexdigest()
+            report['diagnostic_tail']=raw.decode(errors='replace')[-8000:]
+        raise
+    finally:
+        report['source_changed_during_run']=any(digest(ROOT/name)!=sha for name,sha in sources.items())
+        if report['source_changed_during_run']:
+            report['result']='failed'
+        directory=ROOT/'evidence';directory.mkdir(exist_ok=True)
+        with (directory/'firecracker-cgroup-build.json').open('x',encoding='utf-8',newline='\n') as output:
+            output.write(json.dumps(report,indent=2)+'\n')
+        assert not report['source_changed_during_run'], 'build source inputs changed'
     print(json.dumps({'test_build_manifest':destination.name,'compiled_inputs':len(before),
                       'binary_sha256':manifest['binary_sha256']}),flush=True)
 
@@ -59,7 +99,7 @@ def suite(manifest_path, fixture, owner):
         assert manifest['format']==1 and manifest['owner']==owner and manifest['test']==TEST
         assert manifest['source_files_sha256']==inputs(), 'compiled test inputs differ'
         source = (ROOT/manifest['binary']).resolve(strict=True)
-        assert source.is_relative_to(ROOT/'target/release/deps') and source.is_file()
+        assert source.is_relative_to(ROOT/'target') and source.is_file()
         assert source.stat().st_size==manifest['binary_size'] and digest(source)==manifest['binary_sha256']
         binary = fixture/'owned-cgroup-contract'
         shutil.copyfile(source,binary); binary.chmod(0o500)
