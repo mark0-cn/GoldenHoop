@@ -29,7 +29,7 @@ fn stat(pid: u32) -> io::Result<(u32, u64)> {
 }
 /// Read-only absence of the original identity, including PID reuse. Unlike a
 /// pidfd signal/reap target this never grants authority over the replacement.
-pub(super) fn process_absent(expected: &ProcessIdentity) -> Result<bool> {
+pub(crate) fn process_absent(expected: &ProcessIdentity) -> Result<bool> {
     if expected.pid <= 1 || expected.pid > i32::MAX as u32 || expected.start_ticks == 0 {
         return Err(invalid("invalid original process identity").into());
     }

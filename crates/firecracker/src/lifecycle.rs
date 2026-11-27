@@ -6,7 +6,8 @@ mod manager;
 mod metadata;
 pub(crate) use metadata::atomic_json;
 pub(crate) mod reaper;
-mod recovery;
+pub(crate) mod recovery;
+pub(crate) mod root;
 mod supervisor;
 #[cfg(test)]
 mod tests;
@@ -172,6 +173,10 @@ pub(crate) struct VmJournal {
     pub supervisor_cgroup_identity: Option<recovery::PathIdentity>,
     #[serde(default)]
     pub vm_cgroup_identity: Option<recovery::PathIdentity>,
+    #[serde(default)]
+    pub vm_root: Option<root::Receipt>,
+    #[serde(default)]
+    pub root_collection_started: bool,
     pub supervisor_artifact: Artifact,
     pub original_cgroup: PathBuf,
     pub process: Option<ProcessObservation>,
@@ -198,6 +203,7 @@ impl VmJournal {
             || self.owner.sandbox_id != id
             || self.owner.generation.is_nil()
             || self.owner.request_sha256.len() != 64
+            || self.root_collection_started && self.vm_root.is_none()
             || ![
                 "reserved",
                 "preparing",

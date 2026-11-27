@@ -4,7 +4,7 @@ use super::*;
 use goldenhoop_runtime::ObservedState;
 use std::os::unix::fs::FileTypeExt;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct PathIdentity {
     device: u64,
@@ -52,7 +52,7 @@ impl PathIdentity {
     }
 }
 
-pub(super) fn absent(path: &Path) -> io::Result<bool> {
+pub(crate) fn absent(path: &Path) -> io::Result<bool> {
     match std::fs::symlink_metadata(path) {
         Ok(_) => Ok(false),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(true),

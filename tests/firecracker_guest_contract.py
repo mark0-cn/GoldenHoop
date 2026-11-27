@@ -64,6 +64,7 @@ def main():
     parser.add_argument('--manager-recovery-contract', action='store_true')
     parser.add_argument('--metadata-recovery-contract', action='store_true')
     parser.add_argument('--cgroup-test-manifest', type=Path)
+    parser.add_argument('--root-recovery-contract', action='store_true')
     parser.add_argument('--control', type=Path)
     parser.add_argument('--cli', type=Path)
     args = parser.parse_args()
@@ -75,6 +76,8 @@ def main():
         parser.error('metadata recovery requires the retained manager/public/driver contract')
     if args.cgroup_test_manifest and not args.metadata_recovery_contract:
         parser.error('cgroup receipt acceptance requires the retained metadata/KVM contract')
+    if args.root_recovery_contract and not args.cgroup_test_manifest:
+        parser.error('root recovery requires the compiled cgroup/root test manifest and retained baseline')
     assert re.fullmatch(r'[0-9a-f]{40}', args.source_commit)
     assert re.fullmatch(r'[0-9]+-[0-9]+', args.owner)
     root = Path(__file__).resolve().parent.parent
@@ -97,6 +100,8 @@ def main():
         sources += [root/'tests/firecracker_metadata_contract.py',root/'.github/workflows/firecracker-metadata-recovery.yml']
     if args.cgroup_test_manifest:
         sources += [root/'tests/firecracker_cgroup_contract.py',root/'.github/workflows/firecracker-cgroup-receipts.yml']
+    if args.root_recovery_contract:
+        sources += [root/'tests/firecracker_root_contract.py',root/'.github/workflows/firecracker-root-recovery.yml']
     sources += sorted((root / 'images/microvm').glob('*.json'))
     report = {
         'suite': 'actual jailed Firecracker guest bootstrap',
@@ -210,6 +215,13 @@ def main():
         assert probe['guest_started'] and len(probe['checks']) >= 5
         report['cases'] = ['corrupt_kernel_digest_refused_before_launch_with_confirmed_collection'] + probe['checks']
         report['result'] = 'passed'
+        if args.root_recovery_contract:
+            from firecracker_root_contract import suite as root_suite
+            guest_collected=False
+            roots=root_suite(binary,boot,fixture,args.cgroup_test_manifest,args.owner)
+            report['roots']=roots;guest_collected=roots['cleanup']=='complete'
+            report['cases']+=['root:'+case for case in roots['cases']]
+            assert roots['result']=='passed' and guest_collected,roots.get('error','root recovery collection unconfirmed')
         if args.cgroup_test_manifest:
             from firecracker_cgroup_contract import suite as cgroup_suite
             guest_collected = False
@@ -259,6 +271,8 @@ def main():
 
         if args.cgroup_test_manifest:
             report['scope'] = 'actual cgroup inode receipt/descriptor/replacement/Drop fencing and retained 37-group metadata/KVM baseline; earlier VM-root/unacknowledged allocation effects, snapshots/templates and full M4 remain unaccepted'
+        if args.root_recovery_contract:
+            report['scope']='actual acknowledged VM root pre-marker/partial-deletion recovery and replacement/mount refusal plus retained41 groups; pre-ack production ownership remains Unknown, and snapshots/templates/full M4 remain unaccepted'
 
     except Exception as error:
         report['result'] = 'failed'

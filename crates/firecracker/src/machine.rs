@@ -6,7 +6,7 @@ use std::{
     io::{self, Read},
     os::{
         fd::{AsRawFd, FromRawFd, OwnedFd},
-        unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt},
+        unix::fs::{MetadataExt, OpenOptionsExt},
     },
     path::{Path, PathBuf},
     process::Stdio,
@@ -23,6 +23,8 @@ use uuid::Uuid;
 
 #[cfg(test)]
 mod cgroup_tests;
+#[cfg(test)]
+mod root_tests;
 
 use crate::{
     agent::AgentClient,
@@ -169,7 +171,7 @@ pub(crate) struct Machine {
     pub(crate) root: PathBuf,
     pub(crate) jail: PathBuf,
     cgroup: PathBuf,
-    owned_root: bool,
+    root_handle: Option<crate::lifecycle::root::Root>,
     cgroup_handle: Option<crate::lifecycle::cgroup::Group>,
     launcher: Option<Child>,
     launcher_pid: Option<u32>,
@@ -197,7 +199,7 @@ impl Machine {
             jail,
             root,
             cgroup: Path::new("/sys/fs/cgroup").join(name),
-            owned_root: false,
+            root_handle: None,
             cgroup_handle: None,
             launcher: None,
             launcher_pid: None,
@@ -248,21 +250,31 @@ impl Machine {
     }
 
     pub(crate) fn recover(cfg: &DriverConfig, journal: VmJournal) -> Result<Self> {
+        Self::recover_inner(cfg, journal, false)
+    }
+
+    pub(crate) fn recover_for_collection(cfg: &DriverConfig, journal: VmJournal) -> Result<Self> {
+        Self::recover_inner(cfg, journal, true)
+    }
+
+    fn recover_inner(cfg: &DriverConfig, journal: VmJournal, collection: bool) -> Result<Self> {
+        journal.validate(cfg, journal.owner.sandbox_id)?;
         let mut machine = Self::persistent(cfg, journal)?;
         machine.recovered = true;
-        if machine.root.try_exists()? {
-            let metadata = std::fs::symlink_metadata(&machine.root)?;
-            if !metadata.is_dir() || metadata.uid() != 0 || metadata.mode() & 0o077 != 0 {
-                return Err(invalid("recovered VM root ownership mismatch").into());
+        machine.root_handle = crate::lifecycle::root::Root::recorded(
+            &machine.root,
+            machine.record().vm_root.as_ref(),
+            machine.generation,
+            machine.record().supervisor.as_ref(),
+        )?;
+        if let Some(root) = &machine.root_handle {
+            if root.receipt().producer.executable_sha256 != cfg.supervisor.sha256 {
+                return Err(invalid("VM root creator executable differs").into());
             }
-            let marker: serde_json::Value =
-                crate::lifecycle::read_json(&machine.root.join("intent.json"))?;
-            if marker["generation"] != machine.generation.to_string()
-                || marker["owner"] != serde_json::to_value(&machine.record().owner)?
-            {
-                return Err(invalid("recovered VM marker mismatch").into());
+            if collection {
+                root.fence_producer()?;
             }
-            machine.owned_root = true;
+            machine.check_root_marker(collection)?;
         }
         if machine.cgroup.try_exists()? {
             machine.cgroup_handle = crate::lifecycle::cgroup::recorded(
@@ -272,8 +284,22 @@ impl Machine {
             )?;
         }
         let pid = if let Some(process) = &machine.record().process {
-            Some(process.pid)
-        } else if machine.owned_root && machine.jail.join("firecracker.pid").try_exists()? {
+            let expected = crate::lifecycle::ProcessIdentity {
+                pid: process.pid,
+                start_ticks: process.start_ticks,
+                boot_id: process.boot_id.clone(),
+                executable_sha256: process.executable_sha256.clone(),
+                uid: process.uid,
+            };
+            if crate::lifecycle::reaper::process_absent(&expected)? {
+                None
+            } else {
+                Some(process.pid)
+            }
+        } else if !collection
+            && machine.root_handle.is_some()
+            && machine.jail.join("firecracker.pid").try_exists()?
+        {
             let file = OpenOptions::new()
                 .read(true)
                 .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
@@ -300,12 +326,19 @@ impl Machine {
                     return Err(io::Error::last_os_error().into());
                 }
                 let descriptor = unsafe { OwnedFd::from_raw_fd(fd as i32) };
+                if crate::lifecycle::pidfd_exited(&descriptor)? && collection {
+                    // A zombie still needs its real parent to reap it; never
+                    // authenticate it from an executable link which has gone.
+                    machine.process = machine.record().process.clone();
+                    return Ok(machine);
+                }
                 let observed =
                     machine.observe(pid, &machine.record().artifacts.firecracker.sha256)?;
                 machine.process = Some(observed);
                 machine.pidfd = Some(descriptor);
                 machine.candidate_pid = Some(pid);
-            } else if let Some(group) = &machine.cgroup_handle
+            } else if !collection
+                && let Some(group) = &machine.cgroup_handle
                 && !group.empty()?
             {
                 return Err(invalid("missing recorded VMM with populated cgroup").into());
@@ -357,10 +390,45 @@ impl Machine {
         Ok(())
     }
 
+    fn check_root_marker(&self, allow_missing: bool) -> Result<()> {
+        let Some(root) = &self.root_handle else {
+            if !crate::lifecycle::recovery::absent(&self.root)? {
+                return Err(invalid("existing VM root has no acknowledged handle").into());
+            }
+            return Ok(());
+        };
+        let marker = root.marker()?;
+        if marker.is_none()
+            && (!self.recovered
+                || allow_missing
+                    && (self.record().root_collection_started
+                        || self.record().phase == "preparing"
+                            && !self.record().ever_ready
+                            && self.record().process.is_none()))
+        {
+            return Ok(());
+        }
+        let marker = marker
+            .ok_or_else(|| invalid("VM root marker missing without acknowledged recovery phase"))?;
+        if marker["generation"] != self.generation.to_string() {
+            return Err(invalid("VM root marker generation/owner differs").into());
+        }
+        if let Some((_, record)) = &self.persistent
+            && marker["owner"] != serde_json::to_value(&record.owner)?
+        {
+            return Err(invalid("VM root marker generation/owner differs").into());
+        }
+        Ok(())
+    }
+
     fn journal(&mut self, input: &BootInput, phase: &str) -> Result<()> {
         if let Some((path, record)) = &mut self.persistent {
             record.phase = phase.into();
-            record.process = self.process.clone();
+            // Preserve the original identity through partial collection and PID
+            // reuse; a missing live observation is not permission to erase it.
+            if self.process.is_some() {
+                record.process = self.process.clone();
+            }
             record.ever_ready |= phase == "running";
             return atomic_json(path, record);
         }
@@ -386,8 +454,13 @@ impl Machine {
         if unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) } != 0 {
             return Err(io::Error::last_os_error().into());
         }
-        std::fs::DirBuilder::new().mode(0o700).create(&self.root)?;
-        self.owned_root = true;
+        self.root_handle = Some(crate::lifecycle::root::Root::create(
+            &self.root,
+            self.generation,
+        )?);
+        if let Some((_, record)) = &mut self.persistent {
+            record.vm_root = self.root_handle.as_ref().map(|root| root.receipt());
+        }
         self.journal(input, "preparing")?;
         if let Some((_, record)) = &self.persistent {
             atomic_json(
@@ -920,9 +993,20 @@ impl Machine {
     }
 
     pub(crate) async fn collect(&mut self, report: &mut GuestReport) -> Result<()> {
+        if let Some(root) = &self.root_handle {
+            root.verify()?;
+            root.fence_producer()?;
+            self.check_root_marker(self.recovered)?;
+        }
         // Refuse a replaced/unacknowledged group before any direct PID signal.
         if let Some(group) = &self.cgroup_handle {
             group.verify()?;
+        }
+        if let Some((_, record)) = &mut self.persistent {
+            // This is collection intent, not a claim of process absence. Every
+            // resumption below still positively collects runtime identities.
+            record.root_collection_started |= self.root_handle.is_some();
+            self.set_phase("collecting")?;
         }
         let mut pids = BTreeSet::new();
         // Capture descriptor-bound owned identities before termination. A
@@ -1018,34 +1102,17 @@ impl Machine {
             group.remove_empty()?;
             self.cgroup_handle = None;
         }
-        if self.owned_root {
-            let marker = std::fs::read(self.root.join("intent.json"));
-            let value: serde_json::Value = match marker {
-                Ok(bytes) => serde_json::from_slice(&bytes)?,
-                Err(error) if error.kind() == io::ErrorKind::NotFound && !self.recovered => {
-                    // This live owner created the private root and failed before
-                    // its first marker write; no recovered path is authorized here.
-                    if self.persistent.is_some() {
-                        serde_json::json!({"generation":self.generation,"owner":self.record().owner})
-                    } else {
-                        serde_json::json!({"generation":self.generation})
-                    }
-                }
-                Err(error) => return Err(error.into()),
-            };
-            if value["generation"] != self.generation.to_string() {
-                return Err(invalid("owned root generation mismatch; retained").into());
-            }
-            if let Some((_, record)) = &self.persistent
-                && value["owner"] != serde_json::to_value(&record.owner)?
-            {
-                return Err(invalid("owned VM marker mismatch; retained").into());
-            }
-            std::fs::remove_dir_all(&self.root)?;
-            self.owned_root = false;
+        if self.root_handle.is_some() {
+            // Runtime identities have just been collected. Collection intent
+            // was durable before the first destructive effect above.
+            self.root_handle
+                .as_ref()
+                .ok_or_else(|| invalid("VM root handle lost"))?
+                .remove_all()?;
+            self.root_handle = None;
         }
-        report.root_absent = !self.root.try_exists()?;
-        report.cgroup_absent = !self.cgroup.try_exists()?;
+        report.root_absent = crate::lifecycle::recovery::absent(&self.root)?;
+        report.cgroup_absent = crate::lifecycle::recovery::absent(&self.cgroup)?;
         if !report.root_absent || !report.cgroup_absent {
             return Err(invalid("owned filesystem collection unconfirmed").into());
         }
@@ -1060,6 +1127,13 @@ impl Drop for Machine {
     fn drop(&mut self) {
         // Best effort fencing is not evidence of collection. Explicit collect
         // above alone may set CleanupState::Complete.
+        if self
+            .root_handle
+            .as_ref()
+            .is_some_and(|root| root.verify().is_err() || root.fence_producer().is_err())
+        {
+            return;
+        }
         if (self.persistent.is_none() || !self.recovered)
             && let Some(group) = &self.cgroup_handle
         {

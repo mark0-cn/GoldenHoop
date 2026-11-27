@@ -28,7 +28,7 @@ def inputs():
     return {p.relative_to(ROOT).as_posix():digest(p) for p in paths}
 
 
-def build(destination, owner):
+def build(destination, owner, root_recovery=False):
     assert re.fullmatch(r'[0-9]+-[0-9]+', owner)
     assert destination == ROOT/f'.goldenhoop-cgroup-test-{owner}.json' and not destination.exists()
     before = inputs()
@@ -36,6 +36,9 @@ def build(destination, owner):
     sources = dict(before)
     for name in ['tests/firecracker_cgroup_contract.py','.github/workflows/firecracker-cgroup-receipts.yml']:
         sources[name]=digest(ROOT/name)
+    if root_recovery:
+        for name in ['tests/firecracker_root_contract.py','.github/workflows/firecracker-root-recovery.yml']:
+            sources[name]=digest(ROOT/name)
     report = {'suite':'source-fenced release cgroup test compilation','source_commit':os.environ['GITHUB_SHA'],
               'source_files_sha256':sources,'result':'failed','cleanup':'not_applicable','cases':[],
               'runtime_started':False,'scope':'compilation and executable discovery only; no actual cgroup or KVM result',
@@ -68,6 +71,8 @@ def build(destination, owner):
                     'binary_sha256':digest(binary),'binary_size':binary.stat().st_size,
                     'source_files_sha256':before,'build_command':command,
                     'build_output_sha256':report['build_output_sha256'],'test':TEST}
+        if root_recovery:
+            manifest['additional_tests']=['lifecycle::root::tests::actual_bind_mount_refusal_and_original_root_collection']
         with destination.open('x',encoding='utf-8',newline='\n') as output:
             output.write(json.dumps(manifest,indent=2)+'\n')
         report['result']='passed';report['binary_sha256']=manifest['binary_sha256']
@@ -141,5 +146,6 @@ if __name__=='__main__':
     parser=argparse.ArgumentParser()
     parser.add_argument('--build-output',required=True,type=Path)
     parser.add_argument('--owner',required=True)
+    parser.add_argument('--root-recovery-contract',action='store_true')
     args=parser.parse_args()
-    build(args.build_output.resolve(),args.owner)
+    build(args.build_output.resolve(),args.owner,args.root_recovery_contract)

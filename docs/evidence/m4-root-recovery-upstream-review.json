@@ -1,0 +1,65 @@
+{
+  "suite": "native VM-root upstream applicability review",
+  "result": "source_review",
+  "primary_sources": [
+    {
+      "project": "Rust std",
+      "commit": "20ddd01716a87c0fcf06ae4752d85a4abc15bcdf",
+      "url": "https://github.com/rust-lang/rust/blob/20ddd01716a87c0fcf06ae4752d85a4abc15bcdf/library/std/src/sys/fs/unix.rs",
+      "finding": "modern recursive removal uses no-follow descriptor-relative traversal; partial removal does not supply a caller ownership journal",
+      "application": "persist root ownership and collection intent separately; reobserve process identities before resuming any removal"
+    },
+    {
+      "project": "Bytecode Alliance cap-std",
+      "version": "4.0.3",
+      "commit": "b7acf8e8807fe3fab991884d2208b7e03d35a409",
+      "url": "https://github.com/bytecodealliance/cap-std/blob/b7acf8e8807fe3fab991884d2208b7e03d35a409/cap-primitives/src/rustix/fs/remove_dir_all_impl.rs",
+      "finding": "open-directory removal enumerates from the supplied handle, then removes the directory; its recursive default does not enforce our no-mount-crossing contract",
+      "application": "reuse existing cap-std pinned-directory enumeration; constrain child opens and unlink relative to verified handles rather than adopt recursive removal unchanged"
+    },
+    {
+      "project": "Linux man-pages",
+      "url": "https://man7.org/linux/man-pages/man2/openat2.2.html",
+      "finding": "resolution flags forbid escape, links and mount crossings; O_PATH/NOFOLLOW can reference a final symlink without following it",
+      "application": "same flags for every descendant; unlink contained symlinks themselves, refuse bind mounts, and require kernel support"
+    },
+    {
+      "project": "strace",
+      "version": "6.19",
+      "url": "https://github.com/strace/strace/blob/v6.19/src/syscall.c",
+      "finding": "per-tracee injection options copy global configuration and count syscall instances; delays need not fabricate syscall returns",
+      "application": "warm installation, delay actual supervisor fsetxattr/renameat2/unlinkat, verify actual objects/process context, send authenticated pidfd SIGKILL and stop the exact owned observer before positive absence checks"
+    }
+  ],
+  "implemented": [
+    "complete directory xattr and kernel birth/context receipt before descendants; journal acknowledgement before next effect",
+    "same-boot/PID-namespace and actual creator/parent/root identity; missing/copied/replaced contexts refuse",
+    "read-only missing-marker recovery never advertises a VM; collection requires original producer fencing",
+    "durable collection intent precedes destructive effects; original VMM identity retained and resampled",
+    "cap-std enumeration with constrained openat2 and descriptor-relative unlinks; explicit mount refusal",
+    "marker may be removed first; same original root can resume only after all runtime collection observations",
+    "root/cgroup preflight before direct signals and shared Drop fences; no create replay"
+  ],
+  "not_accepted": [
+    "actual release47 gate until immutable source passes",
+    "host power loss or boot/binary/configuration/namespace migration",
+    "unacknowledged objects promoted by names, marker contents or UID alone",
+    "public image placement, snapshots/restore/templates/full M4 and complete M5-M6"
+  ],
+  "local_source_files_sha256": {
+    "Cargo.lock": "5b43252a75e55cf755fb00857bb9fbad9d22afe062fcd4de970c799850e7d940",
+    "crates/firecracker/Cargo.toml": "2aadc7b74d6fc267f6ac234c0713e007ef17eedcd7ff7d99a5b1d213122d2dd2",
+    "crates/firecracker/src/lifecycle.rs": "502cea4996f1c740ec673884ba21c2850d30d056b7980314110ab6c97e10109b",
+    "crates/firecracker/src/lifecycle/root.rs": "279cb2340194bf5c8cab6fddec73b9ee3ff254dab9e7805a77a34228ccd3f523",
+    "crates/firecracker/src/lifecycle/root/tests.rs": "d030b6b06666a133b52dac584f119ee8a6b843b3dcb6a5b8a1677d6f46edcd39",
+    "crates/firecracker/src/lifecycle/driver.rs": "aa49b730a512f1ec08abb2f60dac5aaac7345c1ff41fa822b026467d3d51f580",
+    "crates/firecracker/src/lifecycle/recovery.rs": "b80b867c806058a0045a4b3e794691a76c618af69755ef0d5b0ef312ac5e1ea1",
+    "crates/firecracker/src/lifecycle/reaper.rs": "5681c20e0bf84b1e22423866ff5339307c9f6e7127fdd570fe8bc1fdae0b7034",
+    "crates/firecracker/src/machine.rs": "a85f95e9d36b7346329dc49353e7e021e4dbd6a59da0a3437506c004526e3955",
+    "crates/firecracker/src/machine/root_tests.rs": "e72258e65d17455d92906de8520767da4b5bd65c1ea88b00249bccee6406958a",
+    "tests/firecracker_root_contract.py": "76a642cd35ada5f0600206d17060a67bc94862c14e87c257bb48da553514b56f",
+    "tests/firecracker_cgroup_contract.py": "2d6c250a9fa1b7422c434f2718e23aab0ac6030e90bad102806ebe3d7099729f",
+    "tests/firecracker_guest_contract.py": "c1df9c2d79e65465a3058df7f7eb3ee36453965237907d84656a96484f3e4722",
+    ".github/workflows/firecracker-root-recovery.yml": "028e842f9b61217c2beaff1c6e8bfac4d53978ba3a0c560b204a7851f5a77856"
+  }
+}

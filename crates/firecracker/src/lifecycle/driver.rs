@@ -682,6 +682,8 @@ impl NativeEngine {
             supervisor: None,
             supervisor_cgroup_identity: None,
             vm_cgroup_identity: None,
+            vm_root: None,
+            root_collection_started: false,
             supervisor_artifact: cfg.supervisor.clone(),
             original_cgroup: supervisor::original_cgroup()?,
             process: None,
@@ -799,9 +801,9 @@ impl NativeEngine {
 
     fn physical_absence(&self, record: &VmJournal) -> Result<bool> {
         let paths = self.inner.cfg.paths(record.owner.generation)?;
-        Ok(!paths.root.try_exists()?
-            && !paths.vm_cgroup.try_exists()?
-            && !paths.supervisor_cgroup.try_exists()?
+        Ok(super::recovery::absent(&paths.root)?
+            && super::recovery::absent(&paths.vm_cgroup)?
+            && super::recovery::absent(&paths.supervisor_cgroup)?
             && self.supervisor_gone(record)?
             && !matches!(
                 self.child_state(record.owner.sandbox_id, record.supervisor.as_ref())?,
@@ -885,7 +887,26 @@ impl NativeEngine {
         if self.supervisor_alive(record)? {
             return Err(invalid("live native supervisor must own collection").into());
         }
-        let mut machine = Machine::recover(&self.inner.cfg, record.clone())?;
+        if let Some(identity) = &record.supervisor {
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+            loop {
+                // Refresh the owned child wait first, then use a descriptor-bound
+                // nonchild observation. An exited but unreaped writer is live
+                // authority for neither journal mutation nor root collection.
+                self.child_state(record.owner.sandbox_id, Some(identity))?;
+                if let Some(target) = super::reaper::recorded(identity)? {
+                    let _ = target.collected()?;
+                }
+                if super::reaper::process_absent(identity)? {
+                    break;
+                }
+                if tokio::time::Instant::now() >= deadline {
+                    return Err(invalid("original supervisor reaping unconfirmed").into());
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        }
+        let mut machine = Machine::recover_for_collection(&self.inner.cfg, record.clone())?;
         let mut report = GuestReport::empty(record.owner.generation);
         machine.collect(&mut report).await?;
         self.settle_collected(record).await
@@ -1352,6 +1373,8 @@ mod recovery_tests {
             supervisor: None,
             supervisor_cgroup_identity: None,
             vm_cgroup_identity: None,
+            vm_root: None,
+            root_collection_started: false,
             supervisor_artifact: cfg.supervisor.clone(),
             original_cgroup: supervisor::original_cgroup().unwrap(),
             process: None,
