@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-pub const GUEST_CONTROL_VERSION: u16 = 2;
+pub const GUEST_CONTROL_VERSION: u16 = 3;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "guest_control", rename_all = "snake_case", deny_unknown_fields)]
@@ -12,6 +12,89 @@ pub enum GuestControlRequest {
     Quiesce { generation: Uuid, barrier: Uuid },
     BarrierStatus { generation: Uuid, barrier: Uuid },
     Thaw { generation: Uuid, barrier: Uuid },
+    TransferAuthority { transfer: GuestAuthorityTransfer },
+}
+
+/// Native RPCs are scoped at the guest admission boundary. Raw workload-agent
+/// frames remain confined to the agent's private Unix socket, never vsock.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GuestRpcRequest<T> {
+    pub guest_rpc: GuestRpcScope<T>,
+}
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GuestRpcScope<T> {
+    pub generation: Uuid,
+    pub request: T,
+}
+impl<T> GuestRpcRequest<T> {
+    pub fn new(generation: Uuid, request: T) -> Self {
+        Self {
+            guest_rpc: GuestRpcScope {
+                generation,
+                request,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GuestAuthorityTransfer {
+    pub source_generation: Uuid,
+    pub target_generation: Uuid,
+    pub barrier: Uuid,
+    pub restoration: Uuid,
+}
+impl GuestAuthorityTransfer {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if [
+            self.source_generation,
+            self.target_generation,
+            self.barrier,
+            self.restoration,
+        ]
+        .iter()
+        .any(Uuid::is_nil)
+            || self.source_generation == self.target_generation
+        {
+            return Err("invalid guest authority transfer identity");
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GuestAuthorityInfo {
+    pub protocol: u16,
+    pub transfer: GuestAuthorityTransfer,
+    pub phase: GuestBarrierPhase,
+    pub workload_frozen: bool,
+}
+impl GuestAuthorityInfo {
+    pub fn validate_frozen(&self, transfer: &GuestAuthorityTransfer) -> Result<(), &'static str> {
+        self.validate(transfer)?;
+        if self.phase != GuestBarrierPhase::Quiesced || !self.workload_frozen {
+            return Err("guest authority has no confirmed frozen transition boundary");
+        }
+        Ok(())
+    }
+    pub fn validate(&self, transfer: &GuestAuthorityTransfer) -> Result<(), &'static str> {
+        transfer.validate()?;
+        if self.protocol != GUEST_CONTROL_VERSION
+            || self.transfer != *transfer
+            || match self.phase {
+                GuestBarrierPhase::Quiesced => !self.workload_frozen,
+                GuestBarrierPhase::Resumed => self.workload_frozen,
+                _ => false,
+            }
+        {
+            return Err("guest authority transfer observation differs");
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -112,6 +195,60 @@ impl GuestBootIdentity {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_rpc_requires_a_generation_envelope_and_typed_payload() {
+        use goldenhoop_protocol::AgentRequest;
+        let generation = Uuid::new_v4();
+        let value =
+            serde_json::to_value(GuestRpcRequest::new(generation, AgentRequest::Ping)).unwrap();
+        let decoded: GuestRpcRequest<AgentRequest> = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(decoded.guest_rpc.generation, generation);
+        assert!(matches!(decoded.guest_rpc.request, AgentRequest::Ping));
+        assert!(
+            serde_json::from_value::<GuestRpcRequest<AgentRequest>>(
+                serde_json::json!({"method":"ping"})
+            )
+            .is_err()
+        );
+        let mut bad = value.clone();
+        bad["guest_rpc"]["host_path"] = serde_json::json!("/arbitrary");
+        assert!(serde_json::from_value::<GuestRpcRequest<AgentRequest>>(bad).is_err());
+        let mut bad = value;
+        bad["guest_rpc"]["request"]["method"] = serde_json::json!("unknown_host_operation");
+        assert!(serde_json::from_value::<GuestRpcRequest<AgentRequest>>(bad).is_err());
+    }
+
+    #[test]
+    fn authority_transfer_receipt_binds_source_target_barrier_and_restoration() {
+        let transfer = GuestAuthorityTransfer {
+            source_generation: Uuid::new_v4(),
+            target_generation: Uuid::new_v4(),
+            barrier: Uuid::new_v4(),
+            restoration: Uuid::new_v4(),
+        };
+        let mut info = GuestAuthorityInfo {
+            protocol: GUEST_CONTROL_VERSION,
+            transfer: transfer.clone(),
+            phase: GuestBarrierPhase::Quiesced,
+            workload_frozen: true,
+        };
+        assert!(info.validate(&transfer).is_ok());
+        assert!(info.validate_frozen(&transfer).is_ok());
+        info.workload_frozen = false;
+        assert!(info.validate(&transfer).is_err());
+        info.phase = GuestBarrierPhase::Resumed;
+        assert!(info.validate(&transfer).is_ok());
+        assert!(info.validate_frozen(&transfer).is_err());
+        let mut different = transfer.clone();
+        different.restoration = Uuid::new_v4();
+        assert!(info.validate(&different).is_err());
+        different = transfer.clone();
+        different.target_generation = different.source_generation;
+        assert!(different.validate().is_err());
+        different = transfer.clone();
+        different.restoration = Uuid::nil();
+        assert!(different.validate().is_err());
+    }
     #[test]
     fn barrier_receipt_requires_exact_identity_and_completed_freeze_plus_sync() {
         let generation = Uuid::new_v4();

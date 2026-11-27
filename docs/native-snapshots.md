@@ -25,7 +25,8 @@ separate implementation and acceptance requirement.
 | Increment | Concrete implementation | Required observation |
 | --- | --- | --- |
 | Earlier native allocation/metadata recovery | Bind pending writes and generation allocations to durable producer/object receipts; reconcile only after writer absence | Kill at write/dispatch boundaries; preserve ambiguous/replaced objects; no create or signal replay |
-| Guest quiescence | Private protocol implemented; separate PID1/control from agent/workloads, fence request admission and drain accepted effects | Dedicated KVM gate pending: running command, pending dispatch and concurrent file write cannot cross the acknowledged barrier |
+| Guest quiescence | Protocol2 accepted at376328c; separate PID1/control from agent/workloads, fence admission and drain accepted effects | Actual barrier/root52 passes with365 inputs and Complete collection; protocol3 requires its separate gate |
+| Guest authority protocol | Protocol3 generation-bound native frames and frozen transition implemented | New same-VMM private protocol gate pending; not host restore/source-termination proof |
 | Private checkpoint | Pause the actual VMM; capture full state/memory plus a stable drive copy into a bounded owned generation | Independent content/length checks, actual Paused state, unchanged immutable source assets, complete scoped collection |
 | Private single-use memory restore | Claim once; load paused into a new jailed VMM; transition guest authority before workload RPC admission | Real retained memory/file state, new identity, old authority refusal, one target after retries/crashes |
 | Public integration | Persist operations, idempotency, quota and object references; add REST/CLI/Rust/Python clients and actual capability probe | Public success/failure/recovery and deletion on the supported real profile |
@@ -34,12 +35,13 @@ separate implementation and acceptance requirement.
 
 ## Guest barrier and authority
 
-The private guest protocol v2 now implements generation-bound quiesce/status/thaw
-as described in [native quiescence](native-quiescence.md); its real KVM gate is
-still required. Guest generation still comes from the boot command line.
-Changing the host VMM ID cannot change that retained identity. Restore authority
-transition is a separate unimplemented protocol operation; old guests must
-refuse capture/restore requests that require unsupported authority semantics.
+The protocol2 quiesce/status/thaw barrier is accepted at376328c as described in
+[native quiescence](native-quiescence.md). Protocol3 now binds every native RPC
+to generation and provides a frozen [guest authority transition](native-authority.md);
+its separate real protocol gate remains required. Initial identity still comes
+from guest boot arguments; changing a host VMM ID alone cannot change it.
+Host restore coordination, single-use claims and source termination remain
+unimplemented. Old guests refuse requests requiring unsupported semantics.
 
 PID1 remains outside workload task groups. The implemented private barrier closes
 workload admission, drains accepted RPC effects, freezes the exact owned workload
@@ -69,6 +71,15 @@ SnapshotManifest shape as complete storage/authority metadata. Bind installation
 source generation, capture operation, artifact hashes and lengths, runtime/kernel/
 CPU compatibility, resource bounds, guest barrier, quota reservation and object
 references. Keep restore authority separate from the immutable content manifest.
+
+Persistent captured content must live outside the source VM's collected jail.
+The existing VM-root receipt deliberately binds a host boot and PID namespace;
+it is not a persistent snapshot-reader contract. Separate immutable-object
+identity from the original producer's write/collection fence. A Ready reader
+must verify the exact retained objects without requiring the producer or source
+image job to stay alive. Cross-boot/source-node authority still needs explicit
+runtime and store evidence; a different boot UUID on an arbitrary other host is
+not proof that the original producer or source VM stopped.
 
 Publish objects without overwriting existing content, sync files/directories and
 publish the manifest last. A named pending file or a matching digest alone does

@@ -1,14 +1,16 @@
 # Private guest quiescence
 
-This implements a prerequisite for native checkpoints. It does not implement
-snapshot creation, restore, templates or a public snapshot capability. Real
-guest freezer/sync behavior still requires the dedicated source-bound KVM gate.
+The protocol2 barrier is accepted at `376328c`: the actual KVM gate passes52
+groups, verifies365 source inputs and confirms Complete collection. The newer
+protocol3 generation scope and authority transition require their own real gate.
+This prerequisite does not implement snapshot creation, restore, templates or a
+public snapshot capability.
 The complete M0-M6 scope remains in [roadmap.md](roadmap.md).
 
 ## Control and task accounting
 
-Guest PID1 serves the reserved host-CID2 vsock endpoint. Its private protocol v2
-adds `quiesce`, `barrier_status` and `thaw`; every operation carries the exact
+Guest PID1 serves the reserved host-CID2 vsock endpoint. Its private protocol3
+provides `quiesce`, `barrier_status` and `thaw`; every operation carries the exact
 current generation and a non-nil barrier UUID. The original Info request retains
 its wire shape. Host `AgentClient` checks the control version and guest identity
 before sending a barrier request and validates the returned observation.
@@ -77,12 +79,14 @@ responses; refusal of new workload effects; real VMM pause/resume and explicit
 thaw of the same command. Its existing Rust lifecycle owns final VM collection.
 No host filesystem mount substitutes for these observations.
 
-Generation authority still comes from the original guest boot identity. A
-barrier observation is not durable host capture/restore authority, and it does
-not permit loading memory into another generation. The host still needs durable
+Generation authority initially comes from guest boot identity. Protocol3 adds
+an explicit frozen [guest authority transition](native-authority.md); its new
+real protocol gate is still required. A barrier observation is not durable host
+capture/restore authority and does not permit loading memory into another
+generation. The host still needs durable
 capture intent and object ownership, independent memory/state/disk verification,
-source termination and a single-use restore claim, then guest authority
-transition before admitting target workload RPC. Those requirements remain in
+source termination and a single-use restore claim before transferring guest
+authority and admitting target workload RPC. Those requirements remain in
 [native snapshots](native-snapshots.md).
 
 The implementation follows the kernel's

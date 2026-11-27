@@ -6,6 +6,7 @@ use goldenhoop_firecracker::{
     DispatchState,
     agent::AgentClient,
     api::{ApiClient, PeerIdentity},
+    control::GuestAuthorityTransfer,
     models::{InstanceInfo, InstanceState},
     vsock::read_frame,
 };
@@ -192,6 +193,18 @@ fn request() -> AgentRequest {
     }
 }
 
+fn assert_scoped_request(observed: &[u8], peer: PeerIdentity) {
+    assert!(observed.ends_with(b"\n"));
+    let actual: serde_json::Value = serde_json::from_slice(observed).unwrap();
+    assert_eq!(
+        actual,
+        serde_json::json!({"guest_rpc": {
+            "generation": peer.instance,
+            "request": {"method":"write_file", "path":"nonce.txt", "data_base64":"bm9uY2U="}
+        }})
+    );
+}
+
 #[tokio::test]
 async fn guest_success_and_definite_refusal_remain_typed_without_replay() {
     for behavior in [Behavior::Success, Behavior::GuestRefusal] {
@@ -204,9 +217,8 @@ async fn guest_success_and_definite_refusal_remain_typed_without_replay() {
             }
             _ => panic!("transport changed the guest reply"),
         }
-        let mut expected = serde_json::to_vec(&request()).unwrap();
-        expected.push(b'\n');
-        assert_eq!(fixture.observed_request().await, expected);
+        let observed = fixture.observed_request().await;
+        assert_scoped_request(&observed, fixture.peer);
         assert_eq!(fixture.connections.load(Ordering::SeqCst), 1);
         fixture.finish().await;
     }
@@ -233,7 +245,8 @@ async fn truncated_response_after_payload_is_uncertain_and_not_retryable() {
     let error = fixture.client().rpc_reply(&request()).await.unwrap_err();
     assert_eq!(error.dispatch, DispatchState::Uncertain);
     assert!(!error.error.retryable);
-    assert!(!fixture.observed_request().await.is_empty());
+    let observed = fixture.observed_request().await;
+    assert_scoped_request(&observed, fixture.peer);
     assert_eq!(fixture.connections.load(Ordering::SeqCst), 1);
     fixture.finish().await;
 }
@@ -253,7 +266,30 @@ async fn one_deadline_distinguishes_handshake_from_dispatched_payload() {
         }
         let observed = fixture.observed_request().await;
         assert_eq!(observed.is_empty(), expected == DispatchState::NotSent);
+        if expected == DispatchState::Uncertain {
+            assert_scoped_request(&observed, fixture.peer);
+        }
         assert_eq!(fixture.connections.load(Ordering::SeqCst), 1);
         fixture.finish().await;
     }
+}
+
+#[tokio::test]
+async fn a_transfer_for_another_physical_vmm_is_refused_before_guest_dispatch() {
+    let fixture = Fixture::new(InstanceState::Running, Behavior::Success);
+    let transfer = GuestAuthorityTransfer {
+        source_generation: fixture.peer.instance,
+        target_generation: Uuid::new_v4(),
+        barrier: Uuid::new_v4(),
+        restoration: Uuid::new_v4(),
+    };
+    let error = fixture
+        .client()
+        .transfer_authority(&transfer)
+        .await
+        .unwrap_err();
+    assert_eq!(error.dispatch, DispatchState::NotSent);
+    assert_eq!(error.error.code, ErrorCode::InvalidRequest);
+    assert_eq!(fixture.connections.load(Ordering::SeqCst), 0);
+    fixture.finish().await;
 }

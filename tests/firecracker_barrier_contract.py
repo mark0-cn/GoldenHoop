@@ -1,9 +1,10 @@
 """Observe the actual PID1 barrier on an already owned jailed KVM generation.
 
 The fixture reads its own disk with read-only debugfs; it never mounts it.
-Snapshot creation, restore authority and public snapshot capabilities are absent.
+Snapshot creation, host restore coordination and public snapshot capabilities are absent.
 """
 import base64
+from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
@@ -18,30 +19,51 @@ import time
 import uuid
 
 
+@contextmanager
+def guest_channel(record, runtime):
+    endpoint = runtime/'j/firecracker'/record['owner']['generation']/'root/vsock.sock'
+    metadata = endpoint.lstat()
+    assert stat.S_ISSOCK(metadata.st_mode) and metadata.st_uid == record['process']['uid']
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stream:
+        stream.settimeout(40);stream.connect(str(endpoint))
+        pid, uid, gid = struct.unpack('3i', stream.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+        assert pid == record['process']['pid'] and uid == gid == record['process']['uid']
+        fields = (Path('/proc')/str(pid)/'stat').read_text().rsplit(')', 1)[1].split()
+        assert int(fields[19]) == record['process']['start_ticks']
+        with stream.makefile('rb') as source:
+            stream.sendall(b'CONNECT 52\n')
+            assert re.fullmatch(rb'OK [0-9]+\n', source.readline(64))
+            yield stream, source
+
+
+def guest_frame(record, request, generation=None, bind=True):
+    if bind and 'guest_control' not in request:
+        request = {'guest_rpc': {'generation': generation or record['owner']['generation'], 'request': request}}
+    return json.dumps(request, separators=(',', ':')).encode()+b'\n'
+
+
+def guest_reply(source):
+    data = source.readline(24*1024**2+1)
+    if not data:
+        raise ConnectionError('guest closed this private request without an acknowledgement')
+    assert data.endswith(b'\n') and len(data) <= 24*1024**2
+    return json.loads(data)
+
+
+def guest_exchange(record, runtime, request, generation=None, bind=True):
+    with guest_channel(record, runtime) as (stream, source):
+        stream.sendall(guest_frame(record, request, generation, bind))
+        return guest_reply(source)
+
+
 def exercise(handle, record, runtime, call, rpc, command, report):
     generation = record['owner']['generation']
     jail = runtime/'j/firecracker'/generation/'root'
-    endpoint, disk = jail/'vsock.sock', jail/'rootfs.ext4'
+    disk = jail/'rootfs.ext4'
     observations = report['observations']['guest_barrier'] = {'generation': generation}
 
     def exchange(request):
-        metadata = endpoint.lstat()
-        assert stat.S_ISSOCK(metadata.st_mode) and metadata.st_uid == record['process']['uid']
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stream:
-            stream.settimeout(40);stream.connect(str(endpoint))
-            pid, uid, gid = struct.unpack('3i', stream.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
-            assert pid == record['process']['pid'] and uid == gid == record['process']['uid']
-            fields = (Path('/proc')/str(pid)/'stat').read_text().rsplit(')', 1)[1].split()
-            assert int(fields[19]) == record['process']['start_ticks']
-            with stream.makefile('rb') as source:
-                stream.sendall(b'CONNECT 52\n')
-                assert re.fullmatch(rb'OK [0-9]+\n', source.readline(64))
-                stream.sendall(json.dumps(request, separators=(',', ':')).encode()+b'\n')
-                data = source.readline(24*1024**2+1)
-                if not data:
-                    raise ConnectionError('guest closed this private request without an acknowledgement')
-                assert data.endswith(b'\n') and len(data) <= 24*1024**2
-                return json.loads(data)
+        return guest_exchange(record, runtime, request)
 
     def control(kind, barrier, identity=generation):
         return exchange({'guest_control': kind, 'generation': identity, 'barrier': barrier})
@@ -113,7 +135,7 @@ def exercise(handle, record, runtime, call, rpc, command, report):
         capture_result, write_result = pool.submit(capture), pool.submit(write)
         rendezvous.wait(timeout=5)
         receipt, writer = capture_result.result(timeout=50), write_result.result(timeout=50)
-    assert receipt == {'protocol': 2, 'generation': generation, 'barrier': barrier,
+    assert receipt == {'protocol': 3, 'generation': generation, 'barrier': barrier,
                        'phase': 'quiesced', 'workload_frozen': True, 'rootfs_synced': True}, receipt
     if writer['status'] == 'success':
         assert writer['data']['kind'] == 'ok' and disk_read(race) == payload

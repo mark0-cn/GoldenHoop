@@ -9,7 +9,10 @@ use tokio::io::{AsyncWriteExt, BufReader};
 use crate::{
     CallError, DispatchState,
     api::{ApiClient, authenticated_socket},
-    control::{GUEST_CONTROL_VERSION, GuestBarrierInfo, GuestControlInfo, GuestControlRequest},
+    control::{
+        GUEST_CONTROL_VERSION, GuestAuthorityInfo, GuestAuthorityTransfer, GuestBarrierInfo,
+        GuestControlInfo, GuestControlRequest, GuestRpcRequest,
+    },
     models::InstanceState,
     vsock::{MAX_AGENT_FRAME, parse_connect_ack, read_frame},
 };
@@ -51,7 +54,43 @@ impl AgentClient {
     }
 
     pub async fn rpc_reply(&self, request: &AgentRequest) -> Result<AgentReply, CallError> {
-        self.exchange(request).await
+        self.exchange(&GuestRpcRequest::new(
+            self.api.peer_identity().instance,
+            request,
+        ))
+        .await
+    }
+
+    /// Guest-side transition only. The restore coordinator must separately
+    /// establish durable single-use ownership, source absence and verified
+    /// target content before resuming PID1 with workloads still frozen.
+    pub async fn transfer_authority(
+        &self,
+        transfer: &GuestAuthorityTransfer,
+    ) -> Result<GuestAuthorityInfo, CallError> {
+        transfer.validate().map_err(|message| {
+            CallError::new(DispatchState::NotSent, ErrorCode::InvalidRequest, message)
+        })?;
+        if transfer.target_generation != self.api.peer_identity().instance {
+            return Err(CallError::new(
+                DispatchState::NotSent,
+                ErrorCode::InvalidRequest,
+                "authority target differs from authenticated VMM",
+            ));
+        }
+        let info: GuestAuthorityInfo = self
+            .exchange(&GuestControlRequest::TransferAuthority {
+                transfer: transfer.clone(),
+            })
+            .await?;
+        info.validate_frozen(transfer).map_err(|message| {
+            CallError::new(
+                DispatchState::Uncertain,
+                ErrorCode::BackendUnavailable,
+                message,
+            )
+        })?;
+        Ok(info)
     }
 
     pub async fn control_info(&self) -> Result<GuestControlInfo, CallError> {

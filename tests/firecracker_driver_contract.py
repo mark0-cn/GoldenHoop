@@ -16,7 +16,7 @@ import uuid
 from firecracker_manager_fixture import Manager
 
 
-def suite(binary, boot, fixture, guest_barrier=False):
+def suite(binary, boot, fixture, guest_barrier=False, guest_authority=False):
     installation = str(uuid.uuid4())
     root = fixture / 'd'  # Native AF_UNIX endpoints must fit Linux's path bound.
     cfg = {'installation_id': installation, 'data_root': str(root), 'artifacts': boot,
@@ -234,6 +234,9 @@ def suite(binary, boot, fixture, guest_barrier=False):
         call({'operation': 'rpc', 'handle': d, 'request': {'method': 'ping'}}, expect=False)
         remove(d)
         report['cases'].append('independent_absolute_expiry_collects_paused_VM_after_callers_and_caller_service_group_disappear')
+        if guest_authority:
+            from firecracker_authority_contract import exercise as authority_exercise
+            authority_exercise(a, a_record, runtime, call, rpc, report)
         remove(a)
         call({'operation': 'remove', 'handle': a})
         assert record(a['sandbox_id'])['phase'] == 'collected'

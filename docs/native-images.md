@@ -3,8 +3,9 @@
 The private Ready-image resolver/materializer is accepted at `a4587f9`: the
 actual default-runsc pipeline passes ten groups with Complete collection and
 329 verified inputs. [Raw archive](evidence/m4-image-prepare-45990105658-archive.json).
-The native selection path below is implemented and undergoing its separate
-public/KVM gate; it is not complete M4 acceptance. Snapshots, restore, templates
+The native selection path is accepted at `376328c`: its actual public/KVM gate
+passes53 groups with366 verified inputs and Complete collection. This does not
+accept subsequent protocol3 changes or complete M4. Snapshots, restore, templates
 and M5-M6 retain their original requirements.
 
 The first public placement run at `c4b8d87` failed while compiling static musl
@@ -12,7 +13,8 @@ guest components, before runtime execution. Its zero-case build artifact is not
 placement acceptance. The [ABI diagnosis](evidence/m4-native-image-input-musl-diagnosis.json)
 records the pinned nix comparison and retained failure. The correction normalizes
 libc ancillary lengths and filesystem integer types across GNU and musl targets;
-the corrected source still requires a fresh actual public placement gate.
+the corrected source passes [run46009592844](https://github.com/mark0-cn/GoldenHoop/actions/runs/46009592844).
+See the [placement acceptance summary](evidence/m4-native-image-placement-acceptance-summary.json).
 
 ## Administrator policy
 

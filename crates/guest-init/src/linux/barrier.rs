@@ -2,10 +2,11 @@
 //! Closing admission is independent of an RPC future: cancellation never reopens it.
 use super::{WORKLOAD_GROUP, invalid};
 use goldenhoop_firecracker::control::{
-    GUEST_CONTROL_VERSION, GuestBarrierInfo, GuestBarrierPhase, GuestControlRequest,
+    GUEST_CONTROL_VERSION, GuestAuthorityInfo, GuestAuthorityTransfer, GuestBarrierInfo,
+    GuestBarrierPhase, GuestControlRequest,
 };
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs::{File, OpenOptions},
     io::{self, Read, Write},
     os::{fd::AsRawFd, unix::fs::OpenOptionsExt},
@@ -20,11 +21,11 @@ const LIMIT: Duration = Duration::from_secs(10);
 pub(super) struct Admission {
     open: AtomicBool,
     uncertain: AtomicBool,
-    effects: RwLock<()>,
+    effects: RwLock<Option<Uuid>>,
 }
 pub(super) struct Effect<'a> {
     admission: &'a Admission,
-    _guard: RwLockReadGuard<'a, ()>,
+    _guard: RwLockReadGuard<'a, Option<Uuid>>,
     dispatched: bool,
     confirmed: bool,
 }
@@ -46,20 +47,22 @@ impl Drop for Effect<'_> {
     }
 }
 impl Admission {
-    fn new() -> Self {
+    fn new(generation: Option<Uuid>) -> Self {
         Self {
             open: AtomicBool::new(true),
             uncertain: AtomicBool::new(false),
-            effects: RwLock::new(()),
+            effects: RwLock::new(generation),
         }
     }
-    pub(super) async fn enter(&self) -> io::Result<Effect<'_>> {
-        if !self.open.load(Ordering::SeqCst) {
-            return Err(invalid("guest workload admission is closed"));
+    pub(super) async fn enter(&self, generation: Uuid) -> io::Result<Effect<'_>> {
+        if !self.open.load(Ordering::SeqCst) || generation.is_nil() {
+            return Err(invalid(
+                "guest workload admission is closed or generation is nil",
+            ));
         }
         let guard = self.effects.read().await;
-        if !self.open.load(Ordering::SeqCst) {
-            return Err(invalid("guest workload admission is closed"));
+        if !self.open.load(Ordering::SeqCst) || *guard != Some(generation) {
+            return Err(invalid("guest workload admission or generation differs"));
         }
         Ok(Effect {
             admission: self,
@@ -71,7 +74,7 @@ impl Admission {
     fn close(&self) {
         self.open.store(false, Ordering::SeqCst);
     }
-    async fn drain(&self) -> io::Result<RwLockWriteGuard<'_, ()>> {
+    async fn drain(&self) -> io::Result<RwLockWriteGuard<'_, Option<Uuid>>> {
         let guard = tokio::time::timeout(LIMIT, self.effects.write())
             .await
             .map_err(|_| {
@@ -90,10 +93,61 @@ struct State {
     // A resumed operation cannot become a fresh capture with a stale identifier.
     // Bounded by refusal rather than forgetting earlier acknowledgements.
     seen: HashSet<Uuid>,
+    generations: HashSet<Uuid>,
+    transfers: HashMap<Uuid, GuestAuthorityTransfer>,
+}
+impl State {
+    fn plan_transfer(
+        &self,
+        transfer: &GuestAuthorityTransfer,
+        generation: Option<Uuid>,
+    ) -> io::Result<bool> {
+        transfer.validate().map_err(invalid)?;
+        let info = self
+            .active
+            .as_ref()
+            .filter(|info| info.barrier == transfer.barrier)
+            .ok_or_else(|| invalid("authority transfer requires its active barrier"))?;
+        if let Some(previous) = self.transfers.get(&transfer.barrier) {
+            if previous != transfer
+                || generation != Some(transfer.target_generation)
+                || info.generation != transfer.target_generation
+            {
+                return Err(invalid(
+                    "guest authority transfer already belongs to another intent",
+                ));
+            }
+            return Ok(true);
+        }
+        if generation != Some(transfer.source_generation)
+            || info.generation != transfer.source_generation
+            || info.phase != GuestBarrierPhase::Quiesced
+            || !info.workload_frozen
+            || !info.rootfs_synced
+            || self.generations.contains(&transfer.target_generation)
+            || self.generations.len() >= 128
+            || self
+                .transfers
+                .values()
+                .any(|old| old.restoration == transfer.restoration)
+        {
+            return Err(invalid(
+                "guest authority source, barrier, history or restoration differs",
+            ));
+        }
+        Ok(false)
+    }
+    fn commit_transfer(&mut self, transfer: &GuestAuthorityTransfer) {
+        self.active
+            .as_mut()
+            .expect("validated active barrier")
+            .generation = transfer.target_generation;
+        self.generations.insert(transfer.target_generation);
+        self.transfers.insert(transfer.barrier, transfer.clone());
+    }
 }
 
 pub(super) struct Barrier {
-    generation: Option<Uuid>,
     agent_pid: u32,
     pub(super) admission: Admission,
     state: Mutex<State>,
@@ -104,10 +158,64 @@ impl Barrier {
             return Err(invalid("guest barrier requires root PID1 and its agent"));
         }
         Ok(Self {
-            generation,
             agent_pid,
-            admission: Admission::new(),
-            state: Mutex::new(State::default()),
+            admission: Admission::new(generation),
+            state: Mutex::new(State {
+                generations: generation.into_iter().collect(),
+                ..State::default()
+            }),
+        })
+    }
+
+    pub(super) async fn generation(&self) -> Option<Uuid> {
+        *self.admission.effects.read().await
+    }
+
+    pub(super) async fn transfer(
+        &self,
+        transfer: GuestAuthorityTransfer,
+    ) -> io::Result<GuestAuthorityInfo> {
+        let mut state = self.state.lock().await;
+        let generation = self.generation().await;
+        if let Some(info) = state.active.as_mut() {
+            self.observe(info)?;
+        }
+        let already = state.plan_transfer(&transfer, generation)?;
+        if !already {
+            if self.admission.open.load(Ordering::SeqCst) {
+                return Err(invalid(
+                    "authority transition requires closed workload admission",
+                ));
+            }
+            let mut drained = self.admission.drain().await?;
+            let observation = (|| -> io::Result<()> {
+                self.membership()?;
+                if !frozen()? {
+                    return Err(invalid("authority transition requires frozen workloads"));
+                }
+                sync_root()?;
+                if !frozen()? {
+                    return Err(invalid("workloads thawed during authority transition"));
+                }
+                Ok(())
+            })();
+            if let Err(error) = observation {
+                let info = state.active.as_mut().expect("validated barrier");
+                info.phase = GuestBarrierPhase::Unknown;
+                info.rootfs_synced = false;
+                return Err(error);
+            }
+            // No await/cancellation point between generation and intent commit.
+            // Proxy readers see this authority only after the writer is released.
+            *drained = Some(transfer.target_generation);
+            state.commit_transfer(&transfer);
+        }
+        let info = state.active.as_ref().expect("validated barrier");
+        Ok(GuestAuthorityInfo {
+            protocol: GUEST_CONTROL_VERSION,
+            transfer,
+            phase: info.phase,
+            workload_frozen: info.workload_frozen,
         })
     }
 
@@ -162,12 +270,14 @@ impl Barrier {
                 generation,
                 barrier,
             } => (generation, barrier),
-            GuestControlRequest::Info => return Err(invalid("not a guest barrier request")),
+            GuestControlRequest::Info | GuestControlRequest::TransferAuthority { .. } => {
+                return Err(invalid("not a guest barrier request"));
+            }
         };
-        if generation.is_nil() || barrier.is_nil() || self.generation != Some(generation) {
+        let mut state = self.state.lock().await;
+        if generation.is_nil() || barrier.is_nil() || self.generation().await != Some(generation) {
             return Err(invalid("guest barrier generation or operation differs"));
         }
-        let mut state = self.state.lock().await;
         if matches!(request, GuestControlRequest::Quiesce { .. }) {
             if state
                 .active
@@ -327,45 +437,154 @@ fn sync_root() -> io::Result<()> {
 mod tests {
     use super::*;
     #[tokio::test]
-    async fn closure_excludes_new_effects_and_drain_waits_for_the_accepted_effect() {
-        let gate = Admission::new();
-        let accepted = gate.enter().await.unwrap();
+    async fn an_old_request_waiting_for_a_read_guard_cannot_cross_authority_rotation() {
+        let source = Uuid::new_v4();
+        let target = Uuid::new_v4();
+        let gate = std::sync::Arc::new(Admission::new(Some(source)));
+        let mut writer = gate.effects.write().await;
+        let pending = gate.clone();
+        let task = tokio::spawn(async move { pending.enter(source).await.is_ok() });
+        tokio::task::yield_now().await;
         gate.close();
-        assert!(gate.enter().await.is_err());
+        *writer = Some(target);
+        gate.open.store(true, Ordering::SeqCst);
+        drop(writer);
+        assert!(!task.await.unwrap());
+        assert!(gate.enter(source).await.is_err());
+        assert!(gate.enter(Uuid::nil()).await.is_err());
+        assert!(gate.enter(target).await.is_ok());
+    }
+
+    #[test]
+    fn synthetic_transfer_ledger_allows_exact_retries_and_refuses_retargeting_or_rewind() {
+        let source = Uuid::new_v4();
+        let target = Uuid::new_v4();
+        let barrier = Uuid::new_v4();
+        let transfer = GuestAuthorityTransfer {
+            source_generation: source,
+            target_generation: target,
+            barrier,
+            restoration: Uuid::new_v4(),
+        };
+        let mut state = State {
+            active: Some(GuestBarrierInfo {
+                protocol: GUEST_CONTROL_VERSION,
+                generation: source,
+                barrier,
+                phase: GuestBarrierPhase::Quiesced,
+                workload_frozen: true,
+                rootfs_synced: true,
+            }),
+            generations: [source].into_iter().collect(),
+            ..State::default()
+        };
+        assert!(!state.plan_transfer(&transfer, Some(source)).unwrap());
+        state.commit_transfer(&transfer);
+        assert!(state.plan_transfer(&transfer, Some(target)).unwrap());
+        let mut changed = transfer.clone();
+        changed.target_generation = Uuid::new_v4();
+        assert!(state.plan_transfer(&changed, Some(target)).is_err());
+        changed = transfer.clone();
+        changed.restoration = Uuid::new_v4();
+        assert!(state.plan_transfer(&changed, Some(target)).is_err());
+        state.active.as_mut().unwrap().phase = GuestBarrierPhase::Resumed;
+        assert!(state.plan_transfer(&transfer, Some(target)).unwrap());
+        let next = Uuid::new_v4();
+        state.active = Some(GuestBarrierInfo {
+            protocol: GUEST_CONTROL_VERSION,
+            generation: target,
+            barrier: next,
+            phase: GuestBarrierPhase::Quiesced,
+            workload_frozen: true,
+            rootfs_synced: true,
+        });
+        let rewind = GuestAuthorityTransfer {
+            source_generation: target,
+            target_generation: source,
+            barrier: next,
+            restoration: Uuid::new_v4(),
+        };
+        assert!(state.plan_transfer(&rewind, Some(target)).is_err());
+        let reused = GuestAuthorityTransfer {
+            source_generation: target,
+            target_generation: Uuid::new_v4(),
+            barrier: next,
+            restoration: transfer.restoration,
+        };
+        assert!(state.plan_transfer(&reused, Some(target)).is_err());
+    }
+
+    #[test]
+    fn synthetic_transfer_requires_a_completed_barrier_and_bounded_history() {
+        let source = Uuid::new_v4();
+        let barrier = Uuid::new_v4();
+        let transfer = GuestAuthorityTransfer {
+            source_generation: source,
+            target_generation: Uuid::new_v4(),
+            barrier,
+            restoration: Uuid::new_v4(),
+        };
+        let mut state = State {
+            active: Some(GuestBarrierInfo {
+                protocol: GUEST_CONTROL_VERSION,
+                generation: source,
+                barrier,
+                phase: GuestBarrierPhase::Unknown,
+                workload_frozen: true,
+                rootfs_synced: false,
+            }),
+            ..State::default()
+        };
+        assert!(state.plan_transfer(&transfer, Some(source)).is_err());
+        state.active.as_mut().unwrap().phase = GuestBarrierPhase::Quiesced;
+        assert!(state.plan_transfer(&transfer, Some(source)).is_err());
+        state.active.as_mut().unwrap().rootfs_synced = true;
+        state.generations.extend((1..=128).map(Uuid::from_u128));
+        assert!(state.plan_transfer(&transfer, Some(source)).is_err());
+    }
+    #[tokio::test]
+    async fn closure_excludes_new_effects_and_drain_waits_for_the_accepted_effect() {
+        let generation = Uuid::new_v4();
+        let gate = Admission::new(Some(generation));
+        let accepted = gate.enter(generation).await.unwrap();
+        gate.close();
+        assert!(gate.enter(generation).await.is_err());
         assert!(gate.effects.try_write().is_err());
         drop(accepted);
         let drained = gate.drain().await.unwrap();
         gate.open.store(true, Ordering::SeqCst);
         assert!(gate.effects.try_read().is_err());
         drop(drained);
-        assert!(gate.enter().await.is_ok());
+        assert!(gate.enter(generation).await.is_ok());
     }
     #[tokio::test]
     async fn cancelled_drain_does_not_reopen_admission() {
-        let gate = Admission::new();
-        let accepted = gate.enter().await.unwrap();
+        let generation = Uuid::new_v4();
+        let gate = Admission::new(Some(generation));
+        let accepted = gate.enter(generation).await.unwrap();
         gate.close();
         assert!(
             tokio::time::timeout(Duration::from_millis(10), gate.drain())
                 .await
                 .is_err()
         );
-        assert!(gate.enter().await.is_err());
+        assert!(gate.enter(generation).await.is_err());
         drop(accepted);
         drop(gate.drain().await.unwrap());
-        assert!(gate.enter().await.is_err());
+        assert!(gate.enter(generation).await.is_err());
     }
     #[tokio::test]
     async fn dispatched_without_a_reply_remains_uncertain_after_the_future_is_dropped() {
-        let gate = Admission::new();
-        let mut effect = gate.enter().await.unwrap();
+        let generation = Uuid::new_v4();
+        let gate = Admission::new(Some(generation));
+        let mut effect = gate.enter(generation).await.unwrap();
         effect.dispatched();
         drop(effect);
         gate.close();
         assert!(gate.drain().await.is_err());
         // A deliberate source thaw/reopen does not pretend to reconcile it.
         gate.open.store(true, Ordering::SeqCst);
-        let mut later = gate.enter().await.unwrap();
+        let mut later = gate.enter(generation).await.unwrap();
         later.dispatched();
         later.confirmed();
         drop(later);
@@ -374,8 +593,9 @@ mod tests {
     }
     #[tokio::test]
     async fn a_complete_agent_reply_allows_drain_including_a_rejected_request() {
-        let gate = Admission::new();
-        let mut effect = gate.enter().await.unwrap();
+        let generation = Uuid::new_v4();
+        let gate = Admission::new(Some(generation));
+        let mut effect = gate.enter(generation).await.unwrap();
         effect.dispatched();
         effect.confirmed();
         drop(effect);

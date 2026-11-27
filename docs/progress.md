@@ -1,6 +1,6 @@
 # Progress
 
-Private Ready-image materialization is accepted at a4587f9: ten actual default-runsc groups pass with 329 source-verified inputs and Complete collection. Native selected-image placement and private guest quiescence are implemented. The first public placement gate failed during musl compilation before any VM execution; the corrected increment passes Windows285/Linux-root377 full checks and musl guest16 plus four static release builds, with 331 identical inputs. Fresh public/KVM placement and barrier gates remain required. Snapshots/restore/templates, combined M4 and complete M5-M6 remain active.
+Native public selected-image placement and private protocol2 quiescence are accepted at376328c: actual KVM placement53/366 inputs and barrier52/365 inputs both pass with Complete collection; CI46009520892 also passes. Protocol3 generation-bound RPC and frozen guest authority transition are now implemented with their own verification in progress. Memory capture, host restore authority, snapshots/templates, combined M4 and complete M5-M6 remain active.
 
 ## Active objective
 
@@ -8,13 +8,34 @@ Implement the complete M0-M6 design in the dedicated mark0-cn/GoldenHoop reposit
 
 ## Current stage
 
-Private guest protocol v2 now closes and drains workload request admission,
+Protocol3 binds every native workload frame to its current generation at the
+guest effect admission guard. A frozen transition records exact source/target,
+barrier and restoration intent without opening workloads; old or delayed frames
+cannot gain target authority after thaw. The host method also authenticates the
+physical target VMM and requires a confirmed frozen response. Source-absence
+proof, a durable single-use host claim, memory/state/disk capture and actual
+fresh-VMM restore remain unimplemented. Final Windows287/Linux-root383 formatting, strict all-target clippy and
+workspace tests pass with331 exact inputs after updating the transport fixture
+for generation scope and physical-target no-dispatch. Final musl21
+(descriptor3/control-wire5/init13), strict all-target clippy and four static
+release binaries also pass on those same331 inputs. All four successful local
+check images are removed and positively observed absent; useful caches and all
+original pass/fail evidence are retained. See the
+[implementation summary](evidence/m4-guest-authority-implementation-summary.json). The new same-VMM guest protocol gate remains unexecuted. See
+[guest authority](native-authority.md). This does not accept a memory restore.
+
+The preceding source376328c is independently accepted:
+
+- Public selected-image [run46009592844](https://github.com/mark0-cn/GoldenHoop/actions/runs/46009592844) passes53 actual groups with366 verified inputs and Complete collection. Two real runsc-prepared disks have distinct guest markers and VM identities; original source blobs are collected, live disks remain usable, and same running/paused VMs recover after actual worker/manager SIGKILL without spare probe capacity. [Summary](evidence/m4-native-image-placement-acceptance-summary.json).
+- Private protocol2 [run46009598894](https://github.com/mark0-cn/GoldenHoop/actions/runs/46009598894) passes52 actual groups with365 verified inputs and Complete collection. The counter stops changing on the physical disk, new effects refuse, PID1 remains reachable and the original command resumes after thaw; concurrent write was actually refused with its disk path absent. [Summary](evidence/m4-guest-barrier-acceptance-summary.json).
+
+The accepted source376328c protocol2 closes and drains workload request admission,
 observes the actual agent/workload freezer and syncs the root filesystem before
 acknowledging quiescence. PID1/control and agent/workloads share an aggregate task
 ceiling through separate children. A dispatched agent effect without a complete
 reply permanently fences future capture for that guest; source thaw does not
-pretend to reconcile it. The current boot generation still owns guest authority;
-memory capture and restore transition remain unimplemented. Final formatting,
+pretend to reconcile it. At that source, the boot generation still owns guest authority;
+protocol3 above adds only the guest transition primitive. Final formatting,
 strict all-target workspace clippy and all tests pass Windows285/Linux-root377.
 All 331 source inputs match the separate musl descriptor3/control-wire3/init10
 tests, strict musl clippy and four static guest release binaries. All four local
@@ -31,8 +52,8 @@ musl-host root test remains Failed: this Rust implementation lacks metadata
 birthtime there, so native host receipts refuse it. GNU/Linux host root tests
 remain unchanged; the static musl guest check has an explicit distinct scope.
 See the [original failure and diagnosis](evidence/m4-native-image-input-musl-diagnosis.json).
-Independent real placement and guest-barrier workflows still need to accept the
-corrected immutable source. No skipped or synthetic test substitutes for KVM.
+Both independent real workflows now accept corrected source376328c. The original
+failure remains unchanged, and no skipped or synthetic test substitutes for KVM.
 
 The public native prepared-image increment resolves immutable Ready references,
 hands an anonymous verified descriptor through the authenticated manager, and
@@ -43,8 +64,9 @@ combined fixed/selected disk reservations. Same-context completed probe receipts
 can support quota-only restart validation only with a freshly authenticated live
 VM. The dedicated public two-image workflow retains root47 and adds actual
 conversion, admission, block-release, blob collection and running/paused recovery
-checks. The first gate failed before VM launch; the ABI-corrected KVM paths await
-fresh execution, and local tests do not accept them.
+checks. The first gate failed before VM launch; corrected source376328c now
+passes actual placement53/366/Complete. Subsequent protocol3 changes retain their
+own unverified runtime scope.
 See [native images](native-images.md) and the
 [implementation evidence](evidence/m4-native-image-input-implementation-summary.json).
 

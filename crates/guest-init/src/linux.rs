@@ -17,6 +17,7 @@ use std::{
 
 use goldenhoop_firecracker::control::{
     GUEST_CONTROL_VERSION, GuestBootIdentity, GuestControlInfo, GuestControlRequest,
+    GuestRpcRequest,
 };
 use goldenhoop_firecracker::vsock::{
     GuestControlListener, MAX_AGENT_FRAME, SocketStream, read_frame,
@@ -363,6 +364,13 @@ async fn proxy(
         .is_some()
     {
         let control: GuestControlRequest = serde_json::from_slice(&request)?;
+        if let GuestControlRequest::TransferAuthority { transfer } = control {
+            let info = barrier.transfer(transfer).await?;
+            let mut reply = serde_json::to_vec(&info)?;
+            reply.push(b'\n');
+            host.get_mut().write_all(&reply).await?;
+            return host.get_mut().shutdown().await;
+        }
         if !matches!(control, GuestControlRequest::Info) {
             let info = barrier.request(control).await?;
             let mut reply = serde_json::to_vec(&info)?;
@@ -379,7 +387,7 @@ async fn proxy(
         }
         let info = GuestControlInfo {
             protocol: GUEST_CONTROL_VERSION,
-            generation: identity.generation,
+            generation: barrier.generation().await,
             pids: observed,
             agent_pid: pid,
             host_cid: 2,
@@ -391,12 +399,13 @@ async fn proxy(
         host.get_mut().write_all(&reply).await?;
         return host.get_mut().shutdown().await;
     }
-    let mut effect = match barrier.admission.enter().await {
+    let envelope: GuestRpcRequest<AgentRequest> = serde_json::from_slice(&request)?;
+    let mut effect = match barrier.admission.enter(envelope.guest_rpc.generation).await {
         Ok(effect) => effect,
         Err(_) => {
             let reply = AgentReply::Error(goldenhoop_protocol::ApiError::new(
                 goldenhoop_protocol::ErrorCode::InvalidState,
-                "guest workload admission is closed",
+                "guest workload admission or generation differs",
             ));
             let mut reply = serde_json::to_vec(&reply)?;
             reply.push(b'\n');
@@ -404,6 +413,8 @@ async fn proxy(
             return host.get_mut().shutdown().await;
         }
     };
+    let mut request = serde_json::to_vec(&envelope.guest_rpc.request)?;
+    request.push(b'\n');
     let mut agent = BufReader::new(agent_connection(pid).await?);
     effect.dispatched();
     agent.get_mut().write_all(&request).await?;
