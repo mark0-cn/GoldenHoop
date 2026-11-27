@@ -56,8 +56,9 @@ The separate `firecracker-managed-restore.yml` workflow targets six native group
 source capture/collection; disconnected submitting client; live retry and competing
 intent; actual manager SIGKILL with original process RAM continuation; actual target
 supervisor SIGKILL with native collection; and exact retry after object GC. Full
-retained hardware regression belongs to stage acceptance. Until its actual report
-passes, these hardware cases remain unverified. Public snapshot/session rebinding,
+retained hardware regression belongs to stage acceptance. Its [actual gate46065591115](evidence/m4-managed-restore-acceptance-summary.json)
+passes12 groups/90 verified inputs with Complete collection at0caa8a7, including
+these6 native groups and6 shared guest smoke groups. Public snapshot/session rebinding,
 prepared-image restoration, templates and combined M4-M6 remain open.
 
 The independent `firecracker-restore-cut.yml` workflow targets the missing-writer

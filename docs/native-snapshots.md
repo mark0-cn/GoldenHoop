@@ -7,8 +7,9 @@ Native-manager capture64 and private fresh-VMM continuation pass the c7fbfce
 backing observer also passes70/384/Complete at9a77320, run46060867499, with
 authenticated live VMM PID/start and full memory length.
 The [private native manager restoration](native-managed-restoration.md) increment
-adds durable target orchestration and typed collection reconciliation; its
-targeted actual hardware workflow remains separate and unaccepted.
+adds durable target orchestration and typed collection reconciliation. Its
+targeted native6/shared-guest6 gate passes12/90/Complete at0caa8a7. The independent
+actual missing-writer cut remains unaccepted until its own report passes.
 Public native snapshot/restore/template capabilities are not implemented or advertised.
 The complete M0-M6 objective in [roadmap.md](roadmap.md) is unchanged.
 

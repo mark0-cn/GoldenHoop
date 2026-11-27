@@ -1,13 +1,26 @@
 # Progress
 
+The [targeted native restoration gate46065591115](https://github.com/mark0-cn/GoldenHoop/actions/runs/46065591115)
+passes12 groups/90 verified runtime inputs at0caa8a7 with Complete collection.
+Its6 new native groups prove supervisor-owned restore after client disconnect,
+same-target retry and competing-intent refusal, original execution/RAM token
+continuation after actual manager SIGKILL/reconnect, native collection after
+actual restored-supervisor SIGKILL, and exact retry after object GC. CI46065566837
+passes. The [acceptance](evidence/m4-managed-restore-acceptance-summary.json)
+preserves raw SHA256 `12025b9962ebbe9e748df8329cfa6fdbb79a599cb7a3634dc04bee55f110d11a`.
+Fixture/export carrier absence and exact owned image collection pass. The
+independent pre-writer-ack cut46066555955 is in progress at2f3a8a5; it remains
+unaccepted. Public snapshot/session integration, templates and full M4-M6 remain
+active; this targeted gate does not repeat the retained full70-group contract.
+
 The [native restoration writer-cut workflow](native-managed-restoration.md)
 adds a separate actual live-VMM/pre-writer-ack SIGKILL contract. Its observer uses
 path-filtered strace delay only, exact pidfds and original cgroup identities;
 the Rust collector must prove absence and persist Closed/Unconfirmed rather
 than Activated. Python AST3 and all344 unchanged Rust inputs are verified by the
 [harness report](evidence/m4-restore-cut-harness-validation.json). The actual cut
-remains unverified. Native manager gate46065591115 is independently in progress
-at0caa8a7; CI46065566837 passes. Full hardware regression remains a stage gate.
+remains unverified. Native manager gate46065591115 independently passes as above.
+Full hardware regression remains a stage gate.
 
 The private [native manager restoration](native-managed-restoration.md) increment
 adds immutable target admission, supervisor-owned continuation leases and original
@@ -20,7 +33,7 @@ source inputs. The [implementation summary](evidence/m4-managed-restore-implemen
 records exact checks and collection receipts. The new actual child SIGKILL/root
 test uses synthetic native collector/cgroup acknowledgements; it is not a KVM cut.
 All successful local check tags and all5 failed tags are positively absent.
-The separate targeted native hardware workflow has not run yet. Prepared images,
+The separate targeted native hardware workflow passes12/90/Complete. Prepared images,
 public snapshot/session bindings, templates and combined M4-M6 remain open.
 
 The strengthened [continuation gate46060867499](https://github.com/mark0-cn/GoldenHoop/actions/runs/46060867499)
