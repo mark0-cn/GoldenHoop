@@ -1,5 +1,16 @@
 # Progress
 
+The strengthened [continuation gate46060867499](https://github.com/mark0-cn/GoldenHoop/actions/runs/46060867499)
+passes70 groups/384 source inputs at9a77320 with Complete collection. Its external
+sample observes the full268,435,456-byte readonly RAM backing while UID10000 VMM
+PID22511/start144268 is live; both identities match Rust's authenticated target.
+The [live-backing acceptance](evidence/m4-continuation-live-backing-acceptance.json)
+preserves raw SHA256 `e2f0f1b889274401eaf20d3e41be9f97397d1cbadffa583bc7e327eda92c49e3`.
+Fixture/export carrier absence and final owned image collection pass.
+CI46060754522 passes. This closes the earlier independent sampling gap while
+preserving its original raw observation. Native-manager/public restoration,
+templates and full M4-M6 remain active.
+
 At c7fbfce, the [actual continuation gate46057014437](https://github.com/mark0-cn/GoldenHoop/actions/runs/46057014437)
 passes70 groups/384 source inputs with Complete collection. It retains manager
 capture64 and proves a source-absent fresh VMM resumes the original captured
@@ -13,7 +24,7 @@ copying; the memory object is268,435,456 bytes. That sample cannot independently
 establish live/full backing protection. Rust post-load full-length/hash/protection
 checks and retained execution passed. The strengthened observer requires full
 manifest length and live UID10000 VMM PID/start matching the authenticated target.
-Its fresh70-group gate remains required.
+The independent fresh70-group acceptance above now supplies that observation.
 
 The [exit correction](evidence/m4-manager-exit-upstream-diagnosis.json) separates
 exact descriptor waits from full live-service authentication. Windows290/GNU402/

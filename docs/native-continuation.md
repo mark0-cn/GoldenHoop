@@ -1,5 +1,11 @@
 # Private single-use memory continuation
 
+The strengthened actual gate46060867499 passes70 groups/384 source inputs with
+Complete collection. Its [external backing acceptance](evidence/m4-continuation-live-backing-acceptance.json)
+binds a complete268,435,456-byte readonly RAM object to the actual live UID10000
+VMM PID/start, exactly matching Rust's authenticated process. The earlier partial
+copy sample and its limitation remain preserved separately.
+
 Private same-host continuation at c7fbfce passes the actual70-group/384-input
 [gate46057014437](https://github.com/mark0-cn/GoldenHoop/actions/runs/46057014437)
 with Complete collection and passing CI. This includes retained manager capture64.
