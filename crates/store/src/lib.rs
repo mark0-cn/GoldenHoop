@@ -4,7 +4,9 @@ mod contexts;
 mod controllers;
 pub use controllers::{ControllerAbsence, ControllerPhase, NetworkController};
 mod executions;
+mod image_jobs;
 mod isolated;
+pub use image_jobs::ImageJob;
 mod lifecycle;
 mod network_dispatch;
 mod network_policy;
@@ -271,7 +273,7 @@ impl Store {
                 .await
                 .map_err(db)?;
         let version: u32 = version.parse().map_err(|_| internal())?;
-        if !(1..=16).contains(&version) {
+        if !(1..=17).contains(&version) {
             return Err(ApiError::new(
                 ErrorCode::UnsupportedCapability,
                 "database schema version is unsupported",
@@ -293,6 +295,7 @@ impl Store {
             (14, include_str!("schema-v14.sql")),
             (15, include_str!("schema-v15.sql")),
             (16, include_str!("schema-v16.sql")),
+            (17, include_str!("schema-v17.sql")),
         ];
         for (target, migration) in migrations {
             if version < target {

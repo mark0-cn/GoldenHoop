@@ -451,3 +451,30 @@ or acceptance condition is weakened. Portable CI 45911858045 also passes.
 This accepts the basic local native lifecycle on the tested host. It does not
 accept production image preparation, disk/memory snapshot/restore identities,
 templates, hard-manager-crash recovery or the combined M4-M6 stage.
+
+## Durable source acquisition accepted as a component
+
+The trusted Rust [source-acquisition service](image-preparation.md) now persists
+installation/generation/input/backend ownership before creating a never-started
+export carrier. It streams a twice-read digest-bound source into immutable large
+storage and confirms carrier absence before publishing Ready. A fresh process
+reopens the same stable archive after source-image collection. Exact stable
+generation collection, wrong-owner/backend refusal and unknown-dispatch fences
+are preserved. Schema17 adds bounded private CAS records, and real old-version
+migration/reopen tests retain prior resources and the new intent.
+
+[Windows checks](evidence/m4-image-source-export-validation-windows.json) pass
+279 tests; [Linux checks](evidence/m4-image-source-export-validation-linux-current.json)
+pass 328 and the optimized host build. Both include full format/strict lint and
+308 build inputs including embedded SQL and JSON. The
+[frozen actual contract](evidence/m4-image-source-export-actual-windows-frozen.json)
+passes seven groups and binds 309 inputs, with independently verified archive
+bytes and Complete collection of every fresh fixture resource. The original
+Failed/Unknown fixture and its policy-retained temporary directory are not
+rewritten as collected.
+
+Source acquisition and offline conversion remain separate component results.
+The actual production converter parent, pre-extraction host-limit authorization,
+uncertain-allocation recovery and produced-image gVisor/KVM gates remain pending.
+No public image/snapshot/template capability or overall M4 acceptance follows
+from these source-export results; the complete M4-M6 objective is unchanged.

@@ -78,7 +78,9 @@ def main():
         sources.append(root / f'crates/{crate}/Cargo.toml')
     if args.public_contract:
         sources += [root / 'tests/firecracker_public_contract.py', root / '.github/workflows/firecracker-public.yml']
-        sources += sorted((root / 'crates').rglob('*.rs')) + sorted((root / 'crates').rglob('Cargo.toml'))
+        # Production control embeds SQL migrations; full workspace tests also
+        # compile fixture JSON. Bind every crate input rather than Rust alone.
+        sources += sorted(p for p in (root / 'crates').rglob('*') if p.is_file() and '__pycache__' not in p.parts)
         sources += sorted((root / 'sdk/python').rglob('*.py')) + [root / 'sdk/python/pyproject.toml']
     sources += sorted((root / 'images/microvm').glob('*.json'))
     report = {

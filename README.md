@@ -4,7 +4,7 @@ A Rust agent sandbox platform with explicit runtime capabilities, independent AP
 
 ## Project status
 
-**M0-M3 are accepted for the tested Linux runc-development and gVisor configurations. The combined Stage also preserves the S3-compatible API/artifact baseline. M3 includes protected five-level sandboxes, default-deny egress, live policy recovery, transparent bound HTTP/TLS credentials, scoped/revocable keys and durable redacted audit. Firecracker, Kubernetes and the M4-M6 release gates remain unaccepted.**
+**M0-M3 are accepted for the tested Linux runc-development and gVisor configurations. The combined Stage also preserves the S3-compatible API/artifact baseline. M3 includes protected five-level sandboxes, default-deny egress, live policy recovery, transparent bound HTTP/TLS credentials, scoped/revocable keys and durable redacted audit. Basic local Firecracker lifecycle now has actual KVM evidence; the overall M4-M6 release gates remain unaccepted.**
 
 Code contexts have durable public APIs and Rust/Python/CLI bindings. Python's existing runc/gVisor and S3-compatible loops pass, including restart recovery and cleanup. New Python, Java, Go, TypeScript, Bash and JavaScript adapters use [explicitly probed language support](docs/code-languages.md) from a cached kernel image; support is disabled by default. [Isolated child sandboxes](docs/isolated-sessions.md) add reserved resources, inherited lifecycle and immutable feature ceilings, behind a separate actual runtime probe. See [current verification](docs/progress.md).
 
@@ -16,7 +16,7 @@ The full target includes local containers, Firecracker microVMs, and Kubernetes;
 
 Runtime support is declared per profile and checked against the host. Missing isolation must fail closed. A successful unit test is not evidence of a working isolation boundary.
 
-M4 implementation has started with [Rust KVM observations and private Firecracker control](docs/m4-delivery.md). Jailed guest/runtime, snapshots and template acceptance remain required; no Firecracker profile is advertised.
+The opt-in [basic local Firecracker profile](docs/m4-delivery.md) passes actual jailed bootstrap and the shared API/Python SDK/Rust CLI contract, including worker SIGKILL recovery and independent expiry. Only actually probed basic commands, files, pause, no-NIC isolation and retained artifacts are published. [Immutable source acquisition and offline ext4 conversion](docs/image-preparation.md) have verified component results. Their production integration, snapshots/restores/templates, hard-manager recovery and combined M4 acceptance remain required.
 
 ## Development
 
@@ -36,6 +36,7 @@ M4 implementation has started with [Rust KVM observations and private Firecracke
 - [Code-language images and actual capability probes](docs/code-languages.md)
 - [Runtime diagnostics](docs/diagnostics.md)
 - [Retained artifacts and storage](docs/artifacts.md)
+- [Native lifecycle and image preparation](docs/m4-delivery.md)
 - [Interactive sessions, terminal sockets and recovery](docs/sessions.md)
 - [Code context implementation and remaining work](docs/code-contexts.md)
 - [中文说明](README.zh-CN.md)

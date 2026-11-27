@@ -31,8 +31,7 @@ class Contract:
         self.args = args
         root = Path(__file__).resolve().parents[1]
         sources = [root/'Cargo.toml', root/'Cargo.lock', root/'images/agent/Dockerfile', Path(__file__).resolve()]
-        sources += sorted((root/'crates').rglob('*.rs'))
-        sources += sorted((root/'crates').rglob('Cargo.toml'))
+        sources += sorted(p for p in (root/'crates').rglob('*') if p.is_file() and '__pycache__' not in p.parts)
         self.sources = sources
         self.source_hashes = {p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in sources}
         self.owner = uuid.uuid4().hex

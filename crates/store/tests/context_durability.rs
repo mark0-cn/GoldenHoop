@@ -815,9 +815,11 @@ async fn schema_three_migration_and_reopen_preserve_sessions_artifacts_and_ambig
     let result=AssertUnwindSafe(async {
         let (installation,sandbox,session,artifact,operation)=setup.unwrap();
         let mut connection=SqliteConnection::connect_with(&SqliteConnectOptions::new().filename(&db_path)).await.unwrap();
-        let downgrading=sqlx::raw_sql("DROP TRIGGER credential_policy_fenced;DROP TRIGGER credential_controller_collecting;DROP TABLE credential_audit_deliveries;DROP TABLE credential_controller_history;DROP TABLE credential_epochs;DROP TABLE network_create_dispatches;DROP TABLE network_policy_applied_sources;DROP TABLE network_policy_changes;DROP TABLE network_policy_users;DROP TABLE network_policy_events;DROP TABLE network_policies;DROP TABLE network_controller_events;DROP TABLE network_controllers;DROP TABLE network_allocation_events;DROP TABLE network_allocations;DROP TABLE sandbox_scopes;DROP TABLE code_context_events;DROP TABLE code_context_sources;DROP TABLE code_runs;DROP TABLE code_contexts;UPDATE meta SET value='3' WHERE key='schema_version'").execute(&mut connection).await;
+        let downgrading=sqlx::raw_sql("DROP TABLE image_jobs;DROP TRIGGER credential_policy_fenced;DROP TRIGGER credential_controller_collecting;DROP TABLE credential_audit_deliveries;DROP TABLE credential_controller_history;DROP TABLE credential_epochs;DROP TABLE network_create_dispatches;DROP TABLE network_policy_applied_sources;DROP TABLE network_policy_changes;DROP TABLE network_policy_users;DROP TABLE network_policy_events;DROP TABLE network_policies;DROP TABLE network_controller_events;DROP TABLE network_controllers;DROP TABLE network_allocation_events;DROP TABLE network_allocations;DROP TABLE sandbox_scopes;DROP TABLE code_context_events;DROP TABLE code_context_sources;DROP TABLE code_runs;DROP TABLE code_contexts;UPDATE meta SET value='3' WHERE key='schema_version'").execute(&mut connection).await;
         connection.close().await.unwrap();downgrading.unwrap();
         let migrated=Store::open(&db_path).await.unwrap();
+        let image_id=Uuid::new_v4();let image_generation=Uuid::new_v4();
+        migrated.reserve_image_job(image_id,image_generation,&serde_json::json!({"source":"pinned"}),&serde_json::json!({"phase":"export_create_dispatched"})).await.unwrap();
         let work=AssertUnwindSafe(async {
             assert_eq!(migrated.installation_id(),installation);assert_eq!(migrated.session_control(session,1).await.unwrap().receipt.state,SessionControlState::Pending);
             assert_eq!(migrated.artifact(artifact).await.unwrap().artifact.source_path,"old.bin");assert_eq!(migrated.operation(operation).await.unwrap().resource_id,artifact);
@@ -827,6 +829,7 @@ async fn schema_three_migration_and_reopen_preserve_sessions_artifacts_and_ambig
         migrated.close().await;drop(migrated);let (context,run)=work.unwrap();
         let reopened=Store::open(&db_path).await.unwrap();
         let checking=AssertUnwindSafe(async {
+            let image=reopened.image_job(image_id).await.unwrap();assert_eq!(image.generation,image_generation);assert_eq!(image.payload["phase"],"export_create_dispatched");
             assert_eq!(reopened.installation_id(),installation);let stored=reopened.code_context(context).await.unwrap();assert!(stored.dispatched && stored.ever_ready);assert_eq!(stored.cursor,1);
             assert_eq!(stored.context.desired_state,CodeContextDesiredState::Closed);let pending=reopened.code_run(run).await.unwrap();assert!(pending.dispatched && pending.cancel_requested);assert!(pending.run.finished_at.is_none());
             assert!(!reopened.dispatch_code_run(run).await.unwrap());reopened.finish_code_context_absent(context,"fixture actual runtime absence").await.unwrap();
