@@ -1,4 +1,5 @@
 use super::*;
+use std::os::unix::fs::PermissionsExt;
 
 #[test]
 fn tracked_actual_process_rejects_foreign_start_time_and_observes_reaped_exit() {
@@ -50,6 +51,7 @@ fn tracked_actual_process_rejects_foreign_start_time_and_observes_reaped_exit() 
 #[test]
 fn atomic_private_record_has_complete_bytes_and_no_pending_orphan_after_replacement() {
     let directory = tempfile::tempdir().unwrap();
+    std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
     let path = directory.path().join("record.json");
     for phase in ["reserved", "running", "collected"] {
         let value = serde_json::json!({"generation":Uuid::new_v4(),"phase":phase});
@@ -60,7 +62,8 @@ fn atomic_private_record_has_complete_bytes_and_no_pending_orphan_after_replacem
         );
         let metadata = std::fs::symlink_metadata(&path).unwrap();
         assert_eq!(metadata.mode() & 0o777, 0o600);
-        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+        // The permanent target mutex is retained while this store exists.
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 2);
     }
     let path = directory.path().to_owned();
     directory.close().unwrap();

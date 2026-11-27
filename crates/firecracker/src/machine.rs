@@ -3,7 +3,7 @@
 use std::{
     collections::BTreeSet,
     fs::{File, OpenOptions},
-    io::{self, Read, Write},
+    io::{self, Read},
     os::{
         fd::{AsRawFd, FromRawFd, OwnedFd},
         unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt},
@@ -366,19 +366,10 @@ impl Machine {
             record.ever_ready |= phase == "running";
             return atomic_json(path, record);
         }
-        let bytes = serde_json::to_vec(
+        atomic_json(
+            &self.root.join("intent.json"),
             &serde_json::json!({"format":1,"generation":self.generation,"phase":phase,"artifacts":input,"process":self.process,"cgroup":self.cgroup}),
-        )?;
-        let pending = self.root.join("intent.pending");
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&pending)?;
-        file.write_all(&bytes)?;
-        file.sync_all()?;
-        std::fs::rename(pending, self.root.join("intent.json"))?;
-        Ok(File::open(&self.root)?.sync_all()?)
+        )
     }
 
     fn prepare(&mut self, input: &BootInput) -> Result<()> {

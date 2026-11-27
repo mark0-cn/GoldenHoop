@@ -1,0 +1,72 @@
+{
+  "suite": "native interrupted metadata upstream applicability review",
+  "result": "source_review",
+  "scope": "local inode/producer recovery implementation; final full checks and release/KVM gate remain separate",
+  "primary_sources": [
+    {
+      "project": "atomic-write-file",
+      "version": "0.3.1",
+      "url": "https://docs.rs/atomic-write-file/0.3.1/atomic_write_file/",
+      "finding": "unnamed staging removes precommit named debris, but its documented named-link/rename commit can still leave a named temporary after abrupt interruption",
+      "application": "attach a complete inode-bound receipt before naming staging; reconcile only the original pending object instead of deleting by filename"
+    },
+    {
+      "project": "Linux man-pages",
+      "url": "https://man7.org/linux/man-pages/man2/open.2.html",
+      "finding": "O_TMPFILE stages an unnamed inode, whose data is discarded after the last descriptor closes unless it is linked; the documented /proc/self/fd linkat form can publish it without CAP_DAC_READ_SEARCH",
+      "application": "stage/sync bytes and xattr on the descriptor, use the pinned parent descriptor and linkat, and require supported local filesystems without a named-file fallback"
+    },
+    {
+      "project": "Linux man-pages",
+      "url": "https://man7.org/linux/man-pages/man2/fsetxattr.2.html",
+      "finding": "fsetxattr binds attributes to an open file; XATTR_CREATE refuses an existing attribute",
+      "application": "store parent, target, mutex, PID/start/boot/namespace/executable and content receipts on the actual staging inode before it is named"
+    },
+    {
+      "project": "Linux man-pages",
+      "url": "https://man7.org/linux/man-pages/man2/flock.2.html",
+      "finding": "flock is attached to an open file description, including inherited duplicates; remote filesystem semantics differ",
+      "application": "retain per-target permanent mutex inodes; validate their parent/name/actual inode before publication and recovery, and refuse remote filesystem settlement"
+    },
+    {
+      "project": "SQLite",
+      "url": "https://www.sqlite.org/atomiccommit.html",
+      "finding": "recovery establishes a complete hot journal and exclusion before repairing prior writes; journal publication/sync precedes mutation",
+      "application": "apply complete-receipt and exclusion requirements to a single JSON publication; this is metadata roll-forward, with no runtime create replay or inherited power-loss guarantee"
+    },
+    {
+      "project": "strace",
+      "url": "https://man7.org/linux/man-pages/man1/strace.1.html",
+      "finding": "delay_enter delays an actual syscall without requiring a fabricated return; --kill-on-exit fences tracees when their tracer exits",
+      "application": "observe the actual pending inode/xattr and original root binary/PID/start, kill through a pidfd, confirm parent reaping, then restart the unmodified release binary"
+    }
+  ],
+  "implemented_boundaries": [
+    "private local parent descriptor and supported kernel filesystem",
+    "complete per-target mutex binding published from an unnamed inode and retained during store lifetime",
+    "file bytes and complete bounded xattr receipt synced before the pending name is created",
+    "prior content/inode/ctime/receipt digest preimage must match; replacements and links are preserved",
+    "recovery requires the same boot/PID namespace/executable and actual original identity absence; an own failed-call retry additionally requires the original kernel mutex",
+    "new installation lock cannot be published as an empty partial claim; matching installation bytes are validated before marker recovery",
+    "records reconcile independently with unconfirmed targets retained; manager records expose completed/unconfirmed targets",
+    "private bootstrap and persistent journals share the publication primitive"
+  ],
+  "not_accepted": [
+    "release binary syscall-cut and KVM regression until the new gate passes",
+    "earlier unacknowledged cgroup/jail/VMM allocation effects",
+    "host/binary/configuration migration or unsupported/remote filesystems",
+    "host power-loss durability inferred from SIGKILL",
+    "snapshots/restore/templates/complete M4 or M5-M6"
+  ],
+  "local_source_files_sha256": {
+    "crates/firecracker/src/lifecycle/metadata.rs": "2b002b1ee6fa8afffecf74211c7f47f431533a3885962f78b7fb6232bbe8bd0d",
+    "crates/firecracker/src/lifecycle/metadata/atomic.rs": "2f536cf5148f7652a1dc767d0afffdbc4bdefdf8dc3580c87012bc0b5ef2e2ec",
+    "crates/firecracker/src/lifecycle/metadata/atomic/tests.rs": "bc1afa970bb2d796ad1b97e3c8db1e710c051a8c769dc441a52d1564718094fa",
+    "crates/firecracker/src/lifecycle/manager.rs": "8eb57abef5293e763c80f8a092951e96f55209e6ec66f3db8c5f112aed96a7d3",
+    "crates/firecracker/src/lifecycle/driver.rs": "69ae822748b74cb77738d0f6b9a0e99fef7f8d46058b973e476db053b189b69b",
+    "crates/firecracker/src/machine.rs": "c068f35fa06e459e7045d3a6b7ac63b2a7f47ff698677809116bc88fc414cb28",
+    "tests/firecracker_metadata_contract.py": "444a7bf2b25e5bee7cb3c0b0d4cb88ca5c14306a0dbc177649c0a73d45aa4d28",
+    "tests/firecracker_guest_contract.py": "89e890e3ddc645fe95776d324011536daac395834c35457496c2ed908f0f03d7",
+    ".github/workflows/firecracker-metadata-recovery.yml": "290341912c5e20165d6a2e30a559430c446eb4f78c897bd4f5939ebdcac4d257"
+  }
+}

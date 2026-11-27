@@ -36,6 +36,8 @@ struct ManagerRecord {
     cgroup_identity: Option<PathIdentity>,
     #[serde(default)]
     recovery: Option<ManagerRecovery>,
+    #[serde(default)]
+    metadata_recovery: metadata::Recovery,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -450,6 +452,23 @@ pub async fn run_manager(config: PathBuf) -> Result<()> {
         return Err(invalid("native manager executable mismatch").into());
     }
     let lease = metadata::claim_installation(&cfg.data_root, cfg.installation_id)?;
+    let mut metadata_recovery = metadata::recover_entries(
+        &cfg.data_root,
+        &["config.json", "manager.json"],
+        false,
+        |name, bytes| {
+            if name == "config.json" {
+                let stored: DriverConfig = serde_json::from_slice(bytes)?;
+                if config_sha(&stored)? != config_sha(&cfg)? {
+                    return Err(invalid("pending native configuration differs").into());
+                }
+                stored.validate()
+            } else {
+                let stored: ManagerRecord = serde_json::from_slice(bytes)?;
+                validate_manager_record(&cfg, &stored)
+            }
+        },
+    )?;
     let marker = cfg.data_root.join("manager.json");
     let socket = cfg.data_root.join("manager.sock");
     let old = if !super::recovery::absent(&marker)? {
@@ -472,6 +491,19 @@ pub async fn run_manager(config: PathBuf) -> Result<()> {
         None
     };
     let engine = super::driver::NativeEngine::connect(cfg.clone(), lease)?;
+    let records = engine.metadata_recovery();
+    metadata_recovery.completed.extend(
+        records
+            .completed
+            .into_iter()
+            .map(|name| format!("records/{name}")),
+    );
+    metadata_recovery.unconfirmed.extend(
+        records
+            .unconfirmed
+            .into_iter()
+            .map(|name| format!("records/{name}")),
+    );
     if engine.recovered_count() > 0
         && old
             .as_ref()
@@ -513,6 +545,7 @@ pub async fn run_manager(config: PathBuf) -> Result<()> {
         socket_identity: None,
         cgroup_identity: None,
         recovery,
+        metadata_recovery,
     };
     // Retain the old epoch until its replacement is durable. A crash cannot
     // erase the only manager fence while live generation journals remain.
@@ -647,6 +680,7 @@ mod tests {
             socket_identity: None,
             cgroup_identity: None,
             recovery: None,
+            metadata_recovery: Default::default(),
         };
         validate_manager_record(&cfg, &record).unwrap();
         let mut changed = cfg.clone();

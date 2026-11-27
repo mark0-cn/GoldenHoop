@@ -158,3 +158,57 @@ collection with actual old PID/start and scoped-path absence. The fixture,
 manager, export carrier and run-owned image are collected. This is same-boot,
 exact-configuration acceptance; earlier unacknowledged metadata/allocation,
 migration, snapshots/restore/templates and complete M4 remain unaccepted.
+
+## Interrupted metadata publication
+
+The interrupted-publication implementation writes into O_TMPFILE descriptors, attaches a complete
+bounded `user.goldenhoop.metadata.v1` receipt and syncs the file before giving it
+a pending name. Unsupported local filesystem/xattr operations refuse without
+switching to the old named-only algorithm. The ordinary JSON body remains readable
+by existing clients; the receipt stays on its inode after publication.
+
+Each target has a permanent `.gh-meta-<target-sha256>.lock` inode. Its complete
+parent/name binding is also published from an unnamed file. These useful store
+coordination files remain while the store exists; they are collected with the
+owned store after runtime collection. Separate target locks allow other generations
+to make progress while one writer is stopped.
+
+The receipt binds the actual parent and mutex inodes, canonical target/transaction,
+producer PID/start/boot/namespace/executable and complete new file identity/hash.
+The previous target additionally binds content, inode, ctime and receipt digest,
+so identical replacement bytes do not grant authority. Relative syscalls use the
+pinned directory descriptor. Copied directories/mutexes, changed data, hardlinks,
+symlinks and replacement pending files refuse and are preserved.
+
+| Cut | Recovery |
+| --- | --- |
+| Before a pending name exists | The kernel collects the unnamed inode after its last descriptor closes |
+| Complete receipt/data at a pending name | Verify context, original producer absence and target preimage; publish that same inode |
+| After final rename | Observe the complete JSON and its retained inode receipt; no runtime effect is replayed |
+| Context/object/preimage differs | Preserve objects and retain an unconfirmed result |
+
+New installation locks publish complete claims rather than empty files that are
+filled in place. Recovery of an initial claim requires its exact requested
+installation/root identity; marker recovery follows validation of that durable
+claim and acquisition of its lease. Manager/config recovery validates their
+declared configuration. Journal recovery validates canonical IDs/artifacts and
+retains independently unconfirmed targets. Reads alone do not replay writes.
+Only a same-process failed-call retry can finish its own prior metadata publication
+while still live, after reacquiring the original per-target kernel mutex.
+
+The [source review](evidence/m4-metadata-recovery-upstream-review.json) applies
+atomic-write-file, Linux and SQLite requirements to this single-file protocol.
+Actual local filesystem tests kill real writers at six initial/replacement cuts,
+recover original pending inodes, exercise copied/replaced object refusals and
+recover interrupted installation-lock/marker publication. These are filesystem
+and process checks, not a claim of hardware-backed lifecycle or host power-loss
+durability. The dedicated `firecracker-metadata-recovery.yml` release gate adds
+five syscall cuts in the actual manager plus the retained 32 real KVM groups;
+its acceptance is pending. Earlier unacknowledged allocation effects and the full
+remaining M4-M6 scope are unchanged.
+
+The [validation summary](evidence/m4-metadata-recovery-acceptance-summary.json)
+binds Windows281/Linux-root351 full checks to 318 inputs each, plus the targeted
+actual local filesystem checks. Owned check-image tags are collected. Earlier
+failed checks remain unchanged; the final tests use private 0700 fixture
+directories, and production ownership/lint requirements are not relaxed.

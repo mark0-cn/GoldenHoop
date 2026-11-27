@@ -21,6 +21,7 @@ struct Inner {
     profile: RwLock<RuntimeProfile>,
     children: std::sync::Mutex<std::collections::HashMap<Uuid, OwnedChild>>,
     recovered: std::collections::BTreeSet<Uuid>,
+    metadata_recovery: metadata::Recovery,
 }
 struct OwnedChild {
     pid: u32,
@@ -96,6 +97,25 @@ impl NativeEngine {
         {
             return Err(invalid("native supervisor artifact mismatch").into());
         }
+        let metadata_recovery =
+            metadata::recover_entries(&cfg.data_root.join("records"), &[], true, |name, bytes| {
+                let id = name
+                    .strip_suffix(".json")
+                    .ok_or_else(|| invalid("pending journal filename differs"))?;
+                let parsed = Uuid::parse_str(id)?;
+                if parsed.to_string() != id {
+                    return Err(invalid("pending journal id is not canonical").into());
+                }
+                let record: VmJournal = serde_json::from_slice(bytes)?;
+                record.validate(&cfg, parsed)?;
+                if record.artifacts != cfg.artifacts || record.supervisor_artifact != cfg.supervisor
+                {
+                    return Err(
+                        invalid("pending journal artifacts differ from configuration").into(),
+                    );
+                }
+                Ok(())
+            })?;
         let recovered = inventory(&cfg)?
             .into_iter()
             .filter(|record| record.phase != "collected")
@@ -111,11 +131,15 @@ impl NativeEngine {
                 profile: RwLock::new(observed),
                 children: std::sync::Mutex::new(Default::default()),
                 recovered,
+                metadata_recovery,
             }),
         })
     }
     pub(super) fn recovered_count(&self) -> usize {
         self.inner.recovered.len()
+    }
+    pub(super) fn metadata_recovery(&self) -> metadata::Recovery {
+        self.inner.metadata_recovery.clone()
     }
 
     /// Authenticate acknowledged live generations independently. An uncertain

@@ -62,6 +62,7 @@ def main():
     parser.add_argument('--driver-contract', action='store_true')
     parser.add_argument('--public-contract', action='store_true')
     parser.add_argument('--manager-recovery-contract', action='store_true')
+    parser.add_argument('--metadata-recovery-contract', action='store_true')
     parser.add_argument('--control', type=Path)
     parser.add_argument('--cli', type=Path)
     args = parser.parse_args()
@@ -69,6 +70,8 @@ def main():
         parser.error('public contract requires --driver-contract, --control and --cli')
     if args.manager_recovery_contract and not args.public_contract:
         parser.error('manager recovery requires the actual public contract')
+    if args.metadata_recovery_contract and not args.manager_recovery_contract:
+        parser.error('metadata recovery requires the retained manager/public/driver contract')
     assert re.fullmatch(r'[0-9a-f]{40}', args.source_commit)
     assert re.fullmatch(r'[0-9]+-[0-9]+', args.owner)
     root = Path(__file__).resolve().parent.parent
@@ -87,6 +90,8 @@ def main():
         sources += sorted((root / 'sdk/python').rglob('*.py')) + [root / 'sdk/python/pyproject.toml']
     if args.manager_recovery_contract:
         sources += [root/'tests/firecracker_manager_recovery_contract.py',root/'.github/workflows/firecracker-manager-recovery.yml']
+    if args.metadata_recovery_contract:
+        sources += [root/'tests/firecracker_metadata_contract.py',root/'.github/workflows/firecracker-metadata-recovery.yml']
     sources += sorted((root / 'images/microvm').glob('*.json'))
     report = {
         'suite': 'actual jailed Firecracker guest bootstrap',
@@ -227,6 +232,15 @@ def main():
             report['runtime_capabilities_verified'] = True
             if args.manager_recovery_contract:
                 report['scope'] = 'actual basic native public lifecycle and same-boot manager crash recovery; earlier unacknowledged allocation, snapshots/templates and full M4 remain unaccepted'
+        if args.metadata_recovery_contract:
+            from firecracker_metadata_contract import suite as metadata_suite
+            guest_collected = False
+            metadata = metadata_suite(binary,boot,fixture)
+            report['metadata'] = metadata
+            guest_collected = metadata['cleanup']=='complete'
+            report['cases'] += ['metadata:'+case for case in metadata['cases']]
+            assert metadata['result']=='passed' and guest_collected,metadata.get('error','metadata control collection unconfirmed')
+            report['scope'] = 'actual native/public/manager baseline and inode-bound interrupted metadata publication; earlier allocation effects, snapshots/templates and full M4 remain unaccepted'
     except Exception as error:
         report['result'] = 'failed'
         report['error'] = str(error)
