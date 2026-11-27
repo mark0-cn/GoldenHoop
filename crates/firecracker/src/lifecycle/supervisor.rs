@@ -92,7 +92,7 @@ async fn stop_vm(machine: &mut Machine, reason: Option<String>) -> Result<()> {
     Ok(())
 }
 
-async fn call(machine: &mut Machine, stream: UnixStream) -> Result<bool> {
+async fn call(machine: &mut Machine, stream: UnixStream, checkpoints: bool) -> Result<bool> {
     let peer = stream.peer_cred()?;
     if peer.uid() != 0 {
         return Err(invalid("native supervisor client is not root").into());
@@ -115,7 +115,21 @@ async fn call(machine: &mut Machine, stream: UnixStream) -> Result<bool> {
         match request.operation {
             SupervisorOperation::Status => (),
             SupervisorOperation::Pause => api.pause().await?,
-            SupervisorOperation::Resume => api.resume().await?,
+            SupervisorOperation::Resume => {
+                if machine.record().capture_hold.is_some() {
+                    return Err(invalid(
+                        "captured source is held; resume requires a fresh restored generation",
+                    )
+                    .into());
+                }
+                api.resume().await?;
+            }
+            SupervisorOperation::CaptureHold { capture } => {
+                if !checkpoints {
+                    return Err(invalid("native checkpoints are disabled").into());
+                }
+                machine.hold_capture(capture)?;
+            }
             SupervisorOperation::Stop => unreachable!(),
         }
         let state = match api.instance_info().await?.state {
@@ -250,7 +264,7 @@ pub async fn run_supervisor_with_input(
                         let (stream,_)=stream?;
                         let deadline=machine.record().clone();
                         tokio::select! {
-                            result=call(&mut machine,stream)=>{if matches!(result,Ok(true)) {return Ok(());}},
+                            result=call(&mut machine,stream,cfg.checkpoints.is_some())=>{if matches!(result,Ok(true)) {return Ok(());}},
                             _=async {loop {if deadline.expired().unwrap_or(true){break;}tokio::time::sleep(Duration::from_millis(50)).await;}}=>break,
                         }
                     }

@@ -16,7 +16,7 @@ import uuid
 from firecracker_manager_fixture import Manager
 
 
-def suite(binary, boot, fixture, guest_barrier=False, guest_authority=False):
+def suite(binary, boot, fixture, guest_barrier=False, guest_authority=False, managed_checkpoint=False):
     installation = str(uuid.uuid4())
     root = fixture / 'd'  # Native AF_UNIX endpoints must fit Linux's path bound.
     cfg = {'installation_id': installation, 'data_root': str(root), 'artifacts': boot,
@@ -26,6 +26,8 @@ def suite(binary, boot, fixture, guest_barrier=False, guest_authority=False):
            'max_resources': {'cpu_millis': 2000, 'memory_bytes': 512 * 1024**2, 'pids': 256},
            'capacity': {'cpu_millis': 2000, 'memory_bytes': 2 * 1024**3, 'max_vms': 2},
            'max_ttl_seconds': 300}
+    if managed_checkpoint:
+        cfg['checkpoints'] = {'max_bytes': 4 * 1024**3, 'max_checkpoints': 2}
     config = fixture / 'driver.json'
     config.write_text(json.dumps(cfg)); config.chmod(0o600)
     request_file = fixture / 'driver-request.json'
@@ -54,8 +56,10 @@ def suite(binary, boot, fixture, guest_barrier=False, guest_authority=False):
             answer = json.loads(process.stdout)
         except Exception:
             raise AssertionError(f'native CLI did not return JSON: exit={process.returncode}, stderr={process.stderr.decode(errors="replace")[-2000:]}') from None
+        assert process.returncode == (0 if answer['ok'] else 2), (process.returncode, answer)
+        if expect is None:
+            return answer
         assert answer['ok'] is expect, answer
-        assert process.returncode == (0 if expect else 2), (process.returncode, answer)
         return answer['data'] if expect else answer['error']
 
     def record(id):
@@ -242,6 +246,10 @@ def suite(binary, boot, fixture, guest_barrier=False, guest_authority=False):
         assert record(a['sandbox_id'])['phase'] == 'collected'
         assert call({'operation': 'discover'}) == []
         report['cases'].append('idempotent_generation_collection_and_empty_owned_discovery')
+        if managed_checkpoint:
+            from firecracker_managed_checkpoint_contract import exercise as managed_exercise
+            managed_exercise(binary, config, root, cfg, manager, request, call, rpc,
+                             command, record, remove, handles, report)
         report['result'] = 'passed'
     except Exception as error:
         report['error'] = f'{type(error).__name__}: {error}'
@@ -255,6 +263,11 @@ def suite(binary, boot, fixture, guest_barrier=False, guest_authority=False):
         if foreign:
             foreign.terminate(); foreign.wait(timeout=10)
         cleanup_errors = []
+        if managed_checkpoint:
+            try:
+                manager.ensure_collection_owner()
+            except Exception as error:
+                cleanup_errors.append(str(error))
         if original_group and original_group.exists():
             try:
                 assert 'populated 0' in (original_group / 'cgroup.events').read_text().splitlines()
@@ -273,6 +286,16 @@ def suite(binary, boot, fixture, guest_barrier=False, guest_authority=False):
                     if value['phase'] != 'collected' or any(p.exists() for p in generation_paths(value)):
                         remove(handle)
                     assert all(not p.exists() for p in generation_paths(value))
+                except Exception as error:
+                    cleanup_errors.append(str(error))
+        if managed_checkpoint and (root/'checkpoints').exists():
+            for path in sorted((root/'checkpoints').glob('capture-*.json')):
+                try:
+                    capture = json.loads(path.read_bytes())['intent']['source']['capture']
+                    collected = call({'operation':'checkpoint_collect','capture':capture})
+                    assert collected['objects_absent'] and collected['reserved_bytes'] == 0
+                    for role in ['state','memory','disk']:
+                        assert not os.path.lexists(root/'checkpoints'/f'capture-{capture}-{role}.bin')
                 except Exception as error:
                     cleanup_errors.append(str(error))
         try:

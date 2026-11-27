@@ -1,6 +1,6 @@
 # Private native capture and persistent content
 
-The Rust Machine capture path and local checkpoint store are implemented. Final
+The Rust Machine capture path and local checkpoint store are implemented. At47ac2cc, final
 formatting, strict all-target workspace clippy and full tests pass Windows290 /
 Linux-root394 executions on the same339 source inputs. Musl21 scoped tests,
 strict clippy and4 static guest release builds also pass. The4 targeted GNU-root
@@ -8,10 +8,17 @@ storage tests use synthetic guest provenance and actual filesystem/process effec
 All3 successful local check images are collected with positive absence; both
 earlier failed image tags are absent, with original failed reports retained. See
 the [implementation summary](evidence/m4-checkpoint-capture-implementation-summary.json).
-The separate actual KVM capture gate remains unexecuted. This is private capture infrastructure, not
+The [actual KVM capture gate46036731540](https://github.com/mark0-cn/GoldenHoop/actions/runs/46036731540)
+passes60 groups/377 source inputs with Complete collection at47ac2cc. Its
+[acceptance summary](evidence/m4-checkpoint-capture-acceptance-summary.json)
+retains the immutable raw evidence. This is private capture infrastructure, not
 public snapshot/restore support, a restore claim or a template implementation.
 The earlier protocol3 same-VMM authority gate passes55 groups/371 inputs with
 Complete collection at6c32d1a; that report does not accept these newer sources.
+
+The newer [manager integration](native-managed-checkpoints.md) passes full
+Windows290/GNU-root397 checks and musl21/static4 on340 identical source inputs.
+Its separate actual managed-capture gate remains required.
 
 ## Capture boundary
 
@@ -29,10 +36,11 @@ link count, lengths and hashes checked. The source must still be paused before
 the independently verified anonymous copies are published outside its root.
 There is no source resume, automatic thaw or capture-dispatch replay on failure.
 
-The private probe creates a random32-byte token inside a live guest process,
+Only the private probe creates a random32-byte token inside a live guest process,
 observes its stdout, and checks that the captured RAM contains those bytes. A
 separate file payload allows physical copied-drive inspection. These are capture
-oracles; retained process continuation requires a separate fresh-VMM restore test.
+oracles; production capture has no marker command/file writes. Retained process
+continuation requires a separate fresh-VMM restore test.
 
 ## Persistent identity and publication
 
@@ -71,8 +79,9 @@ mint a second continuation capture.
 
 Mutation recovery records the producer process and the original VMM writer in
 their observed host boot/PID namespace. A different observer context does not
-prove either old process stopped. An interrupted non-Ready producer must actually
-be absent. Ready publication positively settles its own writes, but collection
+prove either old process stopped. An unacknowledged interrupted producer must
+actually be absent. Ready publication or a positively settled failure acknowledges
+that producer's own writes have finished. Collection
 still requires the original VMM writer and its exact source-root pathname to be
 absent under the unchanged trusted parent. Stopping a PID while raw capture files
 remain in its jail does not release the reservation.
@@ -88,14 +97,15 @@ it into a successful capture.
 ## Scope still required
 
 The optional `probe-guest --checkpoint-config` and private `checkpoint-inspect` /
-`checkpoint-collect` commands exercise this implementation. The ordinary native
-manager/public API has not integrated these capture operations. Shared host
-memory admission, durable unique restore claims, source/target orchestration,
+`checkpoint-collect` commands exercise this implementation. The new private
+[manager jobs](native-managed-checkpoints.md) integrate capture and shared host
+memory admission, with their own hardware gate still required. Public API
+integration, durable unique restore claims, source/target orchestration,
 fresh paused target load, public continuation semantics, rootfs/volume snapshots,
 templates and combined M4 acceptance remain required. M5 and M6 are unchanged.
 
 GNU-root tests use synthetic guest metadata with actual files, source-process
 absence, producer SIGSTOP/SIGKILL and foreign-object refusal. They do not accept
-KVM capture. The separate real capture workflow must bind its immutable source,
-prove actual RAM/drive contents after source collection, and verify exact object
-collection and quota observations before this capture increment is accepted.
+KVM capture. The separate real capture workflow at47ac2cc verifies actual
+RAM/drive contents after source collection, exact object collection and quota
+observations. That accepted source does not grant acceptance to newer manager code.

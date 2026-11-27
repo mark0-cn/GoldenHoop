@@ -38,6 +38,7 @@ fn fixture() -> (tempfile::TempDir, DriverConfig, VmJournal) {
         },
         supervisor: artifact.clone(),
         image: format!("sha256:{}", artifact.sha256),
+        checkpoints: None,
         prepared_images: None,
         max_resources: resources.clone(),
         capacity: HostCapacity::default(),
@@ -57,6 +58,7 @@ fn fixture() -> (tempfile::TempDir, DriverConfig, VmJournal) {
         },
         artifacts: cfg.artifacts.clone(),
         selected_image: None,
+        capture_hold: None,
         profile_probe_context_sha256: None,
         resources,
         supervisor: None,
@@ -85,15 +87,19 @@ fn owned_writer() {
         return;
     };
     let directory = PathBuf::from(directory);
+    eprintln!("root_writer_stage=reading_config");
     let cfg: DriverConfig = read_json(&directory.join("cfg.json")).unwrap();
     let mut record: VmJournal = read_json(&directory.join("seed.json")).unwrap();
     let path = cfg.paths(record.owner.generation).unwrap().root;
+    eprintln!("root_writer_stage=creating_root");
     let root = Root::create(&path, record.owner.generation).unwrap();
     record.supervisor = Some(root.receipt().producer.clone());
     record.vm_root = Some(root.receipt());
     record.phase = "preparing".into();
+    eprintln!("root_writer_stage=acknowledging_root");
     atomic_json(&cfg.record_path(record.owner.sandbox_id), &record).unwrap();
     if std::env::var("GH_ROOT_ROLE").as_deref() == Ok("allocate") {
+        eprintln!("root_writer_stage=allocation_cut");
         std::fs::write(directory.join("ready"), b"actual_root_acknowledged").unwrap();
         assert_eq!(unsafe { libc::raise(libc::SIGSTOP) }, 0);
         return;
@@ -111,6 +117,7 @@ fn owned_writer() {
         .enable_all()
         .build()
         .unwrap();
+    eprintln!("root_writer_stage=collecting");
     runtime
         .block_on(machine.collect(&mut GuestReport::empty(machine.generation)))
         .unwrap();
@@ -126,19 +133,27 @@ async fn crash_case(role: &str) {
     }
     let (directory, cfg, seed) = fixture();
     let root = cfg.paths(seed.owner.generation).unwrap().root;
+    let log_path = directory.path().join("writer.log");
+    let log = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&log_path)
+        .unwrap();
     let mut child = OwnedChild(
         std::process::Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
                 "machine::root_tests::owned_writer",
                 "--test-threads=1",
+                "--nocapture",
             ])
             .env("GH_ROOT_FIXTURE", directory.path())
             .env("GH_ROOT_ROLE", role)
             .env("GH_ROOT_READY", directory.path().join("ready"))
             .env("GH_ROOT_REMOVAL_BARRIER", &root)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stdout(log.try_clone().unwrap())
+            .stderr(log)
             .spawn()
             .unwrap(),
     );
@@ -146,11 +161,14 @@ async fn crash_case(role: &str) {
     while !directory.path().join("ready").exists() {
         assert!(
             child.0.try_wait().unwrap().is_none(),
-            "owned writer exited before real cut"
+            "owned writer exited before real cut: {}",
+            std::fs::read_to_string(&log_path).unwrap_or_default()
         );
         assert!(
             std::time::Instant::now() < until,
-            "owned writer cut not reached"
+            "owned writer cut not reached; wait channel: {:?}; output: {}",
+            std::fs::read_to_string(format!("/proc/{}/wchan", child.0.id())),
+            std::fs::read_to_string(&log_path).unwrap_or_default()
         );
         tokio::time::sleep(Duration::from_millis(10)).await;
     }

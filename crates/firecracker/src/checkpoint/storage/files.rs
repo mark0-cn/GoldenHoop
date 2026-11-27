@@ -285,6 +285,14 @@ pub(super) fn lock_name(id: Uuid) -> String {
 }
 
 impl Root {
+    pub(super) fn duplicate(&self) -> Result<Self> {
+        self.current()?;
+        Ok(Self {
+            path: self.path.clone(),
+            directory: self.directory.try_clone()?,
+            ready: self.ready.clone(),
+        })
+    }
     pub fn initialize(path: &Path, installation: Uuid) -> Result<Self> {
         if installation.is_nil() {
             return Err(invalid("nil checkpoint installation").into());
@@ -457,7 +465,7 @@ impl Root {
         }
         Identity::of(&f)
     }
-    pub fn job_lock(
+    pub fn job_mutex(
         &self,
         id: Uuid,
         expected: &Identity,
@@ -480,6 +488,16 @@ impl Root {
         {
             return Err(invalid("checkpoint job mutex identity differs").into());
         }
+        Ok(f)
+    }
+    pub fn job_lock(
+        &self,
+        id: Uuid,
+        expected: &Identity,
+        intent_sha256: &str,
+        exclusive: bool,
+    ) -> Result<File> {
+        let f = self.job_mutex(id, expected, intent_sha256, exclusive)?;
         if exclusive {
             fs2::FileExt::try_lock_exclusive(&f)?;
         } else {

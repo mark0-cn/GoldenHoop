@@ -22,7 +22,7 @@ pub struct CheckpointStorePolicy {
     pub max_checkpoints: u32,
 }
 impl CheckpointStorePolicy {
-    fn validate(&self) -> Result<()> {
+    pub(crate) fn validate(&self) -> Result<()> {
         if self.max_bytes == 0
             || self.max_bytes > 1024 * 1024 * MIB
             || !(1..=128).contains(&self.max_checkpoints)
@@ -266,6 +266,8 @@ struct Record {
     intent: Intent,
     mutex: Identity,
     producer: Writer,
+    #[serde(default)]
+    producer_settled: bool,
     phase: Phase,
     outcome: Outcome,
     reserved_bytes: u64,
@@ -287,6 +289,7 @@ impl Record {
             || self.error.as_ref().is_some_and(|s| s.len() > 2048)
             || self.producer.context != self.intent.writer.context
             || self.producer.process.uid != 0
+            || self.producer_settled && !matches!(self.outcome, Outcome::Ready | Outcome::Failed)
         {
             return Err(invalid("checkpoint durable record binding differs").into());
         }
@@ -322,8 +325,8 @@ pub(crate) struct CheckpointStore {
     root: Root,
     policy: CheckpointStorePolicy,
 }
-pub(crate) struct CaptureSession<'a> {
-    store: &'a CheckpointStore,
+pub(crate) struct CaptureSession {
+    store: CheckpointStore,
     _mutex: File,
     record: Record,
 }
@@ -349,7 +352,7 @@ impl CheckpointStore {
             policy: cfg.policy.clone(),
         })
     }
-    pub(crate) fn reserve(&self, intent: Intent) -> Result<CaptureSession<'_>> {
+    pub(crate) fn reserve(&self, intent: Intent) -> Result<CaptureSession> {
         if intent.source.installation != self.root.installation() {
             return Err(invalid("foreign checkpoint installation").into());
         }
@@ -403,6 +406,7 @@ impl CheckpointStore {
             intent,
             mutex,
             producer: Writer::current()?,
+            producer_settled: false,
             phase: Phase::Reserved,
             outcome: Outcome::Pending,
             reserved_bytes: reserved,
@@ -414,7 +418,10 @@ impl CheckpointStore {
         record.validate(&self.root)?;
         metadata::initial_json(&self.root.path.join(record_name(id)), &record)?;
         Ok(CaptureSession {
-            store: self,
+            store: Self {
+                root: self.root.duplicate()?,
+                policy: self.policy.clone(),
+            },
             _mutex: lease,
             record,
         })
@@ -450,11 +457,13 @@ impl CheckpointStore {
         let _quota = self.root.quota(false)?;
         let record: Record = self.root.json(&record_name(id))?;
         record.validate(&self.root)?;
-        let _lease = self
-            .root
-            .job_lock(id, &record.mutex, &record.intent.digest()?, false)?;
-        drop(_quota);
+        self.root
+            .job_mutex(id, &record.mutex, &record.intent.digest()?, false)?;
         let verified = if record.phase == Phase::Ready {
+            let _lease = self
+                .root
+                .job_lock(id, &record.mutex, &record.intent.digest()?, false)?;
+            drop(_quota);
             self.root.verify_objects(&record.objects)?;
             true
         } else {
@@ -464,6 +473,23 @@ impl CheckpointStore {
             serde_json::json!({"capture":id,"phase":record.phase,"capture_outcome":record.outcome,"error":record.error,
             "reserved_bytes":if record.phase==Phase::Collected {0}else{record.reserved_bytes},"reference":record.reference,"manifest":record.manifest,"content_verified":verified}),
         )
+    }
+    /// Immutable source identity can be read while its original producer owns
+    /// the job lease. A pending status never claims verified content.
+    pub(crate) fn source(&self, id: Uuid) -> Result<Option<CaptureIdentity>> {
+        let _quota = self.root.quota(false)?;
+        if let Some(record) = self
+            .root
+            .records()?
+            .into_iter()
+            .find(|r| r.intent.source.capture == id)
+        {
+            self.root
+                .job_mutex(id, &record.mutex, &record.intent.digest()?, false)?;
+            Ok(Some(record.intent.source))
+        } else {
+            Ok(None)
+        }
     }
     pub(crate) fn reserved_bytes(&self) -> Result<u64> {
         let _quota = self.root.quota(false)?;
@@ -485,9 +511,9 @@ impl CheckpointStore {
             .root
             .job_lock(id, &record.mutex, &record.intent.digest()?, true)?;
         if record.phase != Phase::Collected {
-            // A committed Ready phase positively settled the producer's writes.
-            // Any other interrupted phase needs actual original producer absence.
-            if record.outcome != Outcome::Ready {
+            // Only an acknowledged settled producer may remain alive. An
+            // interrupted capture still requires its original process absent.
+            if record.outcome != Outcome::Ready && !record.producer_settled {
                 record.producer.require_absent()?;
             }
             // Raw state/memory outputs belong to the source jail, which remains
@@ -511,7 +537,10 @@ impl CheckpointStore {
         )
     }
 }
-impl CaptureSession<'_> {
+impl CaptureSession {
+    pub(crate) fn intent(&self) -> &Intent {
+        &self.record.intent
+    }
     pub(crate) fn reserved_bytes(&self) -> u64 {
         self.record.reserved_bytes
     }
@@ -551,6 +580,7 @@ impl CaptureSession<'_> {
         let mut next = self.record.clone();
         next.phase = Phase::Failed;
         next.outcome = Outcome::Failed;
+        next.producer_settled = true;
         next.error = Some(error.chars().take(1024).collect());
         self.save(next)
     }
@@ -559,6 +589,22 @@ impl CaptureSession<'_> {
     }
     fn publish_observed(
         mut self,
+        staged: StagedCheckpoint,
+        observe: impl Fn(&str),
+    ) -> Result<CheckpointReference> {
+        let result = self.publish_inner(staged, observe);
+        if let Err(error) = &result
+            && let Err(record_error) = self.fail(&error.to_string())
+        {
+            return Err(invalid(format!(
+                "{error}; publication failure metadata is unconfirmed: {record_error}"
+            ))
+            .into());
+        }
+        result
+    }
+    fn publish_inner(
+        &mut self,
         staged: StagedCheckpoint,
         observe: impl Fn(&str),
     ) -> Result<CheckpointReference> {
@@ -588,6 +634,7 @@ impl CaptureSession<'_> {
         let mut next = self.record.clone();
         next.phase = Phase::Ready;
         next.outcome = Outcome::Ready;
+        next.producer_settled = true;
         self.save(next)?;
         observe("ready_synced");
         Ok(reference)

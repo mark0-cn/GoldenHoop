@@ -68,6 +68,8 @@ pub struct DriverConfig {
     pub image: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prepared_images: Option<PreparedImagePolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoints: Option<crate::checkpoint::CheckpointStorePolicy>,
     pub max_resources: ResourceLimits,
     #[serde(default)]
     pub capacity: HostCapacity,
@@ -99,13 +101,16 @@ impl DriverConfig {
             || self.max_ttl_seconds == 0
             || self.max_ttl_seconds > 86400
             || self.capacity.cpu_millis == 0
-            || self.capacity.memory_bytes < 384 * MIB + manager::MANAGER_MEMORY
+            || self.capacity.memory_bytes < 384 * MIB + manager::memory_budget(self)
             || self.capacity.max_vms == 0
             || self.capacity.max_vms > 128
         {
             return Err(invalid("invalid native driver configuration").into());
         }
         self.paths(Uuid::new_v4())?;
+        if let Some(policy) = &self.checkpoints {
+            policy.validate()?;
+        }
         if let Some(policy) = &self.prepared_images {
             policy.validate()?;
             if policy.disk_budget_bytes < self.artifacts.rootfs.size {
@@ -183,6 +188,8 @@ pub(crate) struct VmJournal {
     pub selected_image: Option<goldenhoop_images::ReadyImageInfo>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile_probe_context_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capture_hold: Option<Uuid>,
     pub resources: ResourceLimits,
     pub supervisor: Option<ProcessIdentity>,
     #[serde(default)]
@@ -220,6 +227,9 @@ impl VmJournal {
             || self.owner.generation.is_nil()
             || self.owner.request_sha256.len() != 64
             || self.root_collection_started && self.vm_root.is_none()
+            || self
+                .capture_hold
+                .is_some_and(|id| id.is_nil() || cfg.checkpoints.is_none())
             || self
                 .profile_probe_context_sha256
                 .as_ref()
@@ -400,13 +410,14 @@ pub(crate) fn request_digest(value: &CreateSandbox) -> Result<String> {
     Ok(format!("{:x}", Sha256::digest(serde_json::to_vec(value)?)))
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum SupervisorOperation {
     Status,
     Pause,
     Resume,
     Stop,
+    CaptureHold { capture: Uuid },
 }
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -448,6 +459,16 @@ pub enum DriverCall {
         request: AgentRequest,
     },
     Reap,
+    CheckpointCapture {
+        handle: goldenhoop_runtime::RuntimeHandle,
+        capture: Uuid,
+    },
+    CheckpointInspect {
+        capture: Uuid,
+    },
+    CheckpointCollect {
+        capture: Uuid,
+    },
 }
 
 /// Operator/test CLI for the actual RuntimeDriver and AgentTransport traits.
@@ -484,6 +505,11 @@ pub async fn run_driver_call(config: PathBuf, request: PathBuf) -> Result<serde_
                 serde_json::to_value(driver.rpc_reply(&handle, &request).await?).unwrap()
             }
             DriverCall::Reap => serde_json::to_value(driver.reap_expired().await?).unwrap(),
+            DriverCall::CheckpointCapture { handle, capture } => {
+                driver.checkpoint_capture(&handle, capture).await?
+            }
+            DriverCall::CheckpointInspect { capture } => driver.checkpoint_inspect(capture).await?,
+            DriverCall::CheckpointCollect { capture } => driver.checkpoint_collect(capture).await?,
         })
     };
     Ok(match operation.await {

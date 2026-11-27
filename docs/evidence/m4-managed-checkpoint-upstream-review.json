@@ -1,0 +1,34 @@
+{
+  "scope": "Primary-source constraints applied to native manager capture and its validation; hardware acceptance remains separate.",
+  "sources": [
+    {
+      "project": "Firecracker",
+      "revision": "eaf83bb718a559d324613d566eaf776b31a62340",
+      "url": "https://github.com/firecracker-microvm/firecracker/blob/eaf83bb718a559d324613d566eaf776b31a62340/docs/snapshotting/snapshot-support.md",
+      "applied": "Retain actual Paused full snapshot capture with explicitly synced state/memory, separately managed drive, source-independent verified objects, and no claim that capture alone establishes safe restoration. Production capture performs no guest marker writes."
+    },
+    {
+      "project": "Tokio",
+      "version": "1.54.1",
+      "url": "https://docs.rs/tokio/1.54.1/tokio/task/fn.spawn_blocking.html",
+      "applied": "Started blocking work continues independently of async caller cancellation. The bounded capture worker owns its VM guard, capture session and semaphore permit for the entire operation, uses a private async reactor for control calls, and is awaited during normal manager shutdown. A single worker limits aggregate capture I/O concurrency."
+    },
+    {
+      "project": "Rust libtest",
+      "url": "https://doc.rust-lang.org/rustc/tests/index.html#--test-threads-num_threads",
+      "applied": "Set --test-threads=2 for complete workspace regression in host/agent build stages and normal CI. Every ordinary test remains selected. Do not change the existing root-writer 30-second deadline, skip failed tests or treat EOF as a reached cut."
+    }
+  ],
+  "observed_validation_failure": {
+    "report": "m4-managed-checkpoint-validation-linux-fenced.json",
+    "result": "failed",
+    "boundary": "Both existing machine::root_tests actual SIGKILL fixtures observed a live child but did not reach its ready marker within 30 seconds. The Firecracker library reported 45 passed, 2 failed and 2 existing hardware-only ignored tests. Original child stdout/stderr were discarded, so the precise child stage is unknown.",
+    "diagnosis": "Concurrent hashing/materialization contention is an inference, not proven by the old report. Follow Rust's explicit harness concurrency control, retain every test and the original cut deadline, and add child stage output plus wait-channel diagnostics so another failure exposes its actual boundary.",
+    "correction": "Workspace regression uses two test threads. Owned child output goes to a scoped fixture log with capture disabled; failure reports include stage output/wait channel. Normal fixture collection removes the log and verifies fixture absence. Production resource and recovery fences are unchanged."
+  },
+  "earlier_failures_retained": [
+    "m4-managed-checkpoint-targeted-initial.json: nested module visibility errors; narrowed lifecycle visibility corrected; no executed test acceptance",
+    "m4-managed-checkpoint-validation-linux-final.json: test module preceded production items; moved test module to EOF; no lint relaxed"
+  ],
+  "limits": "New manager capture requires its separate actual managed-checkpoint workflow. Host restore claim, new target load, public snapshot/restore integration, templates, combined M4 and complete M5-M6 remain required."
+}

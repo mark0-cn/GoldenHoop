@@ -17,6 +17,14 @@ use tokio::{
 };
 
 pub(super) const MANAGER_MEMORY: u64 = 768 * MIB;
+pub(super) fn memory_budget(cfg: &DriverConfig) -> u64 {
+    MANAGER_MEMORY
+        + if cfg.checkpoints.is_some() {
+            128 * MIB
+        } else {
+            0
+        }
+}
 const FRAME_LIMIT: usize = crate::vsock::MAX_AGENT_FRAME;
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -292,6 +300,29 @@ impl FirecrackerDriver {
     pub async fn reap_expired(&self) -> std::result::Result<Vec<Uuid>, ApiError> {
         self.call(DriverCall::Reap).await
     }
+    pub async fn checkpoint_capture(
+        &self,
+        handle: &RuntimeHandle,
+        capture: Uuid,
+    ) -> std::result::Result<serde_json::Value, ApiError> {
+        self.call(DriverCall::CheckpointCapture {
+            handle: handle.clone(),
+            capture,
+        })
+        .await
+    }
+    pub async fn checkpoint_inspect(
+        &self,
+        capture: Uuid,
+    ) -> std::result::Result<serde_json::Value, ApiError> {
+        self.call(DriverCall::CheckpointInspect { capture }).await
+    }
+    pub async fn checkpoint_collect(
+        &self,
+        capture: Uuid,
+    ) -> std::result::Result<serde_json::Value, ApiError> {
+        self.call(DriverCall::CheckpointCollect { capture }).await
+    }
     /// Acknowledges the stop request only. The service parent must still wait
     /// and observe actual service/process/cgroup collection.
     pub async fn request_manager_shutdown(&self) -> std::result::Result<(), ApiError> {
@@ -410,6 +441,15 @@ async fn dispatch(
             serde_json::to_value(engine.rpc_reply(&handle, &request).await?)
         }
         DriverCall::Reap => serde_json::to_value(engine.reap_expired().await?),
+        DriverCall::CheckpointCapture { handle, capture } => {
+            Ok(engine.checkpoint_capture(&handle, capture).await?)
+        }
+        DriverCall::CheckpointInspect { capture } => {
+            Ok(engine.checkpoint_read(capture, false).await?)
+        }
+        DriverCall::CheckpointCollect { capture } => {
+            Ok(engine.checkpoint_read(capture, true).await?)
+        }
     };
     data.map_err(|_| ApiError::new(ErrorCode::Internal, "cannot encode native manager result"))
 }
@@ -665,7 +705,7 @@ pub async fn run_manager(config: PathBuf) -> Result<()> {
         std::fs::create_dir(&owner.cgroup)?;owns_group=true;
         owner.cgroup_identity=Some(PathIdentity::capture(&owner.cgroup,false)?);
         atomic_json(&marker,&owner)?;
-        for (name,value) in [("cpu.max","100000 100000".to_owned()),("memory.max",MANAGER_MEMORY.to_string()),("memory.swap.max","0".into()),("pids.max","32".into())]{
+        for (name,value) in [("cpu.max","100000 100000".to_owned()),("memory.max",memory_budget(&cfg).to_string()),("memory.swap.max","0".into()),("pids.max","32".into())]{
             std::fs::write(owner.cgroup.join(name),&value)?;
             if std::fs::read_to_string(owner.cgroup.join(name))?.trim()!=value{return Err(invalid("native manager resource readback mismatch").into());}
         }
@@ -688,7 +728,7 @@ pub async fn run_manager(config: PathBuf) -> Result<()> {
                 _=shutdown.notified()=>break,
                 _=term.recv()=>break,
                 _=interrupt.recv()=>break,
-                _=tick.tick()=>{let _=engine.reap_children();if let Ok(permit)=reap_permits.clone().try_acquire_owned(){let actor=engine.clone();tasks.spawn(async move{let _permit=permit;let _=actor.reap_expired().await;});}},
+                _=tick.tick()=>{let _=engine.reap_children();engine.reap_capture_tasks();if let Ok(permit)=reap_permits.clone().try_acquire_owned(){let actor=engine.clone();tasks.spawn(async move{let _permit=permit;let _=actor.reap_expired().await;});}},
                 Some(_)=tasks.join_next()=>(),
                 incoming=listener.accept()=>{
                     let (stream,_)=match incoming{Ok(value)=>value,Err(_)=>{tokio::time::sleep(Duration::from_millis(100)).await;continue;}};
@@ -702,6 +742,7 @@ pub async fn run_manager(config: PathBuf) -> Result<()> {
         drop(listener);
         owner.ready=false;let _=atomic_json(&marker,&owner);
         tasks.abort_all();while tasks.join_next().await.is_some(){}
+        engine.drain_capture_tasks().await?;
         // Keep the reaping parent alive until every owned generation is
         // actually collected. An acknowledgement never substitutes for this.
         loop{
@@ -757,6 +798,7 @@ mod tests {
             },
             supervisor: artifact,
             image: format!("sha256:{}", "a".repeat(64)),
+            checkpoints: None,
             prepared_images: None,
             max_resources: ResourceLimits {
                 cpu_millis: 1000,

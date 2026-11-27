@@ -404,6 +404,16 @@ impl Machine {
         self.journal(&input, phase)
     }
 
+    pub(crate) fn hold_capture(&mut self, capture: Uuid) -> Result<()> {
+        if capture.is_nil() || self.record().capture_hold.is_some_and(|id| id != capture) {
+            return Err(invalid("native capture hold differs from the original intent").into());
+        }
+        let (_, record) = self.persistent.as_mut().expect("persistent machine");
+        record.capture_hold = Some(capture);
+        let phase = record.phase.clone();
+        self.set_phase(&phase)
+    }
+
     pub(crate) fn check_expiry(&self) -> Result<()> {
         if let Some((_, record)) = &self.persistent
             && record.expired()?

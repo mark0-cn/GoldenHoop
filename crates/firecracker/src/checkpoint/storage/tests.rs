@@ -133,6 +133,87 @@ fn stage(
 }
 
 #[test]
+fn owned_session_reports_pending_and_settled_failure_still_requires_source_collection() {
+    if unsafe { libc::geteuid() } != 0 {
+        return;
+    }
+    let mut f = Fixture::new();
+    let store = f.store();
+    let mut session = store.reserve(f.intent.clone()).unwrap();
+    assert_eq!(
+        store.source(f.cfg.capture).unwrap(),
+        Some(f.intent.source.clone())
+    );
+    assert_eq!(store.inspect(f.cfg.capture).unwrap()["phase"], "reserved");
+    // Session owns its pinned store handle independently of its admission caller.
+    drop(store);
+    session.begin().unwrap();
+    let store = f.store();
+    let pending = store.inspect(f.cfg.capture).unwrap();
+    assert_eq!(pending["capture_outcome"], "pending");
+    assert_eq!(pending["content_verified"], false);
+    assert!(
+        store.collect(f.cfg.capture).is_err(),
+        "active job lease is required"
+    );
+    session.fail("positively settled worker failure").unwrap();
+    drop(session);
+    assert!(
+        store.collect(f.cfg.capture).is_err(),
+        "live source remains reserved"
+    );
+    f.collect_source();
+    // The actual producer is this live process. Positive settlement permits GC
+    // only after the independent original writer and source root are absent.
+    let collected = store.collect(f.cfg.capture).unwrap();
+    assert_eq!(collected["capture_outcome"], "failed");
+    assert_eq!(collected["reserved_bytes"], 0);
+    assert_eq!(collected["error"], "positively settled worker failure");
+    assert_eq!(store.reserved_bytes().unwrap(), 0);
+    f.close();
+}
+
+#[test]
+fn settled_publication_error_preserves_foreign_output_and_collects_own_partial_objects() {
+    if unsafe { libc::geteuid() } != 0 {
+        return;
+    }
+    let mut f = Fixture::new();
+    let store = f.store();
+    let mut session = store.reserve(f.intent.clone()).unwrap();
+    session.begin().unwrap();
+    let occupied = f.cfg.root.join(files::object_name(f.cfg.capture, "memory"));
+    let failure = session.publish_observed(f.staged(), |event| {
+        if event == "object_linked_0" {
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o400)
+                .open(&occupied)
+                .unwrap();
+            file.write_all(b"foreign-output").unwrap();
+            file.sync_all().unwrap();
+        }
+    });
+    assert!(failure.is_err());
+    assert_eq!(
+        store.inspect(f.cfg.capture).unwrap()["capture_outcome"],
+        "failed"
+    );
+    f.collect_source();
+    assert!(store.collect(f.cfg.capture).is_err());
+    assert_eq!(std::fs::read(&occupied).unwrap(), b"foreign-output");
+    // This test created the conflicting inode; production GC preserved it.
+    std::fs::remove_file(occupied).unwrap();
+    assert_eq!(
+        store.collect(f.cfg.capture).unwrap()["capture_outcome"],
+        "failed"
+    );
+    assert_eq!(store.reserved_bytes().unwrap(), 0);
+    f.close();
+}
+
+#[test]
 fn ready_objects_survive_source_collection_quota_is_shared_and_never_freed_early() {
     if unsafe { libc::geteuid() } != 0 {
         return;

@@ -1,16 +1,62 @@
 # Progress
 
-Protocol3 private authority is accepted at6c32d1a: actual same-VMM gate46025026061
-passes55 groups/371 inputs with Complete collection, and CI46024920923 passes.
-The original b18bd35 missing-probe-generation failure remains Failed. The new
-owned-Machine full-capture and persistent-store code is locally verified on339
-inputs with Windows290/Linux-root394 and musl21/static4; its separate actual
-capture gate is unexecuted. Native-manager/public snapshot integration, actual restore,
-templates, combined M4 and complete M5-M6 remain active. See the
+Private owned-Machine full capture and its persistent store are accepted at47ac2cc:
+[actual gate46036731540](https://github.com/mark0-cn/GoldenHoop/actions/runs/46036731540)
+passes60 groups/377 source inputs with Complete collection; CI46036631569 passes.
+Its [raw archive](evidence/m4-checkpoint-capture-46036731540-archive.json) preserves
+SHA256 `346850b1eaedb79146247a989ed392f6616e492e5a156caea352d7594b1c02a9`.
+Protocol3 private authority remains accepted at6c32d1a (55/371/Complete), and the
+original b18bd35 missing-probe-generation failure remains Failed. The new private
+native-manager capture integration passes local Windows290/GNU397 and musl21
+checks on340 identical inputs; its own actual gate remains required. Public snapshot integration, actual restore, templates,
+combined M4 and complete M5-M6 remain active. See the
 [authority acceptance](evidence/m4-guest-authority-acceptance-summary.json) and
 [capture/store contract](native-checkpoint-store.md).
 
-Native public selected-image placement and private protocol2 quiescence remain independently accepted at376328c: actual KVM placement53/366 inputs and barrier52/365 inputs both pass with Complete collection; CI46009520892 also passes. Protocol3 has its separate6c32d1a acceptance above. Full capture, host restore authority, snapshots/templates, combined M4 and complete M5-M6 remain active.
+Native public selected-image placement and private protocol2 quiescence remain independently accepted at376328c: actual KVM placement53/366 inputs and barrier52/365 inputs both pass with Complete collection; CI46009520892 also passes. Protocol3 and private full capture have their separate acceptance above. Host restore authority, public snapshots/templates, combined M4 and complete M5-M6 remain active.
+
+## M4 private full capture accepted; manager integration in validation
+
+- The source-bound [capture acceptance](evidence/m4-checkpoint-capture-acceptance-summary.json)
+  records all60 actual groups at47ac2cc. Five new groups verify an actual frozen,
+  paused full snapshot, three independently persisted objects, a guest RAM cookie
+  and physical drive payload after source VMM/root/cgroup collection, quota refusal
+  preserving source health, corrupt owned content refusal, and exact Rust object
+  GC/reservation release. Fixture/export carrier absence and final owned image
+  collection pass. The separate build-only report verifies341 inputs with zero
+  runtime groups; it is not acceptance. Actual runtime verifies377 inputs.
+- New [manager jobs](native-managed-checkpoints.md) own capture sessions, source VM
+  guards and a single worker permit independently of submitting IPC. Optional
+  policy adds128MiB to both actual manager memory and host admission. The source
+  supervisor durably acknowledges its capture hold before effects; direct Resume
+  and manager agent dispatch refuse held sources. Normal manager shutdown waits
+  for capture I/O, while the source supervisor independently enforces expiry.
+  Production capture has no guest marker mutation. Exact retries, changed-source
+  conflict, atomic Pending inspection and source-fenced collection are implemented.
+- A positively settled failure can release its producer liveness fence only after
+  its I/O has finished under the original exclusive lease. Original VMM and source
+  root absence remain mandatory. Actual filesystem tests cover owned session
+  lifetime, Pending status, live-source refusal, settled failure GC, and foreign
+  output preservation after partial publication. Interrupted unacknowledged work
+  retains the stronger original-producer absence requirement.
+- Full [Windows checks](evidence/m4-managed-checkpoint-validation-windows-bounded.json)
+  pass290 tests, and [GNU-root checks](evidence/m4-managed-checkpoint-validation-linux-bounded.json)
+  pass397 executions, with formatting/strict workspace all-target clippy and340
+  identical source inputs. [Musl checks](evidence/m4-managed-checkpoint-validation-musl-bounded.json)
+  pass21 scoped tests, strict all-target clippy and all4 static guest releases
+  on the same340 inputs. All3 successful local check images and the3 failed
+  tags are observed absent; useful caches and original evidence remain. The
+  [implementation summary](evidence/m4-managed-checkpoint-implementation-summary.json)
+  records exact report hashes and collection proof. The [upstream review and original
+  failures](evidence/m4-managed-checkpoint-upstream-review.json) retain compile/lint
+  corrections and two old30-second writer-cut timeouts under full parallelism.
+  Workspace tests now use two threads with every ordinary test selected and the
+  same cut deadline; actual child stage/wait-channel diagnostics replace discarded
+  output. A contention diagnosis remains an inference. No production fence or
+  assertion is relaxed. The separate managed KVM gate retains capture60 and adds
+  client-disconnect, hold/retry/conflict, actual manager death/reconnect and GC.
+  It is unexecuted; fresh-target restore, public snapshots, templates, combined
+  M4 and complete M5-M6 remain required.
 
 ## Active objective
 
@@ -24,9 +70,9 @@ clippy. Musl21 scoped tests, strict clippy and all4 static guest release builds
 pass on identical339 inputs. All3 successful local images and both failed tags
 are observed absent, with useful caches and original failures retained. See the
 [implementation summary](evidence/m4-checkpoint-capture-implementation-summary.json).
-Its new real KVM capture
-workflow is unexecuted. Native-manager/public integration, unique host restore
-authority and fresh target load remain unimplemented.
+Its real KVM capture workflow is accepted at47ac2cc above. New native-manager
+integration has its own local and hardware gates; public integration, unique host
+restore authority and fresh target load remain unimplemented.
 
 The preceding6c32d1a private checkpoint-content increment adds a pinned versioned manifest,
 exact runtime and reserved-byte admission, and independently verified read-only
@@ -59,7 +105,8 @@ barrier and restoration intent without opening workloads; old or delayed frames
 cannot gain target authority after thaw. The host method also authenticates the
 physical target VMM and requires a confirmed frozen response. A durable single-use
 host claim, actual fresh-VMM restore and public snapshot integration remain
-unimplemented. New private capture/store code has its own pending gate above.
+unimplemented. Private capture/store is accepted at47ac2cc; new manager code has
+its own pending gates above.
 Historical b18bd35 Windows287/Linux-root383 formatting, strict all-target clippy and
 workspace tests pass with331 exact inputs after updating the transport fixture
 for generation scope and physical-target no-dispatch. Final musl21

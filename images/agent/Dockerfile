@@ -17,7 +17,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     && if [ "$VALIDATE_WORKSPACE" = "1" ]; then \
          cargo fmt --all --check \
          && cargo clippy --locked --workspace --all-targets -- -D warnings \
-         && cargo test --locked --workspace; \
+         && cargo test --locked --workspace -- --test-threads=2; \
        elif [ "$VALIDATE_WORKSPACE" != "0" ]; then exit 64; fi \
     && cargo build --locked --release --target x86_64-unknown-linux-musl -p goldenhoop-agent \
     && cargo build --locked --release --target x86_64-unknown-linux-musl -p goldenhoop-egress \

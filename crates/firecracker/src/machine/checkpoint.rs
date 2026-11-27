@@ -4,7 +4,9 @@ use super::*;
 use crate::checkpoint::{
     CaptureIdentity, CheckpointContent, CheckpointFiles, CheckpointManifest, CheckpointProbeConfig,
     CheckpointReference, CheckpointRuntime, StagedCheckpoint,
-    storage::{CheckpointStore, Intent, SourceDirectory, Writer, host_compatibility},
+    storage::{
+        CaptureSession, CheckpointStore, Intent, SourceDirectory, Writer, host_compatibility,
+    },
 };
 use crate::control::GuestBarrierPhase;
 use sha2::Digest;
@@ -174,13 +176,11 @@ impl Machine {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     }
-    pub(crate) async fn capture(
-        &mut self,
+    pub(crate) async fn reserve_capture(
+        &self,
         input: &BootInput,
         cfg: &CheckpointProbeConfig,
-        report: &mut GuestReport,
-    ) -> Result<()> {
-        report.checkpoint = Some(CheckpointCaptureReport::new(cfg.capture));
+    ) -> Result<CaptureSession> {
         if cfg.root.starts_with(&self.root) || self.root.starts_with(&cfg.root) {
             return Err(invalid("checkpoint store overlaps source VM root").into());
         }
@@ -242,47 +242,42 @@ impl Machine {
             writer: Writer::observe(api.peer_identity().pid)?,
             source_directory: SourceDirectory::observe(&self.root, self.generation)?,
         };
-        let barrier = intent.barrier;
         let store = CheckpointStore::open_or_initialize(cfg)?;
-        let mut session = match store.reserve(intent) {
-            Ok(session) => session,
-            Err(e) => {
-                let healthy = api
-                    .instance_info()
-                    .await
-                    .is_ok_and(|i| i.state == InstanceState::Running)
-                    && reply(&agent, AgentRequest::Ping)
-                        .await
-                        .is_ok_and(|r| matches!(r, AgentResponse::Pong { .. }));
-                let p = report.checkpoint.as_mut().expect("capture report");
-                p.source_running_after_admission_refusal = Some(healthy);
-                p.store_reserved_bytes_after_admission_refusal = Some(store.reserved_bytes()?);
-                return Err(e);
-            }
-        };
-        report
-            .checkpoint
-            .as_mut()
-            .expect("capture report")
-            .reserved_bytes = session.reserved_bytes();
+        store.reserve(intent)
+    }
+
+    /// Production capture performs no workload writes or test marker launches.
+    /// Its caller retains the exclusive source lease until all I/O has settled.
+    pub(crate) async fn capture_reserved(
+        &self,
+        input: &BootInput,
+        cfg: &CheckpointProbeConfig,
+        mut session: CaptureSession,
+    ) -> Result<CheckpointReference> {
+        let intent = session.intent().clone();
+        let source = intent.source;
+        let runtime = intent.runtime;
+        let barrier = intent.barrier;
         session.begin()?;
         let produced = async {
-            let marker = self.memory_marker(&agent).await?;
-            let disk = STANDARD
-                .encode(format!("checkpoint-{}-{}", Uuid::new_v4(), Uuid::new_v4()).as_bytes());
-            if !matches!(
-                reply(
-                    &agent,
-                    AgentRequest::WriteFile {
-                        path: "checkpoint-payload".into(),
-                        data_base64: disk.clone()
-                    }
-                )
-                .await?,
-                AgentResponse::Ok
-            ) {
-                return Err(invalid("checkpoint disk marker was not acknowledged").into());
+            self.check_expiry()?;
+            if source.capture != cfg.capture || source.source_generation != self.generation {
+                return Err(invalid("capture lease differs from the owned source").into());
             }
+            self.root_handle
+                .as_ref()
+                .ok_or_else(|| invalid("capture source root missing"))?
+                .verify()?;
+            let api = self.capture_api(input)?;
+            if api.instance_info().await?.state != InstanceState::Running {
+                return Err(invalid("native capture source is no longer running").into());
+            }
+            let agent = AgentClient::new(
+                api.clone(),
+                self.jail.join("vsock.sock"),
+                52,
+                Duration::from_secs(20),
+            )?;
             let receipt = agent.quiesce(barrier).await?;
             receipt
                 .validate(self.generation, barrier)
@@ -290,10 +285,6 @@ impl Machine {
             if receipt.phase != GuestBarrierPhase::Quiesced {
                 return Err(invalid("native capture has no frozen barrier").into());
             }
-            let progress = report.checkpoint.as_mut().expect("capture report");
-            progress.phase = "quiesced".into();
-            progress.memory_marker_hex = Some(marker.iter().map(|b| format!("{b:02x}")).collect());
-            progress.disk_marker_base64 = Some(disk);
             api.pause().await?;
             if api.instance_info().await?.state != InstanceState::Paused {
                 return Err(invalid("native capture source pause unconfirmed").into());
@@ -311,7 +302,6 @@ impl Machine {
                     }
                 }
             }
-            report.checkpoint.as_mut().expect("capture report").phase = "paused".into();
             api.create_snapshot(&SnapshotCreate::full(
                 format!("/{state_name}"),
                 format!("/{memory_name}"),
@@ -320,8 +310,6 @@ impl Machine {
             if api.instance_info().await?.state != InstanceState::Paused {
                 return Err(invalid("native snapshot source state changed").into());
             }
-            report.checkpoint.as_mut().expect("capture report").phase =
-                "snapshot_acknowledged".into();
             let inputs = CheckpointFiles {
                 state: output(
                     &self.jail.join(state_name),
@@ -359,13 +347,14 @@ impl Machine {
                 VMM_UID,
                 &cfg.root,
             )?;
+            self.check_expiry()?;
             if self.capture_api(input)?.instance_info().await?.state != InstanceState::Paused {
                 return Err(invalid("capture source pause lost before publication").into());
             }
-            Ok::<_, Box<dyn std::error::Error + Send + Sync>>((staged, marker))
+            Ok::<_, Box<dyn std::error::Error + Send + Sync>>(staged)
         }
         .await;
-        let (staged, marker) = match produced {
+        let staged = match produced {
             Ok(value) => value,
             Err(e) => {
                 if let Err(record_error) = session.fail(&e.to_string()) {
@@ -377,7 +366,86 @@ impl Machine {
                 return Err(e);
             }
         };
-        let reference = session.publish(staged)?;
+        session.publish(staged)
+    }
+
+    pub(crate) async fn capture(
+        &mut self,
+        input: &BootInput,
+        cfg: &CheckpointProbeConfig,
+        report: &mut GuestReport,
+    ) -> Result<()> {
+        report.checkpoint = Some(CheckpointCaptureReport::new(cfg.capture));
+        let store = CheckpointStore::open_or_initialize(cfg)?;
+        let mut session = match self.reserve_capture(input, cfg).await {
+            Ok(value) => value,
+            Err(error) => {
+                let healthy = if let Ok(api) = self.capture_api(input) {
+                    let agent = AgentClient::new(
+                        api.clone(),
+                        self.jail.join("vsock.sock"),
+                        52,
+                        Duration::from_secs(20),
+                    )?;
+                    api.instance_info()
+                        .await
+                        .is_ok_and(|i| i.state == InstanceState::Running)
+                        && reply(&agent, AgentRequest::Ping)
+                            .await
+                            .is_ok_and(|r| matches!(r, AgentResponse::Pong { .. }))
+                } else {
+                    false
+                };
+                let progress = report.checkpoint.as_mut().expect("capture report");
+                progress.source_running_after_admission_refusal = Some(healthy);
+                progress.store_reserved_bytes_after_admission_refusal =
+                    Some(store.reserved_bytes()?);
+                return Err(error);
+            }
+        };
+        report
+            .checkpoint
+            .as_mut()
+            .expect("capture report")
+            .reserved_bytes = session.reserved_bytes();
+        // These markers belong exclusively to the private hardware probe.
+        let markers = async {
+            let agent = AgentClient::new(
+                self.capture_api(input)?,
+                self.jail.join("vsock.sock"),
+                52,
+                Duration::from_secs(20),
+            )?;
+            let marker = self.memory_marker(&agent).await?;
+            let disk = STANDARD
+                .encode(format!("checkpoint-{}-{}", Uuid::new_v4(), Uuid::new_v4()).as_bytes());
+            if !matches!(
+                reply(
+                    &agent,
+                    AgentRequest::WriteFile {
+                        path: "checkpoint-payload".into(),
+                        data_base64: disk.clone()
+                    }
+                )
+                .await?,
+                AgentResponse::Ok
+            ) {
+                return Err(invalid("checkpoint disk marker was not acknowledged").into());
+            }
+            Ok::<_, Box<dyn std::error::Error + Send + Sync>>((marker, disk))
+        }
+        .await;
+        let (marker, disk) = match markers {
+            Ok(value) => value,
+            Err(error) => {
+                session.fail(&error.to_string())?;
+                return Err(error);
+            }
+        };
+        let progress = report.checkpoint.as_mut().expect("capture report");
+        progress.memory_marker_hex = Some(marker.iter().map(|b| format!("{b:02x}")).collect());
+        progress.disk_marker_base64 = Some(disk);
+        let reference = self.capture_reserved(input, cfg, session).await?;
         let found = store.verify(&reference, |_, files| has_marker(&files.memory, &marker))?;
         let progress = report.checkpoint.as_mut().expect("capture report");
         progress.reference = Some(reference);

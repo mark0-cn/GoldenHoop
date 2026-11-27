@@ -12,6 +12,7 @@ use tokio::{
     io::{AsyncWriteExt, BufReader},
     sync::{Mutex, RwLock},
 };
+mod checkpoints;
 
 struct Inner {
     cfg: DriverConfig,
@@ -23,6 +24,8 @@ struct Inner {
     recovered: std::collections::BTreeSet<Uuid>,
     metadata_recovery: metadata::Recovery,
     image_validation: Arc<tokio::sync::Semaphore>,
+    capture_slot: Arc<tokio::sync::Semaphore>,
+    capture_tasks: std::sync::Mutex<Vec<tokio::task::JoinHandle<Result<()>>>>,
 }
 struct OwnedChild {
     pid: u32,
@@ -192,6 +195,11 @@ impl NativeEngine {
         if let Some(policy) = &cfg.prepared_images {
             policy.staging_directory()?;
         }
+        if cfg.checkpoints.is_some() {
+            crate::checkpoint::storage::CheckpointStore::open_or_initialize(
+                &cfg.checkpoint_config(Uuid::new_v4())?,
+            )?;
+        }
         // Verify the actual helper before granting it root lifecycle authority.
         if digest(trusted_file(&cfg.supervisor.path)?)?
             != (cfg.supervisor.sha256.clone(), cfg.supervisor.size)
@@ -229,6 +237,8 @@ impl NativeEngine {
                 recovered,
                 metadata_recovery,
                 image_validation: Arc::new(tokio::sync::Semaphore::new(2)),
+                capture_slot: Arc::new(tokio::sync::Semaphore::new(1)),
+                capture_tasks: std::sync::Mutex::new(Vec::new()),
             }),
         })
     }
@@ -399,7 +409,7 @@ impl NativeEngine {
         let mut cpu = u64::from(resources.cpu_millis);
         let mut memory = resources
             .memory_bytes
-            .checked_add(256 * MIB + super::manager::MANAGER_MEMORY)
+            .checked_add(256 * MIB + super::manager::memory_budget(&self.inner.cfg))
             .ok_or_else(|| invalid("native reservation overflow"))?;
         if let Some(policy) = &self.inner.cfg.prepared_images {
             memory = memory
@@ -852,6 +862,7 @@ impl NativeEngine {
                 None => cfg.artifacts.clone(),
             },
             selected_image: input.as_ref().map(|input| input.info.clone()),
+            capture_hold: None,
             profile_probe_context_sha256: None,
             resources: request.resources.clone(),
             supervisor: None,
@@ -1172,7 +1183,11 @@ impl NativeEngine {
     }
 
     async fn live_agent(&self, record: &VmJournal) -> Result<crate::agent::AgentClient> {
-        if record.expired()? || record.phase != "running" || !record.ever_ready {
+        if record.expired()?
+            || record.phase != "running"
+            || !record.ever_ready
+            || record.capture_hold.is_some()
+        {
             return Err(ApiError::new(
                 ErrorCode::InvalidState,
                 "native generation is not live for agent dispatch",
@@ -1512,6 +1527,7 @@ mod recovery_tests {
                 rootfs: artifact.clone(),
             },
             image: format!("sha256:{}", artifact.sha256),
+            checkpoints: None,
             prepared_images: None,
             supervisor: Artifact {
                 path: supervisor_path,
@@ -1559,6 +1575,7 @@ mod recovery_tests {
             },
             artifacts: cfg.artifacts.clone(),
             selected_image: None,
+            capture_hold: None,
             profile_probe_context_sha256: None,
             resources,
             supervisor: None,
