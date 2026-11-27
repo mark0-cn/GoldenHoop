@@ -205,6 +205,15 @@ def main():
         assert probe['guest_started'] and len(probe['checks']) >= 5
         report['cases'] = ['corrupt_kernel_digest_refused_before_launch_with_confirmed_collection'] + probe['checks']
         report['result'] = 'passed'
+        if args.metadata_recovery_contract:
+            from firecracker_metadata_contract import suite as metadata_suite
+            guest_collected = False
+            metadata = metadata_suite(binary,boot,fixture)
+            report['metadata'] = metadata
+            guest_collected = metadata['cleanup']=='complete'
+            report['cases'] += ['metadata:'+case for case in metadata['cases']]
+            assert metadata['result']=='passed' and guest_collected,metadata.get('error','metadata control collection unconfirmed')
+            report['scope'] = 'actual native/public/manager baseline and inode-bound interrupted metadata publication; earlier allocation effects, snapshots/templates and full M4 remain unaccepted'
         if args.driver_contract:
             from firecracker_driver_contract import suite
             report['scope'] = 'actual native RuntimeDriver/AgentTransport lifecycle; public Worker/SDK integration and full M4 remain unaccepted'
@@ -233,14 +242,8 @@ def main():
             if args.manager_recovery_contract:
                 report['scope'] = 'actual basic native public lifecycle and same-boot manager crash recovery; earlier unacknowledged allocation, snapshots/templates and full M4 remain unaccepted'
         if args.metadata_recovery_contract:
-            from firecracker_metadata_contract import suite as metadata_suite
-            guest_collected = False
-            metadata = metadata_suite(binary,boot,fixture)
-            report['metadata'] = metadata
-            guest_collected = metadata['cleanup']=='complete'
-            report['cases'] += ['metadata:'+case for case in metadata['cases']]
-            assert metadata['result']=='passed' and guest_collected,metadata.get('error','metadata control collection unconfirmed')
             report['scope'] = 'actual native/public/manager baseline and inode-bound interrupted metadata publication; earlier allocation effects, snapshots/templates and full M4 remain unaccepted'
+
     except Exception as error:
         report['result'] = 'failed'
         report['error'] = str(error)

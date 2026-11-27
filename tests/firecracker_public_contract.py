@@ -268,6 +268,8 @@ def suite(control, cli, native, boot, fixture, manager_recovery=False):
                                    'function': frame.name} for frame in traceback.extract_tb(error.__traceback__)]
     finally:
         cleanup_errors = []
+        collection_attempt_errors = []
+        records = []
         for name in ['worker', 'api']:
             try:
                 stop(name)
@@ -281,20 +283,23 @@ def suite(control, cli, native, boot, fixture, manager_recovery=False):
             except Exception as error:
                 cleanup_errors.append(f'collection owner: {type(error).__name__}: {error}')
         if config.exists() and (root / 'records').exists():
-            records = []
             for path in sorted((root / 'records').glob('*.json')):
+                observed_generation = False
                 try:
                     value = json.loads(path.read_text()); records.append(value)
                     if manager:
                         value['live_resources_before_final_collection'] = manager.observe(value)
                     assert value['owner']['installation_id'] == installation
+                    observed_generation = manager is not None
                     handle = {'sandbox_id': value['owner']['sandbox_id'], 'profile': 'local-firecracker',
                               'backend_ref': f'fc1:{installation}:{value["owner"]["generation"]}'}
                     call_file = fixture / 'public-collect.json'
                     call_file.write_text(json.dumps({'operation': 'remove', 'handle': handle})); call_file.chmod(0o600)
                     result = subprocess.run([str(native), 'driver-call', '--config', str(config), '--request', str(call_file)],
                                             capture_output=True, timeout=40)
-                    assert result.returncode == 0 and json.loads(result.stdout)['ok'], result.stderr.decode(errors='replace')[-1000:]
+                    answer=json.loads(result.stdout)
+                    value['final_remove_reply']=answer
+                    assert result.returncode == 0 and answer['ok'], (answer,result.stderr.decode(errors='replace')[-1000:])
                     assert all(not p.exists() for p in paths(value))
                     collected = manager.observe(value)
                     value['live_resources_after_final_collection'] = collected
@@ -302,7 +307,11 @@ def suite(control, cli, native, boot, fixture, manager_recovery=False):
                         not process['present'] or process.get('identity_start_matches') is False
                         for process in collected['processes'].values()), collected
                 except Exception as error:
-                    cleanup_errors.append(f'generation collection: {type(error).__name__}: {error}')
+                    message=f'generation collection: {type(error).__name__}: {error}'
+                    if observed_generation:
+                        collection_attempt_errors.append(message)
+                    else:
+                        cleanup_errors.append(message)
             report['observations']['records_before_final_collection'] = records
         if manager:
             try:
@@ -313,6 +322,20 @@ def suite(control, cli, native, boot, fixture, manager_recovery=False):
             except Exception as error:
                 cleanup_errors.append(str(error))
             report['observations']['manager'] = manager.diagnostics()
+            # A bounded individual attempt may be unconfirmed while the
+            # production manager drain later settles that same generation.
+            # Only actual post-drain observations can establish collection.
+            for value in records:
+                try:
+                    after=manager.observe(value)
+                    value['live_resources_after_final_drain']=after
+                    assert not any(after['paths'].values()) and all(
+                        not process['present'] or process.get('identity_start_matches') is False
+                        for process in after['processes'].values()),after
+                except Exception as error:
+                    cleanup_errors.append(f'final drain observation: {type(error).__name__}: {error}')
+        if collection_attempt_errors:
+            report['collection_attempt_errors']=collection_attempt_errors
         report['observations']['service_log_tails'] = {name: path.read_text(errors='replace')[-5000:]
                                                        for name, path in logs.items() if path.exists()}
         report['cleanup'] = 'complete' if not cleanup_errors else 'unknown'

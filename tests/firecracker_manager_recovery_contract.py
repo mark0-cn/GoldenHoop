@@ -261,6 +261,22 @@ def exercise(native, cfg, config, root, manager, client, sid, complete, observed
     assert record()['supervisor']==before['supervisor']
     observed['paused_reconnected'] = dict(death=second,owner=owner,kernel=same_processes(paused))
     assert not Path(second['owner']['cgroup']).exists()
+    # The native listener's Ready and private Paused observation do not prove
+    # that the independent worker has repaired its durable public projection.
+    # Wait for the actual public state before issuing a new live-state request.
+    until = time.monotonic()+25
+    transitions = observed['paused_public_projection'] = []
+    while True:
+        public = client.sandbox(sid)
+        if not transitions or transitions[-1]!=public:
+            transitions.append(public);del transitions[:-32]
+        assert public['desired_state']=='paused',public
+        assert public['state'] not in ['failed','stopping','terminated'],public
+        if public['state']=='paused':
+            break
+        assert time.monotonic()<until,f'public paused recovery deadline: {public}'
+        time.sleep(.1)
+    assert call({'operation':'inspect','handle':handle})['state']=='paused'
     complete(client.resume(sid,str(uuid.uuid4())))
     assert client.read_file(sid,once)==b'once' and client.read_file(sid,ready)==ready_bytes
     cases.append('paused_VM_survives_second_manager_SIGKILL_without_automatic_resume_or_identity_change')
