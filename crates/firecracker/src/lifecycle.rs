@@ -2,6 +2,8 @@
 //! death neither breaks its console pipes nor suspends absolute expiry.
 mod driver;
 mod manager;
+mod metadata;
+pub(crate) use metadata::atomic_json;
 pub(crate) mod reaper;
 mod supervisor;
 #[cfg(test)]
@@ -326,36 +328,6 @@ pub(crate) fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T
         return Err(invalid("private metadata exceeds limit").into());
     }
     Ok(serde_json::from_slice(&bytes)?)
-}
-
-pub(crate) fn atomic_json(path: &Path, value: &impl Serialize) -> Result<()> {
-    let bytes = serde_json::to_vec(value)?;
-    if bytes.len() > 65536 {
-        return Err(invalid("private metadata exceeds limit").into());
-    }
-    let parent = path
-        .parent()
-        .ok_or_else(|| invalid("missing metadata parent"))?;
-    let temporary = parent.join(format!(".{}.pending", Uuid::new_v4()));
-    let result = (|| -> io::Result<()> {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&temporary)?;
-        file.write_all(&bytes)?;
-        file.sync_all()?;
-        std::fs::rename(&temporary, path)?;
-        File::open(parent)?.sync_all()
-    })();
-    if result.is_err() {
-        match std::fs::remove_file(&temporary) {
-            Ok(()) => (),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => (),
-            Err(e) => return Err(e.into()),
-        }
-    }
-    Ok(result?)
 }
 
 pub(crate) fn private_directory(path: &Path) -> Result<()> {

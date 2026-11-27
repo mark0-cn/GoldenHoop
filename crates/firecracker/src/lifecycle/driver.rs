@@ -65,34 +65,7 @@ impl NativeEngine {
         if unsafe { libc::geteuid() } != 0 {
             return Err(invalid("native driver requires Linux root").into());
         }
-        private_directory(&cfg.data_root)?;
-        let lock_path = cfg.data_root.join("installation.lock");
-        let lock = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-            .open(lock_path)?;
-        let metadata = lock.metadata()?;
-        if !metadata.is_file() || metadata.uid() != 0 || metadata.mode() & 0o077 != 0 {
-            return Err(invalid("native installation lock ownership mismatch").into());
-        }
-        fs2::FileExt::try_lock_exclusive(&lock)
-            .map_err(|_| invalid("native installation already has an owner"))?;
-        let marker = cfg.data_root.join("installation.json");
-        if marker.try_exists()? {
-            let marker: serde_json::Value = read_json(&marker)?;
-            if marker != serde_json::json!({"format":1,"installation_id":cfg.installation_id}) {
-                return Err(invalid("native installation identity mismatch").into());
-            }
-        } else {
-            atomic_json(
-                &marker,
-                &serde_json::json!({"format":1,"installation_id":cfg.installation_id}),
-            )?;
-        }
+        let lock = metadata::claim_installation(&cfg.data_root, cfg.installation_id)?;
         for name in ["vm", "records"] {
             private_directory(&cfg.data_root.join(name))?;
         }

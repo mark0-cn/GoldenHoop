@@ -808,3 +808,34 @@ A focused `creation_only` dispatch now runs the unchanged full five-level public
 - The parent now attempts bounded owner-checked container state, host process stat/cgroup and stdout/stderr capture before collection on failure. Log reads have a five-second bound, bounded raw outputs/digests/tails, and an encoded 16-KiB observation limit so escaped diagnostic content cannot overflow the durable job. Missing diagnostics remain unconfirmed. Existing error, dispatch fences, live-PID/cgroup/resource/permit checks and all success conditions are unchanged; no weaker runtime or fabricated completion is introduced.
 - The actual fixture additionally records a trusted isolated kernel view with the converter's four capabilities/NNP/read-only/no-network settings and no host/input/output mounts or daemon access. It observes PID, virtual status, loopback, root mount and an actual refused root write. That diagnostic cannot accept the pipeline or substitute for host cgroup enforcement. A first local diagnostic wrapper exits on the expected EROFS because POSIX special-builtin redirection can terminate the shell; its [Failed/Complete record](evidence/m4-image-prepare-failure-observation-actual-runc.json) remains intact. An external touch command now captures the same required refusal without aborting the wrapper. The [corrected actual local gate](evidence/m4-image-prepare-failure-observation-actual-runc-current.json) passes all nine retained groups with 315 source bindings and Complete collection. All fresh local resources and image tags are absent.
 - [Windows full checks](evidence/m4-image-prepare-failure-observation-validation-windows.json) pass format, strict workspace/all-target Clippy and 281 tests; [Linux full checks](evidence/m4-image-prepare-failure-observation-validation-linux.json) pass the same checks and 335 tests plus the actual optimized host build. Both bind 312 exact inputs. New runsc reports receive the complete Actions source SHA; the next real gate must supply the missing failure evidence. Production runsc/produced-disk KVM use, complete interrupted allocation/native recovery, snapshots/restore/templates, combined Stage and all M5-M6 work remain unaccepted.
+
+Qualification: those two local reports bind the tested physical checkout, but
+four unchanged files had CRLF bytes while the repository stores LF. Only 308/312
+build bindings and 311/315 bindings in the linked local actual report directly
+match 6085bda. The [explicit review](evidence/m4-image-prepare-newline-binding-review.json)
+retains both hashes and verifies that CRLF-to-LF conversion accounts for every
+difference. The prepublish assertion failed, but its PowerShell sequence did not
+stop the subsequent commit/publication; this was an agent execution error. No
+historical result or fingerprint has been rewritten. The main checkout is now
+canonical LF, and the combined checks below supersede that checkout qualification.
+The publisher now requires explicit passed Windows/Linux reports and verifies
+every required source input against immutable committed blobs before any GitHub
+API access; its missing-report refusal has been tested.
+
+The [second runsc gate](evidence/m4-image-prepare-45924506330-archive.json) at
+6085bda retains Failed/Unknown with all 315 inputs verified and its explicit
+source SHA. It now captures exit1, no OOM, and ENOENT before authorization. The
+separate trusted kernel view confirms PID1, NNP1, CapEff0x1b and actual EROFS,
+but reports that `/sys/class/net` does not exist. The converter reads that path
+during isolation verification, so the current incompatibility is identified.
+The guarded network-interface enumeration must be repaired and actually tested;
+no missing path is accepted as an empty network and no live/permit/resource
+check is relaxed. [CI45924301352](https://github.com/mark0-cn/GoldenHoop/actions/runs/45924301352)
+passes both platforms at 6085bda and cannot accept this failed runtime gate.
+
+## M4 native metadata ownership boundary
+
+- [Native root/metadata ownership](native-metadata.md) now refuses occupied roots with missing installation markers and ambiguous/foreign lock ownership. A typed installation/path claim is synced under the exclusive lock before no-replace marker publication; matching missing-marker recovery and valid legacy empty-lock migration preserve identity. No other installation can adopt the directory merely because its marker is absent.
+- Atomic metadata cleanup retains the actual created descriptor. A create-new collision never deletes the pre-existing file, and a substituted device/inode is refused. Failed rename/no-replace attempts collect only their actual created temporary; file/parent sync and uncertainty semantics remain intact. Hard-crash pending-file reconciliation is not inferred from normal error cleanup.
+- On the feature checkout based on 46845ed, [Windows full checks](evidence/m4-native-metadata-validation-windows.json) pass 281 tests and [Linux full checks](evidence/m4-native-metadata-validation-linux-first.json) pass 338, both with format, strict workspace/all-target Clippy and 312 exact input bindings. Three new tests execute actual filesystem/lock/refusal/identity boundaries; Linux Docker executes their root branch, while unprivileged callers test pre-allocation refusal. Static musl guest/rootfs construction is cache-only with no service container or image tag. These results do not claim a new KVM/SIGKILL recovery acceptance, full abandoned-writer collection, hard-manager recovery or complete M4-M6.
+- The root/atomic change is now combined with bounded image diagnostics in the canonical main checkout. Fresh [Windows checks](evidence/m4-native-metadata-canonical-validation-windows.json) pass 281 tests and [Linux checks](evidence/m4-native-metadata-canonical-validation-linux.json) pass 338, both with full format/strict lint and 313 byte-exact inputs including both image Dockerfiles. The Linux gate also builds the actual optimized host service. The temporary build image is collected by its exact task owner. These new bindings supersede the four newline-only checkout differences above. Actual native KVM lifecycle verification of this ownership increment remains a separate required gate.
