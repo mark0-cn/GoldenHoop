@@ -699,6 +699,80 @@ impl ImagePreparer {
         }
         Ok(())
     }
+    async fn failure_observation(
+        &self,
+        job: &ImageJob,
+        request: &ImagePrepareRequest,
+    ) -> Result<Value, ApiError> {
+        use std::io::Read;
+        let actual = self.inspect_owned(job, request, true).await?;
+        let id = actual.id.as_deref().ok_or_else(conflict)?;
+        let pid = actual
+            .state
+            .as_ref()
+            .and_then(|s| s.pid)
+            .filter(|pid| *pid > 1 && *pid <= i64::from(i32::MAX));
+        let process = pid.map(|pid| {
+            let read = |name: &str| {
+                std::fs::File::open(format!("/proc/{pid}/{name}"))
+                    .ok()
+                    .and_then(|file| {
+                        let mut bytes = Vec::new();
+                        file.take(4097).read_to_end(&mut bytes).ok()?;
+                        if bytes.len() > 4096 {
+                            None
+                        } else {
+                            Some(String::from_utf8_lossy(&bytes).into_owned())
+                        }
+                    })
+            };
+            json!({"pid":pid,"stat":read("stat"),"cgroup":read("cgroup")})
+        });
+        let logs = async {
+            let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+            let mut body = self.docker.logs(
+                id,
+                Some(LogsOptions {
+                    stdout: true,
+                    stderr: true,
+                    follow: false,
+                    tail: "all".into(),
+                    ..Default::default()
+                }),
+            );
+            while let Some(item) = body.next().await {
+                let (target, message) = match item.map_err(|_| unknown())? {
+                    LogOutput::StdOut { message } => (&mut stdout, message),
+                    LogOutput::StdErr { message } => (&mut stderr, message),
+                    _ => return Err(conflict()),
+                };
+                if target.len() + message.len() > 65536 {
+                    return Err(bad_output("failure log limit"));
+                }
+                target.extend_from_slice(&message);
+            }
+            Ok::<_, ApiError>(
+                json!({"capture":"complete","stdout_bytes":stdout.len(),"stdout_sha256":format!("{:x}",Sha256::digest(&stdout)),
+                "stderr_bytes":stderr.len(),"stderr_sha256":format!("{:x}",Sha256::digest(&stderr)),
+                "stdout_tail":String::from_utf8_lossy(&stdout[stdout.len().saturating_sub(2048)..]),
+                "stderr_tail":String::from_utf8_lossy(&stderr[stderr.len().saturating_sub(4096)..])}),
+            )
+        };
+        let logs = match tokio::time::timeout(Duration::from_secs(5), logs).await {
+            Ok(Ok(value)) => value,
+            _ => json!({"capture":"unconfirmed"}),
+        };
+        let observation = json!({"state":actual.state,"process":process,"logs":logs});
+        // JSON escaping can expand bounded raw output. Diagnostics must not
+        // overflow the durable job and prevent its subsequent scoped cleanup.
+        if serde_json::to_vec(&observation).is_ok_and(|bytes| bytes.len() <= 16 * 1024) {
+            Ok(observation)
+        } else {
+            Ok(
+                json!({"capture":"unconfirmed","reason":"encoded failure observation exceeds limit"}),
+            )
+        }
+    }
     async fn admission(&self, request: &ImagePrepareRequest) -> Result<(), ApiError> {
         if request.runtime == BuilderRuntime::RuncDevelopment && !self.allow_runc_development {
             return Err(ApiError::new(
@@ -1136,6 +1210,16 @@ impl ImagePreparer {
             }
             value.error = Some(error);
             save(&self.store, &mut job, &value).await?;
+            if value.builder_id.is_some() {
+                let observation = match self.failure_observation(&job, &request).await {
+                    Ok(value) => value,
+                    Err(_) => json!({"capture":"unconfirmed"}),
+                };
+                value.converter_observation = Some(
+                    json!({"before_failure":value.converter_observation,"before_collection":observation}),
+                );
+                save(&self.store, &mut job, &value).await?;
+            }
             // Fence known compute owners on failure. In-flight archive upload
             // acknowledgement and disk writes remain Unknown; never declare
             // their volumes/storage collected merely because a client stopped.

@@ -53,6 +53,8 @@ class Contract(SourceContract):
                            scope='private disk pipeline; KVM placement, crash reconciliation and snapshot/template capabilities are separate gates')
         if self.recovery:
             self.report.update(runtime='maintenance_only',scope='fenced early-abort or stable-disk maintenance; no converter execution or gVisor acceptance')
+        if args.source_commit:
+            self.report['source_commit']=args.source_commit
         self.sources += [Path(__file__).resolve(), self.root/'images/agent/Dockerfile']
         self.hashes = self.fingerprints()
 
@@ -95,6 +97,38 @@ class Contract(SourceContract):
             rows = connection.execute('SELECT id,generation,installation_id,request_json,payload_json FROM image_jobs').fetchall()
         return [dict(id=row[0], generation=row[1], installation_id=row[2], request=json.loads(row[3]),
                      payload=json.loads(row[4])) for row in rows]
+
+    def isolation_observation(self):
+        # Trusted diagnostic image only, with the same guest-facing isolation
+        # settings and no input, output, host mount, daemon access or secret.
+        # This records a kernel view; it cannot accept the image pipeline.
+        command = ("printf 'ROOT_PID=%s\\n' \"$$\"; "
+                   "cat /proc/self/status; printf '\\nINTERFACES\\n'; ls /sys/class/net; "
+                   "printf '\\nROOT_MOUNT\\n'; grep ' / ' /proc/mounts; "
+                   "if /usr/bin/touch /goldenhoop-readonly-diagnostic; then "
+                   "printf 'ROOT_WRITE=allowed\\n'; exit 3; else printf 'ROOT_WRITE=refused\\n'; fi")
+        self.counter += 1
+        args = ['create','--name',f'ghprep-probe-{self.owner}-{self.counter}',*self.labels,
+                '--runtime',self.args.runtime,'--hostname',self.owner,'--user','0:0',
+                '--network','none','--read-only','--cap-drop','ALL',
+                '--security-opt','no-new-privileges:true','--memory','1g','--memory-swap','1g',
+                '--pids-limit','128','--cpus','1']
+        for capability in ['CHOWN','DAC_OVERRIDE','FOWNER','FSETID']:
+            args += ['--cap-add',capability]
+        cid=docker(*args,'--entrypoint','/bin/sh',self.builder,'-c',command).decode().strip()
+        try:
+            process=subprocess.run(['docker','start','--attach',cid],capture_output=True,timeout=45)
+            actual=json.loads(docker('inspect',cid))[0]
+            assert actual['Image']==self.builder and actual['HostConfig']['Runtime']==self.args.runtime
+            assert actual['State']['Status']=='exited' and not actual['State']['OOMKilled']
+            assert len(process.stdout)<=32768 and len(process.stderr)<=8192
+            self.report['observations']['isolated_kernel_diagnostic']={
+                'scope':'diagnostic only; actual parent/gVisor pipeline acceptance remains required',
+                'runtime':self.args.runtime,'image':self.builder,'state':actual['State'],
+                'stdout':process.stdout.decode(errors='replace'),'stderr':process.stderr.decode(errors='replace')}
+            assert actual['State']['ExitCode']==0,self.report['observations']['isolated_kernel_diagnostic']
+        finally:
+            self.remove_container(cid)
 
     def inspect_disk(self, path, reference, inventory):
         volume = 'ghprep-disk-check-' + self.owner
@@ -177,6 +211,7 @@ class Contract(SourceContract):
             return
         self.volume = 'ghsrc-state-' + self.owner
         docker('volume', 'create', *self.labels, self.volume)
+        self.isolation_observation()
         source, _ = self.source_image()
         if self.args.runtime == 'runc':
             denied = self.call(self.intent(source, opt_in=False), expected=2)
@@ -318,8 +353,11 @@ if __name__ == '__main__':
     parser.add_argument('--allow-runc-development', action='store_true')
     parser.add_argument('--remove-image', action='store_true')
     parser.add_argument('--recover-report', type=Path)
+    parser.add_argument('--source-commit')
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
+    if args.source_commit and not re.fullmatch('[a-f0-9]{40}',args.source_commit):
+        parser.error('source commit must be a complete lowercase SHA1')
     if args.runtime == 'runc' and not args.allow_runc_development:
         parser.error('runc requires explicit --allow-runc-development; it does not establish production isolation')
     if args.output.exists():

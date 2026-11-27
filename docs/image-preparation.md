@@ -247,3 +247,16 @@ and [Linux](evidence/m4-image-prepare-validation-linux-final.json) full checks p
 production gVisor or KVM placement; `image-prepare.yml` is a separate real-runsc
 gate. The initial failed reports remain unchanged, and separate maintenance-only
 records confirm their later collection without claiming runsc conversion.
+
+The [first production runsc gate](evidence/m4-image-prepare-45920852191-archive.json)
+at 46845ed remains Failed/Unknown: the host observes a non-live PID before
+authorization, and no disk/manifest is accepted. All 315 source inputs verify,
+but missing guest stderr prevents a diagnosis of its underlying cause. Portable
+CI success cannot override that result. Failure handling now captures bounded
+owner-checked state, host stat/cgroup and log digests/tails before collection,
+without relaxing live-process, isolation, resource, authorization or success
+checks. A trusted isolated kernel diagnostic records virtual status and an actual
+refused root write; it grants no capability. The
+[corrected local diagnostic/pipeline gate](evidence/m4-image-prepare-failure-observation-actual-runc-current.json)
+passes nine retained groups and Complete collection. New runsc evidence with the
+explicit Actions SHA is still required.
