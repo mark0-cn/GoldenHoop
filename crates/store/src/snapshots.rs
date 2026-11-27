@@ -158,6 +158,36 @@ pub(super) async fn observe_source(
 }
 
 impl Store {
+    /// Read-only idempotent retry, including when the source/backend is no
+    /// longer available. A miss grants no dispatch or resource reservation.
+    pub async fn prior_snapshot_request(
+        &self,
+        source: Uuid,
+        request: &CreateSnapshot,
+        key: &str,
+    ) -> Result<Option<SnapshotCreated>, ApiError> {
+        goldenhoop_core::validate_idempotency_key(key)?;
+        let value = sqlx::query(
+            "SELECT fingerprint,resource_id FROM idempotency WHERE scope=? AND client_key=?",
+        )
+        .bind(format!("sandboxes:{source}:snapshots:create"))
+        .bind(key)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db)?;
+        let Some(value) = value else {
+            return Ok(None);
+        };
+        if value.try_get::<&str, _>("fingerprint").map_err(db)? != fingerprint(request)? {
+            return Err(ApiError::new(
+                ErrorCode::Conflict,
+                "idempotency key has different request content",
+            ));
+        }
+        let id =
+            Uuid::parse_str(value.try_get("resource_id").map_err(db)?).map_err(|_| internal())?;
+        self.snapshot_created(id).await.map(Some)
+    }
     pub async fn snapshot(&self, id: Uuid) -> Result<StoredSnapshot, ApiError> {
         row(&sqlx::query("SELECT * FROM snapshots WHERE id=?")
             .bind(id.to_string())
@@ -520,7 +550,89 @@ impl Store {
         tx.commit().await.map_err(db)
     }
     pub async fn snapshot_work(&self) -> Result<Vec<StoredSnapshot>, ApiError> {
-        sqlx::query("SELECT * FROM snapshots WHERE state IN('pending','capturing','unknown','collecting') OR source_fenced=1 ORDER BY id LIMIT 256").fetch_all(&self.pool).await.map_err(db)?.iter().map(row).collect()
+        sqlx::query("SELECT * FROM snapshots WHERE state IN('pending','capturing','unknown','collecting') OR source_fenced=1 OR (state='failed' AND json_extract(payload,'$.cleanup')!='complete') ORDER BY id LIMIT 256").fetch_all(&self.pool).await.map_err(db)?.iter().map(row).collect()
+    }
+    /// A positively observed backend failure settles business state while
+    /// preserving its independent physical cleanup obligation and source fence.
+    pub async fn snapshot_capture_failed(
+        &self,
+        id: Uuid,
+        source: &RuntimeHandle,
+        error: &ApiError,
+    ) -> Result<(), ApiError> {
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+        let mut stored = load(&mut tx, id).await?;
+        if !stored.dispatched
+            || !same_handle(source, &stored.source_handle)
+            || !matches!(
+                stored.snapshot.state,
+                SnapshotState::Capturing | SnapshotState::Unknown | SnapshotState::Failed
+            )
+        {
+            return Err(ApiError::new(
+                ErrorCode::Conflict,
+                "backend failure differs from its dispatched capture",
+            ));
+        }
+        if stored.snapshot.state == SnapshotState::Failed {
+            tx.commit().await.map_err(db)?;
+            return Ok(());
+        }
+        stored.snapshot.state = SnapshotState::Failed;
+        stored.snapshot.cleanup = CleanupState::Pending;
+        stored.snapshot.error = Some(error.clone());
+        stored.snapshot.observed_at = Some(Utc::now());
+        save(&mut tx, &stored).await?;
+        operation(
+            &mut tx,
+            stored.create_operation,
+            OperationState::Failed,
+            Some(error.clone()),
+        )
+        .await?;
+        tx.commit().await.map_err(db)
+    }
+    pub async fn snapshot_cleanup_unknown(&self, id: Uuid) -> Result<(), ApiError> {
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+        let mut stored = load(&mut tx, id).await?;
+        if stored.snapshot.state != SnapshotState::Failed
+            || !stored.dispatched
+            || stored.snapshot.cleanup == CleanupState::Complete
+        {
+            return Err(ApiError::new(
+                ErrorCode::InvalidState,
+                "snapshot has no outstanding failed-capture cleanup",
+            ));
+        }
+        stored.snapshot.cleanup = CleanupState::Unknown;
+        stored.snapshot.observed_at = Some(Utc::now());
+        save(&mut tx, &stored).await?;
+        tx.commit().await.map_err(db)
+    }
+    /// The worker must supply a source-bound positive backend collection
+    /// observation. This also requires the original source's durable collection.
+    pub async fn snapshot_capture_collected(
+        &self,
+        id: Uuid,
+        source: &RuntimeHandle,
+    ) -> Result<(), ApiError> {
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+        let mut stored = load(&mut tx, id).await?;
+        if !stored.dispatched
+            || !stored.source_collected
+            || stored.source_fenced
+            || !same_handle(source, &stored.source_handle)
+            || stored.snapshot.state != SnapshotState::Failed
+        {
+            return Err(ApiError::new(
+                ErrorCode::Conflict,
+                "snapshot collection lacks its original source collection binding",
+            ));
+        }
+        stored.snapshot.cleanup = CleanupState::Complete;
+        stored.snapshot.observed_at = Some(Utc::now());
+        save(&mut tx, &stored).await?;
+        tx.commit().await.map_err(db)
     }
     pub async fn snapshot_execution_candidates(
         &self,

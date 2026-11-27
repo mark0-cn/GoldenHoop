@@ -1,0 +1,25 @@
+{
+  "result": "failed",
+  "scope": "Initial Windows worker snapshot unit run; real SQLite/mutex/HTTP with synthetic backend observations. No native/KVM acceptance.",
+  "command": [
+    "cargo",
+    "test",
+    "--locked",
+    "-p",
+    "goldenhoop-control",
+    "--lib",
+    "worker::snapshots::tests",
+    "--",
+    "--test-threads=2"
+  ],
+  "exit_code": 101,
+  "tests_passed": 5,
+  "tests_failed": 1,
+  "test_duration_seconds": 30.11,
+  "compiled_test_source_sha256": "24835fe29f4f95676432e87611d77d9d78eab71966083da28d4cdfcab362d4d6",
+  "diagnostic": "accepted_rpc_drains_before_source_fence_and_unrelated_source_remains_usable failed at snapshots/tests.rs:332:72: BackendUnavailable persistent store operation failed. Initial compile also reported an unused PENDING scenario constant.",
+  "diagnostic_capture": "Summary transcribed from actual unified-exec output; no complete-output byte digest is claimed.",
+  "investigation": "The test stopped polling an admission future during its prior-intent read, then awaited a second SQLite query. The store has one connection per process. A paused connection-owning future can prevent the second query from acquiring it; this is a test synchronization issue to verify by concurrent polling and explicit source-mutex queue observation.",
+  "production_limits_changed": false,
+  "recorded_at": "2026-11-27T22:30:30.743437+00:00"
+}

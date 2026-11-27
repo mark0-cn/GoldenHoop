@@ -1,8 +1,10 @@
 # Public snapshot operation storage
 
-This increment supplies domain resources, durable capture intent and source
-admission fencing. It does not expose snapshot HTTP routes, execute a backend
-capture, bind restored public executions, or enable MemorySnapshot in a profile.
+The storage increment supplies domain resources, durable capture intent and source
+admission fencing. The [worker bridge](snapshot-worker.md) now adds authenticated
+private admission, native capture/inspection and failed-capture collection. Public
+snapshot HTTP routes, restored public execution bindings and MemorySnapshot
+capability registration remain unavailable.
 The complete M0-M6 objective remains in [roadmap.md](roadmap.md).
 
 ## State and ownership
@@ -86,7 +88,7 @@ The [observation report](evidence/m4-public-snapshot-validation-observation.json
 retains that failure and states that its cause remains unverified; no Rust source,
 assertion or production limit was changed for those rechecks.
 
-Worker capture/restore/GC orchestration, execution bindings, gateway permissions,
+Worker restoration/Ready-object deletion, no-intent convergence, execution bindings, gateway permissions,
 REST/CLI/Rust/Python clients and actual profile probe/public KVM acceptance remain
 required before enabling the capability. Rootfs/volume snapshots, templates and
 combined M4-M6 remain separate required work. The upstream comparison is recorded

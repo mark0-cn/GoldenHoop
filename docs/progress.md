@@ -1,5 +1,36 @@
 # Progress
 
+The [worker memory-capture bridge](snapshot-worker.md) adds authenticated private
+admission under the ordinary source RPC mutex, pure driver preflight and read-only
+exact retries after source/backend retirement. Durable dispatch distinguishes the
+first capture from inspection-only recovery. Native bound inspect/collect verifies
+the original installation/source/generation/request; verified Ready projection
+keeps private native data out of public payloads. Persisted producer occupancy
+outlives a Pending RPC task, retaining the original slot while ordinary unrelated
+source work remains usable. Positive capture failure settles the operation Failed
+before cleanup; source collection precedes object GC, cleanup retries retain the
+original error, and polling cannot starve explicit termination/expiry.
+
+The [implementation summary](evidence/m4-snapshot-worker-implementation-summary.json)
+binds identical353 inputs to full Windows302/GNU-root419 checks and scoped musl21
+plus4 static guest releases. Formatting and strict all-target clippy pass. Seven
+real SQLite/mutex/private-HTTP tests and three native projection tests cover the
+new control path; backend observations are synthetic. The earlier targeted GNU14
+report predates producer-slot refinement and is retained separately. All three
+owned check tags are positively absent. Original pool-wait, test-binding lint and
+old scheduling-expectation failures remain recorded. The corrected mutex test
+keeps the admission future polled while observing its queued original lock; no
+production pool limit/deadline was relaxed. The [upstream review](evidence/m4-snapshot-worker-upstream-review.json)
+records OpenSandbox status orchestration and the installed SQLx source contract.
+
+This accepts the private implementation increment only. Actual source-bound
+manager/worker KVM acceptance and definitive refusal/no-intent convergence remain
+required: the marker-before-send window deliberately stays Unknown rather than
+recapturing or claiming cleanup from NotFound. Public REST/CLI/Rust/Python paths,
+target/public execution bindings and a complete actual profile probe are still
+required before MemorySnapshot advertisement. Rootfs/volume snapshots, templates,
+combined M4 and complete M5-M6 remain active.
+
 The [public snapshot operation foundation](public-snapshot-operations.md) adds
 domain/schema resources and SQLite v18 capture intent, idempotent operations,
 original source identity, durable dispatch markers and source admission fencing.

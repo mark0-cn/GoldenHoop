@@ -332,6 +332,28 @@ impl FirecrackerDriver {
     ) -> std::result::Result<serde_json::Value, ApiError> {
         self.call(DriverCall::CheckpointCollect { capture }).await
     }
+    pub async fn checkpoint_inspect_bound(
+        &self,
+        handle: &RuntimeHandle,
+        capture: Uuid,
+    ) -> std::result::Result<serde_json::Value, ApiError> {
+        self.call(DriverCall::CheckpointInspectBound {
+            handle: handle.clone(),
+            capture,
+        })
+        .await
+    }
+    pub async fn checkpoint_collect_bound(
+        &self,
+        handle: &RuntimeHandle,
+        capture: Uuid,
+    ) -> std::result::Result<serde_json::Value, ApiError> {
+        self.call(DriverCall::CheckpointCollectBound {
+            handle: handle.clone(),
+            capture,
+        })
+        .await
+    }
     /// Acknowledges the stop request only. The service parent must still wait
     /// and observe actual service/process/cgroup collection.
     pub async fn request_manager_shutdown(&self) -> std::result::Result<(), ApiError> {
@@ -347,6 +369,41 @@ impl FirecrackerDriver {
 
 #[async_trait]
 impl RuntimeDriver for FirecrackerDriver {
+    fn supports_memory_capture(&self) -> bool {
+        self.cfg.checkpoints.is_some()
+    }
+    fn validate_memory_capture(
+        &self,
+        request: &MemoryCaptureRequest,
+    ) -> std::result::Result<(), ApiError> {
+        super::snapshots::validate(&self.cfg, request)
+    }
+    async fn capture_memory(
+        &self,
+        request: &MemoryCaptureRequest,
+    ) -> std::result::Result<MemoryCaptureObservation, ApiError> {
+        self.validate_memory_capture(request)?;
+        let value = self.checkpoint_capture(&request.handle, request.id).await?;
+        super::snapshots::project(&self.cfg, request, value)
+    }
+    async fn inspect_memory_capture(
+        &self,
+        request: &MemoryCaptureRequest,
+    ) -> std::result::Result<MemoryCaptureObservation, ApiError> {
+        let value = self
+            .checkpoint_inspect_bound(&request.handle, request.id)
+            .await?;
+        super::snapshots::project(&self.cfg, request, value)
+    }
+    async fn collect_memory_capture(
+        &self,
+        request: &MemoryCaptureRequest,
+    ) -> std::result::Result<MemoryCaptureObservation, ApiError> {
+        let value = self
+            .checkpoint_collect_bound(&request.handle, request.id)
+            .await?;
+        super::snapshots::project(&self.cfg, request, value)
+    }
     async fn probe(&self) -> RuntimeProfile {
         let result: std::result::Result<RuntimeProfile, ApiError> =
             self.call(DriverCall::Probe).await;
@@ -456,8 +513,14 @@ async fn dispatch(
         DriverCall::CheckpointInspect { capture } => {
             Ok(engine.checkpoint_read(capture, false).await?)
         }
+        DriverCall::CheckpointInspectBound { handle, capture } => Ok(engine
+            .checkpoint_read_bound(&handle, capture, false)
+            .await?),
         DriverCall::CheckpointCollect { capture } => {
             Ok(engine.checkpoint_read(capture, true).await?)
+        }
+        DriverCall::CheckpointCollectBound { handle, capture } => {
+            Ok(engine.checkpoint_read_bound(&handle, capture, true).await?)
         }
         DriverCall::CheckpointRestore { restore } => {
             serde_json::to_value(engine.checkpoint_restore(&restore).await?)

@@ -11,6 +11,7 @@ pub use restore::ManagedRestoreRequest;
 pub(crate) use restore::{CollectedNativeRestore, RestoreBinding};
 mod manager;
 pub(crate) mod metadata;
+mod snapshots;
 pub(crate) use metadata::atomic_json;
 pub(crate) mod reaper;
 pub(crate) mod recovery;
@@ -474,7 +475,15 @@ pub enum DriverCall {
     CheckpointInspect {
         capture: Uuid,
     },
+    CheckpointInspectBound {
+        handle: goldenhoop_runtime::RuntimeHandle,
+        capture: Uuid,
+    },
     CheckpointCollect {
+        capture: Uuid,
+    },
+    CheckpointCollectBound {
+        handle: goldenhoop_runtime::RuntimeHandle,
         capture: Uuid,
     },
     CheckpointRestore {
@@ -520,7 +529,13 @@ pub async fn run_driver_call(config: PathBuf, request: PathBuf) -> Result<serde_
                 driver.checkpoint_capture(&handle, capture).await?
             }
             DriverCall::CheckpointInspect { capture } => driver.checkpoint_inspect(capture).await?,
+            DriverCall::CheckpointInspectBound { handle, capture } => {
+                driver.checkpoint_inspect_bound(&handle, capture).await?
+            }
             DriverCall::CheckpointCollect { capture } => driver.checkpoint_collect(capture).await?,
+            DriverCall::CheckpointCollectBound { handle, capture } => {
+                driver.checkpoint_collect_bound(&handle, capture).await?
+            }
             DriverCall::CheckpointRestore { restore } => {
                 serde_json::to_value(driver.checkpoint_restore(&restore).await?).unwrap()
             }

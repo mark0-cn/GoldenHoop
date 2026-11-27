@@ -5,6 +5,9 @@ use goldenhoop_protocol::*;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+mod snapshots;
+pub use snapshots::{MemoryCaptureObservation, MemoryCaptureRequest, MemoryCaptureState};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeHandle {
     pub sandbox_id: Uuid,
@@ -33,6 +36,50 @@ pub struct RuntimeObservation {
 
 #[async_trait]
 pub trait RuntimeDriver: Send + Sync {
+    /// Compiled/configured private support only. This never advertises a public
+    /// MemorySnapshot capability; profile probing and public acceptance do that.
+    fn supports_memory_capture(&self) -> bool {
+        false
+    }
+    /// Pure preflight before the durable dispatch marker; no backend effects.
+    fn validate_memory_capture(&self, request: &MemoryCaptureRequest) -> Result<(), ApiError> {
+        request.validate_identity()?;
+        if !self.supports_memory_capture() {
+            return Err(ApiError::new(
+                ErrorCode::UnsupportedCapability,
+                "memory capture is not implemented by this driver",
+            ));
+        }
+        Ok(())
+    }
+    async fn capture_memory(
+        &self,
+        _request: &MemoryCaptureRequest,
+    ) -> Result<MemoryCaptureObservation, ApiError> {
+        Err(ApiError::new(
+            ErrorCode::UnsupportedCapability,
+            "memory capture is not implemented by this driver",
+        ))
+    }
+    /// Inspection grants no new capture authority, including after a lost reply.
+    async fn inspect_memory_capture(
+        &self,
+        _request: &MemoryCaptureRequest,
+    ) -> Result<MemoryCaptureObservation, ApiError> {
+        Err(ApiError::new(
+            ErrorCode::UnsupportedCapability,
+            "memory capture inspection is not implemented by this driver",
+        ))
+    }
+    async fn collect_memory_capture(
+        &self,
+        _request: &MemoryCaptureRequest,
+    ) -> Result<MemoryCaptureObservation, ApiError> {
+        Err(ApiError::new(
+            ErrorCode::UnsupportedCapability,
+            "memory capture collection is not implemented by this driver",
+        ))
+    }
     /// Inspect actual runtime and host; do not report configured intent as support.
     async fn probe(&self) -> RuntimeProfile;
     async fn create(

@@ -83,6 +83,14 @@ fn unavailable(error: impl std::fmt::Display) -> ApiError {
     error.retryable = false;
     error
 }
+pub(super) fn native_handle(installation: Uuid, sandbox: Uuid, generation: Uuid) -> RuntimeHandle {
+    RuntimeHandle {
+        sandbox_id: sandbox,
+        profile: PROFILE.into(),
+        backend_ref: format!("fc1:{installation}:{generation}"),
+    }
+}
+
 pub(super) fn profile(cfg: &DriverConfig) -> RuntimeProfile {
     RuntimeProfile {
         id: PROFILE.into(),
@@ -398,14 +406,11 @@ impl NativeEngine {
     }
 
     fn handle(&self, record: &VmJournal) -> RuntimeHandle {
-        RuntimeHandle {
-            sandbox_id: record.owner.sandbox_id,
-            profile: PROFILE.into(),
-            backend_ref: format!(
-                "fc1:{}:{}",
-                record.owner.installation_id, record.owner.generation
-            ),
-        }
+        native_handle(
+            record.owner.installation_id,
+            record.owner.sandbox_id,
+            record.owner.generation,
+        )
     }
     fn for_handle(&self, handle: &RuntimeHandle) -> Result<VmJournal> {
         let record = self.load(handle.sandbox_id)?;

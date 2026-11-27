@@ -15,7 +15,10 @@ Closed/Unconfirmed with exact quota/GC and no relaunch.
 Public native snapshot/restore/template execution and capability registration
 remain unavailable. The [public operation foundation](public-snapshot-operations.md)
 now persists capture intent, source fencing and immutable execution candidates;
-worker/backend orchestration, public clients and actual acceptance remain required.
+The [worker bridge](snapshot-worker.md) now implements private source-serialized
+admission, capture dispatch, inspection and failed-capture collection. Definitive
+no-intent/refusal convergence, public restoration/clients and actual acceptance
+remain required.
 The complete M0-M6 objective in [roadmap.md](roadmap.md) is unchanged.
 
 ## Upstream constraints

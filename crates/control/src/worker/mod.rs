@@ -14,6 +14,7 @@ pub use network_bootstrap::{NetworkOptions, NetworkSetup};
 mod network_policy;
 mod networks;
 mod sessions;
+mod snapshots;
 
 use std::{
     collections::HashMap,
@@ -52,6 +53,7 @@ pub struct Worker {
     context_closures: Mutex<HashMap<Uuid, Instant>>,
     artifacts: goldenhoop_artifacts::BlobStore,
     artifact_concurrency: Arc<Semaphore>,
+    snapshot_concurrency: Arc<Semaphore>,
     network_controller_image: Option<String>,
     network_options: Option<NetworkOptions>,
     credentials: Option<Arc<CredentialSetup>>,
@@ -253,6 +255,7 @@ impl Worker {
             context_closures: Mutex::new(HashMap::new()),
             artifacts,
             artifact_concurrency: Arc::new(Semaphore::new(2)),
+            snapshot_concurrency: Arc::new(Semaphore::new(1)),
             network_controller_image,
             network_options,
             credentials,
@@ -303,6 +306,10 @@ impl Worker {
         let auth = BearerAuth::new(&self.registration.token)?;
         Ok(Router::new()
             .route("/internal/files", post(files))
+            .route(
+                "/internal/snapshots",
+                post(snapshots::create).layer(DefaultBodyLimit::max(8192)),
+            )
             .route("/internal/diagnostics", post(diagnostics))
             .route("/internal/artifact-content", post(artifacts::content))
             .fallback(not_found)
@@ -327,9 +334,16 @@ impl Worker {
         let mut tasks = JoinSet::new();
         let mut offset = 0_usize;
         let mut artifact_offset = 0_usize;
+        let mut snapshot_offset = 0_usize;
         loop {
             if *shutdown.borrow() {
                 break;
+            }
+            if let Err(error) = self
+                .schedule_snapshot_work(&mut tasks, &mut snapshot_offset)
+                .await
+            {
+                report("snapshot_work_scan_failed", &error);
             }
             match self.store.work().await {
                 Ok(mut work) => {

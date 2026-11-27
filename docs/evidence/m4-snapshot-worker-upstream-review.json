@@ -1,0 +1,24 @@
+{
+  "scope": "Worker dispatch/reconciliation design and local test-pool diagnosis; source review is not runtime acceptance.",
+  "sources": [
+    {
+      "project": "OpenSandbox",
+      "revision": "3d1b543f685b047cad8bec04c8bd8e49abec7d07",
+      "url": "https://github.com/opensandbox-group/OpenSandbox/blob/3d1b543f685b047cad8bec04c8bd8e49abec7d07/server/opensandbox_server/services/snapshot_service.py",
+      "observation": "Slow creation persists a record before bounded background dispatch; runtime observations drive convergence and reads recheck unfinished work. In-flight tracking avoids repeated producer submission.",
+      "application": "Worker source mutex precedes durable intent/fence; a persistent marker separates capture from inspection-only reconciliation. Persisted capture occupancy outlives a single RPC task. GoldenHoop physical source/object collection stays separate from business failure."
+    },
+    {
+      "project": "SQLx",
+      "package": "sqlx-core 0.9.1",
+      "revision": "30f4eae0793ecaafbf6808623c84ff57e8001222",
+      "url": "https://github.com/launchbadge/sqlx/blob/30f4eae0793ecaafbf6808623c84ff57e8001222/sqlx-core/src/pool/mod.rs",
+      "source": "Locally installed official registry package; docs.rs version URL was unavailable.",
+      "verified_local_source_sha256": "088278cee6d4994ec5c09ad429594b47b09d92e3fb1ff2856eaf28b68bdedd66",
+      "observation": "Pool documentation lines101-103 explains that acquisition waits when all connections at the configured limit are checked out. Lines119-126 describes connection/transaction ownership and explicit pool close. GoldenHoop configures one connection per process.",
+      "application": "The test now continues polling the admission future while observing its mutex queue; it does not hold a paused connection-owning future while exclusively awaiting another query. Corrected worker tests pass; production pool limits/deadlines are unchanged."
+    }
+  ],
+  "remaining": "Runtime acceptance of actual source-bound manager calls, the public profile/KVM path and definitive native no-intent/refusal convergence remain required. No public MemorySnapshot capability enabled.",
+  "recorded_at": "2026-11-27T22:46:23.577929+00:00"
+}

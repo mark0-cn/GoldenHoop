@@ -162,6 +162,40 @@ impl NativeEngine {
         })
     }
 
+    /// A capture UUID alone is not source-generation authority. This read/GC
+    /// path never calls capture, including when the original record is absent.
+    pub(in crate::lifecycle) async fn checkpoint_read_bound(
+        &self,
+        handle: &RuntimeHandle,
+        capture: Uuid,
+        collect: bool,
+    ) -> std::result::Result<serde_json::Value, ApiError> {
+        let result = async {
+            let cfg = self.inner.cfg.checkpoint_config(capture)?;
+            let original = self.for_handle(handle)?.owner;
+            tokio::task::spawn_blocking(move || {
+                let store = CheckpointStore::open_or_initialize(&cfg)?;
+                let source = store.source(capture)?.ok_or_else(|| {
+                    ApiError::new(ErrorCode::NotFound, "original checkpoint intent is absent; no capture was dispatched by this inspection")
+                })?;
+                if source.installation != original.installation_id
+                    || source.sandbox != original.sandbox_id
+                    || source.source_generation != original.generation
+                    || source.request_sha256 != original.request_sha256
+                {
+                    return Err(ApiError::new(ErrorCode::Conflict, "checkpoint belongs to a different original source generation").into());
+                }
+                if collect { store.collect(capture) } else { store.inspect(capture) }
+            }).await?
+        }.await;
+        result.map_err(|error: Box<dyn std::error::Error + Send + Sync>| {
+            error
+                .downcast_ref::<ApiError>()
+                .cloned()
+                .unwrap_or_else(|| unavailable(error))
+        })
+    }
+
     pub(in crate::lifecycle) fn reap_capture_tasks(&self) {
         if let Ok(mut tasks) = self.inner.capture_tasks.lock() {
             // The durable capture record, not this disposable join handle, is

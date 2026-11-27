@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn fixture() -> CheckpointManifest {
+pub(crate) fn fixture() -> CheckpointManifest {
     let source = CaptureIdentity {
         installation: Uuid::new_v4(),
         sandbox: Uuid::new_v4(),

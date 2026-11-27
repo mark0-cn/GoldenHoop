@@ -20,6 +20,14 @@ pub struct InternalSandboxCall {
 
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct InternalSnapshotCall {
+    pub sandbox_id: uuid::Uuid,
+    pub request: goldenhoop_protocol::CreateSnapshot,
+    pub idempotency_key: String,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct InternalArtifactCall {
     pub artifact_id: uuid::Uuid,
 }
