@@ -335,22 +335,25 @@ impl NativeEngine {
         Ok(())
     }
 
-    fn prepare_supervisor_group(&self, record: &VmJournal) -> Result<()> {
+    fn prepare_supervisor_group(&self, record: &mut VmJournal) -> Result<()> {
         let group = self
             .inner
             .cfg
             .paths(record.owner.generation)?
             .supervisor_cgroup;
         std::fs::create_dir(&group)?;
-        // Group ownership follows the durable full installation/generation intent.
+        let group = super::cgroup::Group::capture(&group)?;
+        record.supervisor_cgroup_identity = Some(group.identity());
+        atomic_json(&self.inner.cfg.record_path(record.owner.sandbox_id), record)?;
+        // Persist the actual object before limits, membership or child launch.
         for (file, value) in [
             ("cpu.max", "100000 100000"),
             ("memory.max", "134217728"),
             ("memory.swap.max", "0"),
             ("pids.max", "8"),
         ] {
-            std::fs::write(group.join(file), value)?;
-            if std::fs::read_to_string(group.join(file))?.trim() != value {
+            group.write(file, value.as_bytes())?;
+            if group.read(file)?.trim() != value {
                 return Err(invalid("supervisor cgroup budget readback mismatch").into());
             }
         }
@@ -363,10 +366,13 @@ impl NativeEngine {
             .cfg
             .paths(record.owner.generation)?
             .supervisor_cgroup;
-        let tasks = OpenOptions::new()
-            .write(true)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-            .open(group.join("cgroup.procs"))?;
+        let group = super::cgroup::recorded(
+            &group,
+            record.supervisor_cgroup_identity.as_ref(),
+            &record.owner,
+        )?
+        .ok_or_else(|| invalid("supervisor cgroup missing"))?;
+        let tasks = group.file("cgroup.procs", true)?;
         let descriptor = tasks.as_raw_fd();
         let lock = self.inner._installation_lock.as_raw_fd();
         let stderr = OpenOptions::new()
@@ -441,6 +447,12 @@ impl NativeEngine {
             .cfg
             .paths(record.owner.generation)?
             .supervisor_cgroup;
+        let _group = super::cgroup::recorded(
+            &group,
+            record.supervisor_cgroup_identity.as_ref(),
+            &record.owner,
+        )?
+        .ok_or_else(|| invalid("supervisor cgroup missing"))?;
         let _membership = super::reaper::group_child(expected.pid, Some(&group), false)?
             .ok_or_else(|| invalid("native supervisor generation group is absent"))?;
         let path = self
@@ -601,7 +613,7 @@ impl NativeEngine {
         let digest = request_digest(request)?;
         let path = cfg.record_path(sandbox.id);
         if path.try_exists()? {
-            let record = self.load(sandbox.id)?;
+            let mut record = self.load(sandbox.id)?;
             if record.owner.request_sha256 != digest
                 || record.owner.expires_at != sandbox.expires_at
             {
@@ -630,7 +642,7 @@ impl NativeEngine {
                     if paths.supervisor_cgroup.try_exists()? {
                         supervisor::collect_supervisor_cgroup(cfg, &record)?;
                     }
-                    self.prepare_supervisor_group(&record)?;
+                    self.prepare_supervisor_group(&mut record)?;
                     let child = self.spawn_supervisor(&record)?;
                     return self.wait_ready(sandbox.id, Some(child)).await;
                 }
@@ -654,7 +666,7 @@ impl NativeEngine {
         let deadline = boottime_ns()?
             .checked_add(u64::try_from(remaining.as_nanos())?)
             .ok_or_else(|| invalid("native absolute deadline overflow"))?;
-        let record = VmJournal {
+        let mut record = VmJournal {
             format: 1,
             owner: VmOwner {
                 installation_id: cfg.installation_id,
@@ -668,6 +680,8 @@ impl NativeEngine {
             artifacts: cfg.artifacts.clone(),
             resources: request.resources.clone(),
             supervisor: None,
+            supervisor_cgroup_identity: None,
+            vm_cgroup_identity: None,
             supervisor_artifact: cfg.supervisor.clone(),
             original_cgroup: supervisor::original_cgroup()?,
             process: None,
@@ -680,7 +694,7 @@ impl NativeEngine {
         };
         atomic_json(&path, &record)?;
         let launch = (|| -> Result<_> {
-            self.prepare_supervisor_group(&record)?;
+            self.prepare_supervisor_group(&mut record)?;
             self.spawn_supervisor(&record)
         })();
         drop(admission);
@@ -904,6 +918,12 @@ impl NativeEngine {
                     .cfg
                     .paths(record.owner.generation)?
                     .supervisor_cgroup;
+                let _group = super::cgroup::recorded(
+                    &group,
+                    record.supervisor_cgroup_identity.as_ref(),
+                    &record.owner,
+                )?
+                .ok_or_else(|| invalid("supervisor cgroup missing"))?;
                 let _membership = super::reaper::group_child(identity.pid, Some(&group), false)?
                     .ok_or_else(|| invalid("owned supervisor generation group is absent"))?;
                 let result = unsafe {
@@ -1330,6 +1350,8 @@ mod recovery_tests {
             artifacts: cfg.artifacts.clone(),
             resources,
             supervisor: None,
+            supervisor_cgroup_identity: None,
+            vm_cgroup_identity: None,
             supervisor_artifact: cfg.supervisor.clone(),
             original_cgroup: supervisor::original_cgroup().unwrap(),
             process: None,

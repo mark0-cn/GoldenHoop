@@ -21,6 +21,9 @@ use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncReadExt, process::Child, task::JoinHandle};
 use uuid::Uuid;
 
+#[cfg(test)]
+mod cgroup_tests;
+
 use crate::{
     agent::AgentClient,
     api::{ApiClient, PeerIdentity},
@@ -167,7 +170,7 @@ pub(crate) struct Machine {
     pub(crate) jail: PathBuf,
     cgroup: PathBuf,
     owned_root: bool,
-    owned_cgroup: bool,
+    cgroup_handle: Option<crate::lifecycle::cgroup::Group>,
     launcher: Option<Child>,
     launcher_pid: Option<u32>,
     pidfd: Option<OwnedFd>,
@@ -195,7 +198,7 @@ impl Machine {
             root,
             cgroup: Path::new("/sys/fs/cgroup").join(name),
             owned_root: false,
-            owned_cgroup: false,
+            cgroup_handle: None,
             launcher: None,
             launcher_pid: None,
             pidfd: None,
@@ -262,14 +265,11 @@ impl Machine {
             machine.owned_root = true;
         }
         if machine.cgroup.try_exists()? {
-            if machine.record().owner.host_boot_id != crate::lifecycle::boot_id()? {
-                return Err(invalid("stale host boot cannot authorize cgroup collection").into());
-            }
-            let metadata = std::fs::symlink_metadata(&machine.cgroup)?;
-            if !metadata.is_dir() || metadata.uid() != 0 || metadata.mode() & 0o022 != 0 {
-                return Err(invalid("recovered cgroup ownership mismatch").into());
-            }
-            machine.owned_cgroup = true;
+            machine.cgroup_handle = crate::lifecycle::cgroup::recorded(
+                &machine.cgroup,
+                machine.record().vm_cgroup_identity.as_ref(),
+                &machine.record().owner,
+            )?;
         }
         let pid = if let Some(process) = &machine.record().process {
             Some(process.pid)
@@ -305,10 +305,8 @@ impl Machine {
                 machine.process = Some(observed);
                 machine.pidfd = Some(descriptor);
                 machine.candidate_pid = Some(pid);
-            } else if machine.owned_cgroup
-                && !std::fs::read_to_string(machine.cgroup.join("cgroup.events"))?
-                    .lines()
-                    .any(|line| line == "populated 0")
+            } else if let Some(group) = &machine.cgroup_handle
+                && !group.empty()?
             {
                 return Err(invalid("missing recorded VMM with populated cgroup").into());
             }
@@ -413,8 +411,17 @@ impl Machine {
             return Err(io::Error::last_os_error().into());
         }
         std::fs::create_dir(&self.cgroup)?;
-        self.owned_cgroup = true;
-        let controllers = std::fs::read_to_string(self.cgroup.join("cgroup.controllers"))?;
+        self.cgroup_handle = Some(crate::lifecycle::cgroup::Group::capture(&self.cgroup)?);
+        if let Some((_, record)) = &mut self.persistent {
+            record.vm_cgroup_identity = self.cgroup_handle.as_ref().map(|group| group.identity());
+            // Acknowledge this object before limits, membership or VMM launch.
+            self.journal(input, "preparing")?;
+        }
+        let group = self
+            .cgroup_handle
+            .as_ref()
+            .ok_or_else(|| invalid("VM group unacknowledged"))?;
+        let controllers = group.read("cgroup.controllers")?;
         for required in ["cpu", "memory", "pids"] {
             if !controllers
                 .split_whitespace()
@@ -439,8 +446,8 @@ impl Machine {
             ("memory.swap.max", "0".into()),
             ("pids.max", "64".into()),
         ] {
-            std::fs::write(self.cgroup.join(file), &value)?;
-            if std::fs::read_to_string(self.cgroup.join(file))?.trim() != value {
+            group.write(file, value.as_bytes())?;
+            if group.read(file)?.trim() != value {
                 return Err(invalid("VMM resource limit readback mismatch").into());
             }
         }
@@ -450,10 +457,11 @@ impl Machine {
 
     async fn launch(&mut self, input: &BootInput) -> Result<ApiClient> {
         self.check_expiry()?;
-        let tasks = OpenOptions::new()
-            .write(true)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-            .open(self.cgroup.join("cgroup.procs"))?;
+        let tasks = self
+            .cgroup_handle
+            .as_ref()
+            .ok_or_else(|| invalid("VM group unacknowledged"))?
+            .file("cgroup.procs", true)?;
         let tasks_fd = tasks.as_raw_fd();
         let mut command = tokio::process::Command::new(self.root.join("bin/jailer"));
         command
@@ -912,6 +920,10 @@ impl Machine {
     }
 
     pub(crate) async fn collect(&mut self, report: &mut GuestReport) -> Result<()> {
+        // Refuse a replaced/unacknowledged group before any direct PID signal.
+        if let Some(group) = &self.cgroup_handle {
+            group.verify()?;
+        }
         let mut pids = BTreeSet::new();
         // Capture descriptor-bound owned identities before termination. A
         // private live bootstrap owns only this generation's host children;
@@ -922,9 +934,8 @@ impl Machine {
         if let Some(process) = &self.process {
             pids.insert(process.pid as i32);
         }
-        if self.owned_cgroup {
-            for pid in std::fs::read_to_string(self.cgroup.join("cgroup.procs"))?.split_whitespace()
-            {
+        if let Some(group) = &self.cgroup_handle {
+            for pid in group.read("cgroup.procs")?.split_whitespace() {
                 pids.insert(pid.parse::<i32>()?);
             }
         }
@@ -943,7 +954,7 @@ impl Machine {
             } else {
                 crate::lifecycle::reaper::group_child(
                     pid as u32,
-                    self.owned_cgroup.then_some(self.cgroup.as_path()),
+                    self.cgroup_handle.as_ref().map(|_| self.cgroup.as_path()),
                     !self.recovered,
                 )?
             };
@@ -951,8 +962,8 @@ impl Machine {
                 targets.push(target);
             }
         }
-        if self.owned_cgroup {
-            std::fs::write(self.cgroup.join("cgroup.kill"), b"1")?;
+        if let Some(group) = &self.cgroup_handle {
+            group.write("cgroup.kill", b"1")?;
         }
         if let Some(fd) = &self.pidfd {
             let result = unsafe {
@@ -983,10 +994,11 @@ impl Machine {
                 }
             }
             targets = pending;
-            let empty = !self.owned_cgroup
-                || std::fs::read_to_string(self.cgroup.join("cgroup.events"))?
-                    .lines()
-                    .any(|line| line == "populated 0");
+            let empty = if let Some(group) = &self.cgroup_handle {
+                group.empty()?
+            } else {
+                true
+            };
             if targets.is_empty() && empty && (self.pidfd.is_none() || self.exited()?) {
                 break;
             }
@@ -1002,9 +1014,9 @@ impl Machine {
             report.console = String::from_utf8_lossy(&bytes).into_owned();
             report.console_truncated = truncated;
         }
-        if self.owned_cgroup {
-            std::fs::remove_dir(&self.cgroup)?;
-            self.owned_cgroup = false;
+        if let Some(group) = &self.cgroup_handle {
+            group.remove_empty()?;
+            self.cgroup_handle = None;
         }
         if self.owned_root {
             let marker = std::fs::read(self.root.join("intent.json"));
@@ -1048,8 +1060,10 @@ impl Drop for Machine {
     fn drop(&mut self) {
         // Best effort fencing is not evidence of collection. Explicit collect
         // above alone may set CleanupState::Complete.
-        if self.owned_cgroup && (self.persistent.is_none() || !self.recovered) {
-            let _ = std::fs::write(self.cgroup.join("cgroup.kill"), b"1");
+        if (self.persistent.is_none() || !self.recovered)
+            && let Some(group) = &self.cgroup_handle
+        {
+            let _ = group.write("cgroup.kill", b"1");
         }
     }
 }

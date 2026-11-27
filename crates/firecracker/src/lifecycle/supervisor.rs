@@ -57,19 +57,12 @@ pub(crate) fn cgroup_empty(path: &Path) -> Result<bool> {
 
 pub(crate) fn collect_supervisor_cgroup(cfg: &DriverConfig, record: &VmJournal) -> Result<()> {
     let group = cfg.paths(record.owner.generation)?.supervisor_cgroup;
-    if group.try_exists()? {
-        let metadata = std::fs::symlink_metadata(&group)?;
-        if record.owner.host_boot_id != boot_id()?
-            || !metadata.is_dir()
-            || metadata.uid() != 0
-            || metadata.mode() & 0o022 != 0
-            || !cgroup_empty(&group)?
-        {
-            return Err(
-                invalid("supervisor cgroup collection not authorized or unconfirmed").into(),
-            );
-        }
-        std::fs::remove_dir(&group)?;
+    if let Some(group) = super::cgroup::recorded(
+        &group,
+        record.supervisor_cgroup_identity.as_ref(),
+        &record.owner,
+    )? {
+        group.remove_empty()?;
     }
     if group.try_exists()? {
         return Err(invalid("supervisor cgroup still exists").into());
@@ -192,6 +185,12 @@ pub async fn run_supervisor(config: PathBuf, sandbox: Uuid, generation: Uuid) ->
         return Err(invalid("native supervisor executable mismatch").into());
     }
     let paths = cfg.paths(generation)?;
+    let _group = super::cgroup::recorded(
+        &paths.supervisor_cgroup,
+        record.supervisor_cgroup_identity.as_ref(),
+        &record.owner,
+    )?
+    .ok_or_else(|| invalid("supervisor cgroup receipt is absent"))?;
     let cg = std::fs::read_to_string("/proc/self/cgroup")?;
     if !cg.lines().any(|line| {
         line == format!(

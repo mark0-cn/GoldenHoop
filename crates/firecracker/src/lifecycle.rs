@@ -1,5 +1,6 @@
 //! Durable native ownership. A separate Rust supervisor owns each VMM so worker
 //! death neither breaks its console pipes nor suspends absolute expiry.
+pub(crate) mod cgroup;
 mod driver;
 mod manager;
 mod metadata;
@@ -167,6 +168,10 @@ pub(crate) struct VmJournal {
     pub artifacts: BootInput,
     pub resources: ResourceLimits,
     pub supervisor: Option<ProcessIdentity>,
+    #[serde(default)]
+    pub supervisor_cgroup_identity: Option<recovery::PathIdentity>,
+    #[serde(default)]
+    pub vm_cgroup_identity: Option<recovery::PathIdentity>,
     pub supervisor_artifact: Artifact,
     pub original_cgroup: PathBuf,
     pub process: Option<ProcessObservation>,

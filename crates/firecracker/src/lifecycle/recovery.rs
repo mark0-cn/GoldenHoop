@@ -6,11 +6,14 @@ use std::os::unix::fs::FileTypeExt;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct PathIdentity {
+pub(crate) struct PathIdentity {
     device: u64,
     inode: u64,
 }
 impl PathIdentity {
+    pub(crate) fn matches(&self, value: &std::fs::Metadata) -> bool {
+        self.device == value.dev() && self.inode == value.ino()
+    }
     fn metadata(path: &Path, socket: bool) -> Result<std::fs::Metadata> {
         let value = std::fs::symlink_metadata(path)?;
         if value.uid() != 0
@@ -26,14 +29,14 @@ impl PathIdentity {
         }
         Ok(value)
     }
-    pub(super) fn capture(path: &Path, socket: bool) -> Result<Self> {
+    pub(crate) fn capture(path: &Path, socket: bool) -> Result<Self> {
         let value = Self::metadata(path, socket)?;
         Ok(Self {
             device: value.dev(),
             inode: value.ino(),
         })
     }
-    pub(super) fn verify(path: &Path, recorded: Option<&Self>, socket: bool) -> Result<bool> {
+    pub(crate) fn verify(path: &Path, recorded: Option<&Self>, socket: bool) -> Result<bool> {
         match std::fs::symlink_metadata(path) {
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
             Err(error) => return Err(error.into()),

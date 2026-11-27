@@ -1,0 +1,70 @@
+name: Firecracker acknowledged cgroup receipts
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  CARGO_BUILD_JOBS: 2
+  CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS: 'true'
+  CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS: 'true'
+  M4_IMAGE: goldenhoop-m4-cgroup-rootfs:${{ github.run_id }}-${{ github.run_attempt }}
+  M4_OWNER: ${{ github.run_id }}-${{ github.run_attempt }}
+  M4_CGROUP_BUILD: .goldenhoop-cgroup-test-${{ github.run_id }}-${{ github.run_attempt }}.json
+jobs:
+  cgroup-receipts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install httpx==0.28.1
+      - name: Require syscall observation and bounded delay injection
+        run: |
+          if ! command -v strace; then
+            sudo -n apt-get update
+            sudo -n apt-get install -y --no-install-recommends strace
+          fi
+          strace --version
+      - name: Build the optimized checked Rust API worker CLI manager and supervisor
+        run: cargo build --locked --release -p goldenhoop-control -p goldenhoop-cli -p goldenhoop-firecracker
+      - name: Build the exact explicitly ignored owned cgroup contract
+        run: python -B tests/firecracker_cgroup_contract.py --build-output "$PWD/$M4_CGROUP_BUILD" --owner "$M4_OWNER"
+      - name: Build the actual Rust guest components
+        # Workspace checks stay in CI/stage. This gate requires actual KVM;
+        # containers or an emulator cannot supply recovery acceptance.
+        run: docker build --build-arg VALIDATE_WORKSPACE=0 --target microvm-rootfs --label dev.goldenhoop.task=m4-guest --label dev.goldenhoop.run="$M4_OWNER" --tag "$M4_IMAGE" --file images/agent/Dockerfile .
+      - name: Require actual owned cgroup fencing plus retained metadata and KVM recovery
+        run: sudo -n env PYTHONPATH="$PWD/sdk/python/src" "$pythonLocation/bin/python3" -B tests/firecracker_guest_contract.py --driver-contract --public-contract --manager-recovery-contract --metadata-recovery-contract --cgroup-test-manifest "$PWD/$M4_CGROUP_BUILD" --source-commit "$GITHUB_SHA" --binary "$PWD/target/release/goldenhoop-firecracker" --control "$PWD/target/release/goldenhoopd" --cli "$PWD/target/release/goldenhoop" --image "$M4_IMAGE" --owner "$M4_OWNER" --output "$PWD/evidence/firecracker-cgroup-receipts.json"
+      - name: Collect the exact owned test image and positively observe absence
+        if: always()
+        shell: python
+        run: |
+          import json, os, subprocess
+          image = os.environ['M4_IMAGE']
+          def listed():
+              return subprocess.check_output(['docker','image','ls','--no-trunc','--filter','reference='+image,'--format','{{.ID}}']).strip()
+          if listed():
+              value=json.loads(subprocess.check_output(['docker','image','inspect',image]))[0]
+              assert value['Config']['Labels']['dev.goldenhoop.run']==os.environ['M4_OWNER']
+              assert value['Config']['Labels']['dev.goldenhoop.task']=='m4-guest'
+              subprocess.run(['docker','image','rm',image],check=True)
+          assert not listed()
+          from pathlib import Path
+          manifest=Path(os.environ['M4_CGROUP_BUILD'])
+          if manifest.exists():
+              value=json.loads(manifest.read_bytes())
+              assert value['format']==1 and value['owner']==os.environ['M4_OWNER']
+              manifest.unlink()
+          assert not manifest.exists()
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: firecracker-cgroup-receipts
+          path: evidence/*.json
+          if-no-files-found: error

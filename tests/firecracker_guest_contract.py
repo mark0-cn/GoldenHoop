@@ -63,6 +63,7 @@ def main():
     parser.add_argument('--public-contract', action='store_true')
     parser.add_argument('--manager-recovery-contract', action='store_true')
     parser.add_argument('--metadata-recovery-contract', action='store_true')
+    parser.add_argument('--cgroup-test-manifest', type=Path)
     parser.add_argument('--control', type=Path)
     parser.add_argument('--cli', type=Path)
     args = parser.parse_args()
@@ -72,6 +73,8 @@ def main():
         parser.error('manager recovery requires the actual public contract')
     if args.metadata_recovery_contract and not args.manager_recovery_contract:
         parser.error('metadata recovery requires the retained manager/public/driver contract')
+    if args.cgroup_test_manifest and not args.metadata_recovery_contract:
+        parser.error('cgroup receipt acceptance requires the retained metadata/KVM contract')
     assert re.fullmatch(r'[0-9a-f]{40}', args.source_commit)
     assert re.fullmatch(r'[0-9]+-[0-9]+', args.owner)
     root = Path(__file__).resolve().parent.parent
@@ -92,6 +95,8 @@ def main():
         sources += [root/'tests/firecracker_manager_recovery_contract.py',root/'.github/workflows/firecracker-manager-recovery.yml']
     if args.metadata_recovery_contract:
         sources += [root/'tests/firecracker_metadata_contract.py',root/'.github/workflows/firecracker-metadata-recovery.yml']
+    if args.cgroup_test_manifest:
+        sources += [root/'tests/firecracker_cgroup_contract.py',root/'.github/workflows/firecracker-cgroup-receipts.yml']
     sources += sorted((root / 'images/microvm').glob('*.json'))
     report = {
         'suite': 'actual jailed Firecracker guest bootstrap',
@@ -205,6 +210,14 @@ def main():
         assert probe['guest_started'] and len(probe['checks']) >= 5
         report['cases'] = ['corrupt_kernel_digest_refused_before_launch_with_confirmed_collection'] + probe['checks']
         report['result'] = 'passed'
+        if args.cgroup_test_manifest:
+            from firecracker_cgroup_contract import suite as cgroup_suite
+            guest_collected = False
+            cgroups = cgroup_suite(args.cgroup_test_manifest,fixture,args.owner)
+            report['cgroups'] = cgroups
+            guest_collected = cgroups['cleanup']=='complete'
+            report['cases'] += ['cgroup:'+case for case in cgroups['cases']]
+            assert cgroups['result']=='passed' and guest_collected,cgroups.get('error','cgroup receipt collection unconfirmed')
         if args.metadata_recovery_contract:
             from firecracker_metadata_contract import suite as metadata_suite
             guest_collected = False
@@ -243,6 +256,9 @@ def main():
                 report['scope'] = 'actual basic native public lifecycle and same-boot manager crash recovery; earlier unacknowledged allocation, snapshots/templates and full M4 remain unaccepted'
         if args.metadata_recovery_contract:
             report['scope'] = 'actual native/public/manager baseline and inode-bound interrupted metadata publication; earlier allocation effects, snapshots/templates and full M4 remain unaccepted'
+
+        if args.cgroup_test_manifest:
+            report['scope'] = 'actual cgroup inode receipt/descriptor/replacement/Drop fencing and retained 37-group metadata/KVM baseline; earlier VM-root/unacknowledged allocation effects, snapshots/templates and full M4 remain unaccepted'
 
     except Exception as error:
         report['result'] = 'failed'

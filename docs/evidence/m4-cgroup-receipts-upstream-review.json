@@ -1,0 +1,51 @@
+{
+  "suite": "native generation cgroup upstream applicability review",
+  "result": "source_review",
+  "primary_sources": [
+    {
+      "project": "OpenContainers cgroups",
+      "commit": "866dd224e3dce8f7afaff77a4ddd38087d520c33",
+      "url": "https://github.com/opencontainers/cgroups/blob/866dd224e3dce8f7afaff77a4ddd38087d520c33/file.go",
+      "finding": "cgroup-v2 opens are relative to a pinned cgroup root with BENEATH/NO_MAGICLINKS/NO_XDEV/NO_SYMLINKS resolution; filesystem checks reject ordinary files in its alternate path",
+      "application": "pin each acknowledged generation group, require actual cgroup-v2 descriptors and constrained openat2 for control members; unsupported operations refuse without a pathname fallback"
+    },
+    {
+      "project": "Linux man-pages",
+      "url": "https://man7.org/linux/man-pages/man2/openat2.2.html",
+      "finding": "resolution flags constrain descriptor-relative traversal and can forbid links and mount crossings",
+      "application": "require these fences for each static cgroup control member"
+    },
+    {
+      "project": "Linux kernel",
+      "url": "https://docs.kernel.org/admin-guide/cgroup-v2.html",
+      "finding": "cgroup.kill SIGKILLs the cgroup tree; deleted groups can remain dying and cannot revive",
+      "application": "acknowledge actual inode and boot before limits/join/spawn or kill; actual child reaping and final path absence are additional requirements"
+    }
+  ],
+  "implemented": [
+    "serde-default actual supervisor/VM cgroup receipts persisted before subsequent effects",
+    "same-boot and exact inode recovery; unrecorded or replaced objects preserved",
+    "descriptor-relative budget/procs/events/kill operations on actual cgroup-v2 objects",
+    "VM collection preflight before direct PID signals and identical Machine Drop fence",
+    "scoped empty supervisor-group collection",
+    "two actual local descriptor/refusal checks plus an explicitly ignored dedicated owned-cgroup mutation/Drop test"
+  ],
+  "not_accepted": [
+    "actual 41-group gate until its immutable candidate passes",
+    "VM-root inode ownership and earlier unacknowledged allocation effects",
+    "host/configuration/binary/namespace migration",
+    "public prepared-image placement, snapshots/restore/templates/full M4 and M5-M6"
+  ],
+  "local_source_files_sha256": {
+    "crates/firecracker/src/lifecycle.rs": "e93a1ce40ae8140ef967d431f26c1c6d22c498cbd1ea84fb4bddebe2197a8003",
+    "crates/firecracker/src/lifecycle/cgroup.rs": "f2bb8a4abe0be41427b3fed1cb2616501d04d8a37c48b865814d54cbf9833d91",
+    "crates/firecracker/src/lifecycle/driver.rs": "364a17009854d8d4164b6b1bb36cc45a7bf387d5304cf5af212b61aad041f59f",
+    "crates/firecracker/src/lifecycle/recovery.rs": "1ff40694af9c328a77edc4bdb38cc50860a2eee5dcbb03c126dcbf435ff203d4",
+    "crates/firecracker/src/lifecycle/supervisor.rs": "3f87c96c24479a5b0ec743f973e0f04f9cdf90e00e72d244e7dc64d6f65fad44",
+    "crates/firecracker/src/machine.rs": "356add2369b1cbf98250d8d31991ecf942a479f9710ecb507a4a578a6e21407c",
+    "crates/firecracker/src/machine/cgroup_tests.rs": "4a602fb3487153d8a0cb7c394c1d52796fca98f8ff0fe7d9bd6ebab1573891e9",
+    "tests/firecracker_cgroup_contract.py": "03cc51bf8ed638e4f85c761ece725458005c79b065e367a55bbbf88b90d1df6e",
+    "tests/firecracker_guest_contract.py": "693ddded5e290f6fb316c9b055c3d42ceae361be1b464f568364fe7ce73463ef",
+    ".github/workflows/firecracker-cgroup-receipts.yml": "c9c0332a6fd2c74200a365fa2a2ffc4bb399bd290ac73f9e7be0dd1feec7dd97"
+  }
+}
