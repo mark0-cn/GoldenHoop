@@ -24,6 +24,8 @@ use uuid::Uuid;
 #[cfg(test)]
 mod cgroup_tests;
 mod checkpoint;
+mod restore;
+pub use restore::{RestoreProbeConfig, RestoreProbeReport, validate_restore};
 #[cfg(test)]
 mod root_tests;
 pub use checkpoint::CheckpointCaptureReport;
@@ -192,7 +194,9 @@ pub(crate) struct Machine {
 
 impl Machine {
     fn new() -> Self {
-        let generation = Uuid::new_v4();
+        Self::for_generation(Uuid::new_v4())
+    }
+    fn for_generation(generation: Uuid) -> Self {
         let name = format!("ghv-{}", &generation.simple().to_string()[..8]);
         // Guest disks belong on persistent host storage, not the small /run tmpfs.
         let root = Path::new("/var/lib").join(&name);
@@ -472,6 +476,14 @@ impl Machine {
     }
 
     fn prepare(&mut self, input: &BootInput) -> Result<()> {
+        self.prepare_with_disk(input, None)
+    }
+    fn prepare_with_disk(&mut self, input: &BootInput, restored_disk: Option<File>) -> Result<()> {
+        if restored_disk.is_some() && (self.persistent.is_some() || self.rootfs_input.is_some()) {
+            return Err(
+                invalid("restore disk requires its separate private allocation contract").into(),
+            );
+        }
         self.check_expiry()?;
         let selected = self
             .persistent
@@ -517,7 +529,7 @@ impl Machine {
         )?;
         copy_artifact(&input.jailer, &self.root.join("bin/jailer"), 0o500)?;
         copy_artifact(&input.kernel, &self.jail.join("kernel"), 0o444)?;
-        if let Some(source) = self.rootfs_input.take() {
+        if let Some(source) = self.rootfs_input.take().or(restored_disk) {
             crate::fileio::copy(
                 source,
                 &self.jail.join("rootfs.ext4"),

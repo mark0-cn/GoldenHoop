@@ -7,7 +7,7 @@ import subprocess
 import uuid
 
 
-def suite(binary, boot, fixture):
+def suite(binary, boot, fixture, continuation=False):
     report = {'result': 'failed', 'cleanup': 'unknown', 'cases': [], 'observations': {},
               'scope': 'actual private full capture and retained content; no target load or public snapshot capability'}
     configs, children = [], []
@@ -79,6 +79,15 @@ def suite(binary, boot, fixture):
         report['observations']['independent_ram_cookie_and_drive_payload'] = {'ram_cookie_found': True,
             'disk_payload_base64': capture['disk_marker_base64'], 'source_already_collected': True}
         report['cases'].append('actual_guest_RAM_cookie_and_synced_copied_drive_nonce_survive_source_VMM_root_and_cgroup_collection')
+
+        if continuation:
+            from firecracker_continuation_contract import exercise
+            restored = exercise(binary,boot,fixture,cfg,reference,capture,captured['generation'])
+            report['observations']['continuation']=restored
+            if restored['cleanup']!='complete':
+                sources_collected=False
+            assert restored['result']=='passed' and restored['cleanup']=='complete',restored.get('error')
+            report['cases']+=['continuation:'+case for case in restored['cases']]
 
         quota_path, _ = config('checkpoint-quota', 256*1024**2)
         refused = probe(quota_path, False); report['observations']['quota_refusal'] = refused

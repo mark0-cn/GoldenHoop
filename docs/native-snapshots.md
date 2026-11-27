@@ -1,8 +1,9 @@
 # Native snapshots and restore: remaining implementation contract
 
-This is the remaining M4 implementation contract. Private native capture and
-storage are under separate validation. Public native snapshot/restore/template
-capabilities are not implemented or advertised.
+This is the remaining M4 implementation contract. Private owned-Machine capture
+and storage are accepted at47ac2cc (actual60 groups/377 inputs/Complete).
+Native-manager capture and private fresh-VMM continuation have separate gates.
+Public native snapshot/restore/template capabilities are not implemented or advertised.
 The complete M0-M6 objective in [roadmap.md](roadmap.md) is unchanged.
 
 ## Upstream constraints
@@ -29,8 +30,8 @@ separate implementation and acceptance requirement.
 | Guest quiescence | Protocol2 accepted at376328c and protocol3 retained at6c32d1a; separate PID1/control from agent/workloads, fence admission and drain accepted effects | Original barrier/root52/365 and subsequent authority55/371 both pass with Complete collection |
 | Guest authority protocol | Protocol3 generation-bound native frames and frozen transition accepted at6c32d1a | Actual same-VMM55/371/Complete; not host restore/source-termination proof |
 | Independent content admission | Private pinned manifest and descriptor-based anonymous state/memory/disk copies; final335-source Windows290/Linux-root390 and musl21/static4 checks pass | Actual independent source deletion, exact bytes and read-only output; corrupt/truncated/untrusted inputs leave no outputs; guest provenance remains synthetic |
-| Private checkpoint | Owned Machine capture/local store; local339-source Windows290/Linux-root394 and musl21/static4 checks pass | Actual Paused full capture, independent RAM/drive checks after source collection, quota/producer/inode fences and exact collection still require their separate KVM gate |
-| Private single-use memory restore | Claim once; load paused into a new jailed VMM; transition guest authority before workload RPC admission | Real retained memory/file state, new identity, old authority refusal, one target after retries/crashes |
+| Private checkpoint | Owned Machine capture/local store accepted at47ac2cc; manager-owned capture added at9f260a6 and policy-denial correction at26d845e | Owned-Machine60/377/Complete accepted; manager runs39/380/Complete and41/380/Unknown both Failed; complete64-group gate remains required |
+| Private single-use memory restore | Private durable single-use claim and fresh jailed paused loader implemented; native persistent manager/supervisor orchestration remains required | Real retained memory/file state, new authority, old scope refusal and exact retry still require the fresh-VMM gate; private store/process tests alone are insufficient |
 | Public integration | Persist operations, idempotency, quota and object references; add REST/CLI/Rust/Python clients and actual capability probe | Public success/failure/recovery and deletion on the supported real profile |
 | Rootfs/volume snapshots and templates | Distinguish fresh boot from memory continuation; bind volume identity and immutable template versions | Kind-specific consistency/isolation, independent instances and template update/deletion behavior |
 | Combined M4 Stage | Freeze the full implementation and execute retained plus new backend gates together | Source-verified reports, actual resource collection and requirement-by-requirement evidence |
@@ -42,8 +43,11 @@ The protocol2 quiesce/status/thaw barrier is accepted at376328c as described in
 to generation and provides a frozen [guest authority transition](native-authority.md);
 its same-VMM55/371/Complete gate is accepted at6c32d1a. Initial identity still comes
 from guest boot arguments; changing a host VMM ID alone cannot change it.
-Host restore coordination, single-use claims and source termination remain
-unimplemented. Old guests refuse requests requiring unsupported semantics.
+The private [single-use continuation](native-continuation.md) implements a claim,
+same-observer source-termination fences and a fresh owned-Machine loader. Its
+actual fresh-target gate remains required. Native persistent manager/supervisor
+coordination and public restoration remain unimplemented. Old guests refuse
+requests requiring unsupported semantics.
 
 PID1 remains outside workload task groups. The implemented private barrier closes
 workload admission, drains accepted RPC effects, freezes the exact owned workload
@@ -79,9 +83,9 @@ The private [content admission/materializer](native-checkpoint-content.md) can
 produce independently verified anonymous copies without depending on a source
 pathname or live producer. That materializer does not implement durable publication,
 shared quota, capture producer fencing or restore claims; anonymous staging is not persistent
-snapshot storage. The next [persistent store and owned capture](native-checkpoint-store.md)
-implementation is under separate validation; its capture workflow and full
-native-manager/public integration remain unaccepted.
+snapshot storage. The [persistent store and owned capture](native-checkpoint-store.md)
+passed its actual60-group gate at47ac2cc. Native-manager integration and private
+continuation have separate local/hardware evidence; public integration remains unaccepted.
 The existing VM-root receipt deliberately binds a host boot and PID namespace;
 it is not a persistent snapshot-reader contract. Separate immutable-object
 identity from the original producer's write/collection fence. A Ready reader

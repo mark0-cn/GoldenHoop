@@ -1,0 +1,59 @@
+{
+  "scope": "Primary-source constraints for the private fresh-VMM continuation; implementation and KVM acceptance remain separate.",
+  "sources": [
+    {
+      "project": "Firecracker",
+      "revision": "eaf83bb718a559d324613d566eaf776b31a62340",
+      "url": "https://github.com/firecracker-microvm/firecracker/blob/eaf83bb718a559d324613d566eaf776b31a62340/docs/snapshotting/snapshot-support.md",
+      "constraints": [
+        "Snapshot state and memory do not include managed drive storage. Original relative resource paths must resolve inside the new jail.",
+        "A successful load with resume_vm=false leaves the target Paused. A failed load terminates its VMM rather than permitting uncertain reuse.",
+        "File-backed memory uses private mappings and stays immutable throughout the restored VM lifetime.",
+        "Existing vsock streams reset; the restored guest listener can accept a new authenticated connection.",
+        "Repeated continuation can duplicate application identifiers and tokens. VMGenID kernel reseeding does not rotate arbitrary userspace state."
+      ],
+      "application": "New unconfigured jailed VMM, independent mutable drive, protected lifetime memory copy, explicit paused observation, fresh control connection and guest authority transfer before thaw. Only one target after original source termination; retries never allocate another writer."
+    },
+    {
+      "project": "firecracker-go-sdk",
+      "revision": "ef254567cf5dfd40e096e6e8a7a32c25937463e0",
+      "urls": [
+        "https://github.com/firecracker-microvm/firecracker-go-sdk/blob/ef254567cf5dfd40e096e6e8a7a32c25937463e0/snapshot.go",
+        "https://github.com/firecracker-microvm/firecracker-go-sdk/blob/ef254567cf5dfd40e096e6e8a7a32c25937463e0/handlers.go",
+        "https://github.com/firecracker-microvm/firecracker-go-sdk/blob/ef254567cf5dfd40e096e6e8a7a32c25937463e0/machine.go#L1186"
+      ],
+      "observed": "A dedicated load handler passes snapshot path, memory backend and explicit ResumeVM intent to LoadSnapshot and propagates failure.",
+      "limit": "The inspected SDK load wrapper does not establish GoldenHoop source termination, single-use claim, persistent manager recovery, quota or guest authority. Those require independent Rust implementation and actual acceptance."
+    },
+    {
+      "project": "OpenSandbox",
+      "revision": "3d1b543f685b047cad8bec04c8bd8e49abec7d07",
+      "sources_sha256": {
+        "docs/architecture/fast-sandbox/firecracker.md": "0eb892d8fcddf2e815935006b3ef40a8b2fffb41cecf85a771d0a9351a94b330",
+        "docs/guides/pause-resume.md": "f2eeb8125e45844e73caeee50a56f80cc0a33ee36482c071fc1326237c1a8d99",
+        "kubernetes/internal/snapshot/contract.go": "31f1e77bdd5aeb98dce7d021c642d0006af48801841bfb5bcf91f207048d4234",
+        "kubernetes/internal/controller/sandboxsnapshot_status.go": "3f5454c5017a9b8c32badc2b2aa518c47f2f566d0fca1e2415f64bea1b62177f",
+        "kubernetes/internal/controller/batchsandbox_pause_resume.go": "bdc652caa14c706b70ce85c92072826ff054776c0ec2f7471f9ba3e7ab0f0367"
+      },
+      "urls": [
+        "https://github.com/alibaba/OpenSandbox/blob/3d1b543f685b047cad8bec04c8bd8e49abec7d07/docs/guides/pause-resume.md",
+        "https://github.com/alibaba/OpenSandbox/blob/3d1b543f685b047cad8bec04c8bd8e49abec7d07/kubernetes/internal/snapshot/contract.go",
+        "https://github.com/alibaba/OpenSandbox/blob/3d1b543f685b047cad8bec04c8bd8e49abec7d07/kubernetes/internal/controller/batchsandbox_pause_resume.go"
+      ],
+      "observed": [
+        "Current Kubernetes guide distinguishes rootfs-only recreation from opt-in QEMU guest-memory restoration and requires observed per-container image digests before rootfs success.",
+        "Snapshot provider selection is explicit; unsupported providers fail. Durable Pending/Committing/Succeed/Failed conditions remain separate from coarse sandbox phases.",
+        "Controller skips repeated pause for an already Paused generation and waits for stale snapshot deletion; old Pod termination may outlast coarse Paused state.",
+        "Firecracker integration documentation requires a probed reflink filesystem for its declared copy path and refuses unsupported setup."
+      ],
+      "application": "Keep snapshot kind/runtime selection explicit, preserve immutable operation identity and physical writer/root absence separately from lifecycle labels, and publish success from actual artifact/runtime observations. These constraints are implemented by the private Rust claim/loader and verified locally; actual continuation remains unaccepted.",
+      "limits": "The inspected rootfs/QEMU controller path does not establish Firecracker RAM restoration or GoldenHoop manager authority. GoldenHoop uses declared verified full copies; it does not inherit an XFS requirement or the old OSEP proposal as evidence of current behavior."
+    }
+  ],
+  "local_failures_preserved": [
+    "m4-continuation-targeted-initial.json: async borrow scope and quota result inference; operation future now ends before cleanup and quota result type is explicit.",
+    "m4-continuation-targeted-corrected.json: strict clippy large enum variant; owned RestoreSession is boxed.",
+    "m4-continuation-targeted-boxed.json: eight preliminary GNU-root storage/process tests pass; synthetic provenance, no fresh-VMM acceptance."
+  ],
+  "remaining": "Full identical-source local checks and actual retained managed64 plus fresh-target continuation gate. Native supervisor/manager and public restore, templates and complete M4-M6 remain required."
+}

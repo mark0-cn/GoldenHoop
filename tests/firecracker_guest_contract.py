@@ -69,6 +69,7 @@ def main():
     parser.add_argument('--guest-authority-contract', action='store_true')
     parser.add_argument('--checkpoint-contract', action='store_true')
     parser.add_argument('--managed-checkpoint-contract', action='store_true')
+    parser.add_argument('--continuation-contract', action='store_true')
     parser.add_argument('--prepared-image-placement', action='store_true')
     parser.add_argument('--images-binary', type=Path)
     parser.add_argument('--builder-image')
@@ -96,6 +97,8 @@ def main():
         parser.error('private capture requires the retained actual authority55 contract')
     if args.managed_checkpoint_contract and not args.checkpoint_contract:
         parser.error('managed capture requires the retained private capture60 contract')
+    if args.continuation_contract and not args.managed_checkpoint_contract:
+        parser.error('private continuation requires the retained managed capture64 contract')
     assert re.fullmatch(r'[0-9a-f]{40}', args.source_commit)
     assert re.fullmatch(r'[0-9]+-[0-9]+', args.owner)
     root = Path(__file__).resolve().parent.parent
@@ -130,6 +133,8 @@ def main():
         sources += [root/'tests/firecracker_checkpoint_contract.py',root/'.github/workflows/firecracker-checkpoint-capture.yml']
     if args.managed_checkpoint_contract:
         sources += [root/'tests/firecracker_managed_checkpoint_contract.py',root/'.github/workflows/firecracker-managed-checkpoint.yml']
+    if args.continuation_contract:
+        sources += [root/'tests/firecracker_continuation_contract.py',root/'.github/workflows/firecracker-continuation.yml']
     sources += sorted((root / 'images/microvm').glob('*.json'))
     report = {
         'suite': 'actual jailed Firecracker guest bootstrap',
@@ -330,13 +335,15 @@ def main():
         if args.checkpoint_contract:
             from firecracker_checkpoint_contract import suite as checkpoint_suite
             guest_collected=False
-            checkpoint=checkpoint_suite(binary,boot,fixture)
+            checkpoint=checkpoint_suite(binary,boot,fixture,continuation=args.continuation_contract)
             report['checkpoint_capture']=checkpoint;guest_collected=checkpoint['cleanup']=='complete'
             report['cases']+=['capture:'+case for case in checkpoint['cases']]
             assert checkpoint['result']=='passed' and guest_collected,checkpoint.get('error','capture collection unconfirmed')
             report['scope']='actual private paused full capture and persistent RAM/drive content after source collection plus retained authority55; no fresh target load, host restore claim, public snapshot integration or complete M4-M6 acceptance'
         if args.managed_checkpoint_contract:
             report['scope']='actual manager-owned capture after submitting client disconnect, persisted source hold across manager SIGKILL/reconnect, independent VM operation and retained private capture60; no fresh target load, host restore claim, public snapshot integration or complete M4-M6 acceptance'
+        if args.continuation_contract:
+            report['scope']='actual private source-absent single-use fresh-VMM continuation, frozen authority transfer and explicit thaw with retained execution RAM/disk state plus retained managed capture64; no native-manager/public restore, target crash reconnect, templates or complete M4-M6 acceptance'
 
     except Exception as error:
         report['result'] = 'failed'

@@ -12,6 +12,8 @@ use std::{
     path::{Path, PathBuf},
 };
 mod files;
+pub(crate) mod restore;
+pub(crate) use files::Destination;
 pub(crate) use files::SourceDirectory;
 use files::{Identity, ObjectReceipt, Root, record_name};
 
@@ -275,10 +277,20 @@ struct Record {
     reference: Option<CheckpointReference>,
     objects: Vec<ObjectReceipt>,
     error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    restoration: Option<restore::Restoration>,
 }
 impl Record {
     fn validate(&self, root: &Root) -> Result<()> {
         self.producer.validate()?;
+        if let Some(restoration) = &self.restoration {
+            restoration.validate(self, root)?;
+            if self.phase == Phase::Collected && !restoration.closed() {
+                return Err(invalid("collected capture still has active target references").into());
+            }
+        } else if root.continuation_exists(self.intent.source.capture)? {
+            return Err(invalid("continuation witness exists without its acknowledged claim; replay and collection refused").into());
+        }
         self.intent
             .source_directory
             .validate(self.intent.source.source_generation, &root.path)?;
@@ -318,6 +330,18 @@ impl Record {
             return Err(invalid("checkpoint phase/outcome declaration differs").into());
         }
         Ok(())
+    }
+    fn active_bytes(&self) -> Result<u64> {
+        if self.phase == Phase::Collected {
+            return Ok(0);
+        }
+        self.reserved_bytes
+            .checked_add(
+                self.restoration
+                    .as_ref()
+                    .map_or(0, |r| r.active_bytes(self.intent.disk_bytes)),
+            )
+            .ok_or_else(|| invalid("checkpoint and target reservation overflows").into())
     }
 }
 
@@ -379,7 +403,7 @@ impl CheckpointStore {
         let mut count = 1u32;
         for r in records.iter().filter(|r| r.phase != Phase::Collected) {
             bytes = bytes
-                .checked_add(r.reserved_bytes)
+                .checked_add(r.active_bytes()?)
                 .ok_or_else(|| invalid("checkpoint quota overflows"))?;
             count = count
                 .checked_add(1)
@@ -414,6 +438,7 @@ impl CheckpointStore {
             reference: None,
             objects: Vec::new(),
             error: None,
+            restoration: None,
         };
         record.validate(&self.root)?;
         metadata::initial_json(&self.root.path.join(record_name(id)), &record)?;
@@ -471,7 +496,7 @@ impl CheckpointStore {
         };
         Ok(
             serde_json::json!({"capture":id,"phase":record.phase,"capture_outcome":record.outcome,"error":record.error,
-            "reserved_bytes":if record.phase==Phase::Collected {0}else{record.reserved_bytes},"reference":record.reference,"manifest":record.manifest,"content_verified":verified}),
+            "reserved_bytes":record.active_bytes()?,"reference":record.reference,"manifest":record.manifest,"content_verified":verified,"restoration":record.restoration}),
         )
     }
     /// Immutable source identity can be read while its original producer owns
@@ -498,7 +523,7 @@ impl CheckpointStore {
             .iter()
             .filter(|r| r.phase != Phase::Collected)
             .try_fold(0u64, |n, r| {
-                n.checked_add(r.reserved_bytes)
+                n.checked_add(r.active_bytes()?)
                     .ok_or_else(|| invalid("checkpoint reservation overflow").into())
             })
     }
@@ -510,6 +535,11 @@ impl CheckpointStore {
         let _lease = self
             .root
             .job_lock(id, &record.mutex, &record.intent.digest()?, true)?;
+        if record.restoration.as_ref().is_some_and(|r| !r.closed()) {
+            return Err(
+                invalid("restore target references still retain checkpoint objects").into(),
+            );
+        }
         if record.phase != Phase::Collected {
             // Only an acknowledged settled producer may remain alive. An
             // interrupted capture still requires its original process absent.

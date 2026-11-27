@@ -38,6 +38,11 @@ enum Action {
         #[arg(long)]
         config: std::path::PathBuf,
     },
+    /// Private source-fenced single-use continuation and actual target gate.
+    ProbeRestore {
+        #[arg(long)]
+        config: std::path::PathBuf,
+    },
     /// Private root lifecycle service, launched only from a durable driver intent.
     Supervise {
         #[arg(long)]
@@ -157,6 +162,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
         Action::CheckpointInspect { config } => checkpoint_store(config, false)?,
         Action::CheckpointCollect { config } => checkpoint_store(config, true)?,
+        Action::ProbeRestore { config } => {
+            #[cfg(target_os = "linux")]
+            {
+                let cfg = goldenhoop_firecracker::machine::RestoreProbeConfig::read(&config)?;
+                let report = goldenhoop_firecracker::machine::validate_restore(cfg).await;
+                println!("{}", serde_json::to_string(&report)?);
+                if !matches!(report.result.as_str(), "passed" | "existing") {
+                    std::process::exit(2);
+                }
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                let _ = config;
+                return Err("native restore requires Linux x86_64 root/KVM".into());
+            }
+        }
         Action::ProbeGuest {
             config,
             checkpoint_config,

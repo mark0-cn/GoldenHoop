@@ -21,6 +21,7 @@ pub struct CheckpointCaptureReport {
     pub source_running_after_admission_refusal: Option<bool>,
     pub store_reserved_bytes_after_admission_refusal: Option<u64>,
     pub memory_marker_hex: Option<String>,
+    pub marker_execution: Option<Uuid>,
     pub disk_marker_base64: Option<String>,
     pub memory_marker_found: bool,
     pub verified_after_source_collection: bool,
@@ -35,6 +36,7 @@ impl CheckpointCaptureReport {
             source_running_after_admission_refusal: None,
             store_reserved_bytes_after_admission_refusal: None,
             memory_marker_hex: None,
+            marker_execution: None,
             disk_marker_base64: None,
             memory_marker_found: false,
             verified_after_source_collection: false,
@@ -118,12 +120,12 @@ impl Machine {
             Duration::from_secs(120),
         )?)
     }
-    async fn memory_marker(&self, agent: &AgentClient) -> Result<Vec<u8>> {
+    async fn memory_marker(&self, agent: &AgentClient) -> Result<(Vec<u8>, Uuid)> {
         let id = Uuid::new_v4();
         let mut command = CommandSpec::new([
             "python3",
             "-c",
-            "import os,time;token=os.urandom(32);print(token.hex(),flush=True)\nwhile True: time.sleep(.1)\n",
+            "import os,time;from pathlib import Path;token=os.urandom(32);print(token.hex(),flush=True)\nwhile not Path('/workspace/checkpoint-release').exists(): time.sleep(.1)\nPath('/workspace/checkpoint-resumed').write_text(token.hex())\nprint('restored:'+token.hex(),flush=True)\n",
         ]);
         command.timeout_seconds = 120;
         command.max_output_bytes = 512;
@@ -163,7 +165,7 @@ impl Machine {
                 let value = (0..32)
                     .map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16))
                     .collect::<std::result::Result<Vec<_>, _>>()?;
-                return Ok(value);
+                return Ok((value, id));
             }
             if let AgentResponse::Execution(e) = reply(agent, AgentRequest::Inspect { id }).await?
                 && e.state.is_terminal()
@@ -435,7 +437,7 @@ impl Machine {
             Ok::<_, Box<dyn std::error::Error + Send + Sync>>((marker, disk))
         }
         .await;
-        let (marker, disk) = match markers {
+        let ((marker, execution), disk) = match markers {
             Ok(value) => value,
             Err(error) => {
                 session.fail(&error.to_string())?;
@@ -443,6 +445,7 @@ impl Machine {
             }
         };
         let progress = report.checkpoint.as_mut().expect("capture report");
+        progress.marker_execution = Some(execution);
         progress.memory_marker_hex = Some(marker.iter().map(|b| format!("{b:02x}")).collect());
         progress.disk_marker_base64 = Some(disk);
         let reference = self.capture_reserved(input, cfg, session).await?;

@@ -58,6 +58,105 @@ pub(crate) struct SourceDirectory {
     parent: Identity,
     inode: Identity,
 }
+
+/// A new target is named before allocation. This grants no authority to adopt
+/// or delete an occupied path; its acknowledged directory is recorded later.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Destination {
+    path: PathBuf,
+    parent: Identity,
+    generation: Uuid,
+}
+impl Destination {
+    pub(crate) fn observe(path: &Path, generation: Uuid) -> Result<Self> {
+        let directory = parent(path)?;
+        if generation.is_nil() {
+            return Err(invalid("nil restore destination generation").into());
+        }
+        Ok(Self {
+            path: path.to_owned(),
+            parent: Identity::of(&directory)?,
+            generation,
+        })
+    }
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+    pub(super) fn validate(
+        &self,
+        generation: Uuid,
+        store: &Path,
+        source: &SourceDirectory,
+    ) -> Result<()> {
+        if self.generation != generation
+            || generation.is_nil()
+            || !self.path.is_absolute()
+            || self.path.components().any(|p| {
+                matches!(
+                    p,
+                    std::path::Component::ParentDir | std::path::Component::CurDir
+                )
+            })
+            || self.path.starts_with(store)
+            || store.starts_with(&self.path)
+            || self.path.starts_with(&source.path)
+            || source.path.starts_with(&self.path)
+        {
+            return Err(invalid("restore destination scope overlaps or differs").into());
+        }
+        component(
+            self.path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .ok_or_else(|| invalid("restore destination name absent"))?,
+        )?;
+        Ok(())
+    }
+    pub(super) fn require_absent(&self) -> Result<()> {
+        let directory = parent(&self.path)?;
+        if Identity::of(&directory)? != self.parent {
+            return Err(invalid("restore destination parent changed").into());
+        }
+        let name = component(
+            self.path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .ok_or_else(|| invalid("restore target name absent"))?,
+        )?;
+        let mut stat: libc::stat = unsafe { std::mem::zeroed() };
+        if unsafe {
+            libc::fstatat(
+                directory.as_raw_fd(),
+                name.as_ptr(),
+                &mut stat,
+                libc::AT_SYMLINK_NOFOLLOW,
+            )
+        } == 0
+        {
+            return Err(invalid("restore target still exists; reservation retained").into());
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::NotFound {
+            return Err(error.into());
+        }
+        Ok(())
+    }
+    pub(super) fn acknowledge(&self) -> Result<SourceDirectory> {
+        let observed = SourceDirectory::observe(&self.path, self.generation)?;
+        self.matches(&observed)?;
+        Ok(observed)
+    }
+    pub(super) fn matches(&self, directory: &SourceDirectory) -> Result<()> {
+        if directory.path != self.path
+            || directory.generation != self.generation
+            || directory.parent != self.parent
+        {
+            return Err(invalid("restore target directory receipt differs").into());
+        }
+        Ok(())
+    }
+}
 impl SourceDirectory {
     pub(crate) fn observe(path: &Path, generation: Uuid) -> Result<Self> {
         let p = parent(path)?;
@@ -150,6 +249,9 @@ pub(super) struct Root {
     pub path: PathBuf,
     directory: File,
     ready: Ready,
+}
+fn continuation_name(id: Uuid) -> String {
+    format!("continuation-{id}.lock")
 }
 fn component(name: &str) -> Result<CString> {
     if name.is_empty()
@@ -285,6 +387,62 @@ pub(super) fn lock_name(id: Uuid) -> String {
 }
 
 impl Root {
+    pub(super) fn continuation_exists(&self, id: Uuid) -> Result<bool> {
+        Ok(child(&self.directory, &continuation_name(id), false)?.is_some())
+    }
+    pub(super) fn new_continuation(
+        &self,
+        id: Uuid,
+        intent_sha256: &str,
+    ) -> Result<(File, Identity)> {
+        if self.continuation_exists(id)? {
+            return Err(invalid(
+                "checkpoint continuation witness already exists; original claim must be reconciled",
+            )
+            .into());
+        }
+        metadata::initial_json(
+            &self.path.join(continuation_name(id)),
+            &LockHeader {
+                format: 1,
+                store: self.nonce(),
+                capture: Some(id),
+                intent_sha256: Some(intent_sha256.into()),
+            },
+        )?;
+        let file = child(&self.directory, &continuation_name(id), true)?
+            .ok_or_else(|| invalid("continuation witness missing after initialization"))?;
+        metadata_file(&file)?;
+        let identity = Identity::of(&file)?;
+        let lease = self.continuation_mutex(id, &identity, intent_sha256)?;
+        fs2::FileExt::try_lock_exclusive(&lease)?;
+        Ok((lease, identity))
+    }
+    pub(super) fn continuation_mutex(
+        &self,
+        id: Uuid,
+        expected: &Identity,
+        intent_sha256: &str,
+    ) -> Result<File> {
+        self.current()?;
+        let file = child(&self.directory, &continuation_name(id), true)?
+            .ok_or_else(|| invalid("original continuation witness missing"))?;
+        metadata_file(&file)?;
+        if Identity::of(&file)? != *expected
+            || self.json::<LockHeader>(&continuation_name(id))?
+                != (LockHeader {
+                    format: 1,
+                    store: self.nonce(),
+                    capture: Some(id),
+                    intent_sha256: Some(intent_sha256.into()),
+                })
+        {
+            return Err(
+                invalid("continuation witness identity or immutable intent differs").into(),
+            );
+        }
+        Ok(file)
+    }
     pub(super) fn duplicate(&self) -> Result<Self> {
         self.current()?;
         Ok(Self {
@@ -511,7 +669,8 @@ impl Root {
     pub fn recover_capture(&self, id: Uuid) -> Result<()> {
         let record = record_name(id);
         let lock = lock_name(id);
-        self.recover_selected(&[&record, &lock])
+        let continuation = continuation_name(id);
+        self.recover_selected(&[&record, &lock, &continuation])
     }
     fn recover_selected(&self, selected: &[&str]) -> Result<()> {
         self.current()?;
@@ -520,10 +679,10 @@ impl Root {
                 let h: LockHeader = serde_json::from_slice(bytes)?;
                 if h.format != 1
                     || h.store != self.nonce()
-                    || name
-                        != h.capture
-                            .map(lock_name)
-                            .unwrap_or_else(|| "quota.lock".into())
+                    || !h
+                        .capture
+                        .map(|id| name == lock_name(id) || name == continuation_name(id))
+                        .unwrap_or(name == "quota.lock")
                     || match h.capture {
                         Some(id) => {
                             id.is_nil() || !h.intent_sha256.as_ref().is_some_and(|s| valid_sha(s))

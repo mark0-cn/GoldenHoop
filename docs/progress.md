@@ -11,8 +11,10 @@ native-manager capture at9f260a6 passes local Windows290/GNU397 and musl21 on340
 inputs, but actual gate46043276070 fails after39 groups/380 inputs with Complete
 collection. Capture succeeds; Resume refusal incorrectly poisons and collects
 the held source. Its correction passes Windows290/GNU398/musl21 on identical340
-inputs, including formatting and strict clippy. The fresh actual managed64 gate
-remains required; local checks do not accept physical source preservation.
+inputs, including formatting and strict clippy. Its actual46051406682 run passes
+the held-source rejection and manager SIGKILL/reconnect groups, then fails at
+source removal after41 total groups/380 inputs with Unknown collection. The
+fresh complete managed64 gate remains required.
 Public snapshot integration, actual restore, templates,
 combined M4 and complete M5-M6 remain active. See the
 [authority acceptance](evidence/m4-guest-authority-acceptance-summary.json) and
@@ -85,7 +87,33 @@ All three reports bind identical340 inputs. The exact owned source export and
 both successful check images are collected with positively observed absence;
 the failed tags are also absent. Useful caches, raw failures and check evidence
 remain. See the [corrective summary](evidence/m4-manager-denial-implementation-summary.json).
-A fresh actual managed64 gate remains required before accepting this source.
+The [follow-up raw archive](evidence/m4-managed-checkpoint-46051406682-archive.json)
+retains the Failed/Unknown46051406682 result at26d845e. All three new managed
+capture/hold/reconnect groups pass. Source removal at
+firecracker_managed_checkpoint_contract.py:101 returns unconfirmed; a later
+physical observation finds that source VMM/supervisor/root/cgroups absent. That
+does not establish complete cleanup of the whole run. The internal error is
+redacted, so the precise exit/collection cause still requires diagnosis. CI at
+the same commit passes both platforms. A fresh complete managed64 gate remains
+required before accepting this source.
+
+The next [private continuation](native-continuation.md) implements a durable
+single-use target claim, same-observer source absence, extra mutable-drive quota
+and referenced-object GC fences. A fresh unconfigured jailed VMM loads paused
+from independent drive/state/memory copies; immutable memory backing, frozen
+protocol3 authority transfer and explicit thaw precede workload admission.
+The private probe requires the original captured execution UUID and retained RAM
+token without a Start replay, old-generation refusal, exact target collection,
+unchanged checkpoint objects and no relaunch after exact retry. Native persistent
+manager/supervisor restoration and public integration remain required. Current
+Windows290/GNU-root400 full checks and musl21 scoped tests/strict clippy/static4
+releases pass on342 identical inputs. All3 owned successful check images are
+collected with observed absence; useful caches and original failures remain in
+the [local summary](evidence/m4-continuation-implementation-summary.json).
+The new actual continuation gate remains required after the separately observed
+managed-source collection failure is resolved. The
+[upstream review](evidence/m4-continuation-upstream-review.json) pins Firecracker,
+its Go SDK and OpenSandbox sources and records their applicability limits.
 
 Implement the complete M0-M6 design in the dedicated mark0-cn/GoldenHoop repository and push staged, verified commits.
 
@@ -98,8 +126,9 @@ pass on identical339 inputs. All3 successful local images and both failed tags
 are observed absent, with useful caches and original failures retained. See the
 [implementation summary](evidence/m4-checkpoint-capture-implementation-summary.json).
 Its real KVM capture workflow is accepted at47ac2cc above. New native-manager
-integration has its own local and hardware gates; public integration, unique host
-restore authority and fresh target load remain unimplemented.
+integration has its own local and hardware gates. The current private continuation
+adds its separate claim/loader and still needs actual target evidence. Native
+persistent manager restoration and public integration remain unimplemented.
 
 The preceding6c32d1a private checkpoint-content increment adds a pinned versioned manifest,
 exact runtime and reserved-byte admission, and independently verified read-only
