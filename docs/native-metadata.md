@@ -204,8 +204,12 @@ recover interrupted installation-lock/marker publication. These are filesystem
 and process checks, not a claim of hardware-backed lifecycle or host power-loss
 durability. The dedicated `firecracker-metadata-recovery.yml` release gate adds
 five syscall cuts in the actual manager plus the retained 32 real KVM groups;
-its acceptance is pending. Earlier unacknowledged allocation effects and the full
-remaining M4-M6 scope are unchanged.
+[run45965632592](https://github.com/mark0-cn/GoldenHoop/actions/runs/45965632592)
+at d45128f passes all 37 with Complete collection. Its [archive](evidence/m4-metadata-recovery-45965632592-archive.json)
+verifies 346 inputs. Lock/marker recovery retains the original pending inode;
+configuration/control recovery reports the completed target, followed by normal
+control drainage. Earlier failed reports remain unchanged. Earlier unacknowledged
+allocation effects and the full remaining M4-M6 scope are unchanged.
 
 The [validation summary](evidence/m4-metadata-recovery-acceptance-summary.json)
 binds Windows281/Linux-root351 full checks to 318 inputs each, plus the targeted
