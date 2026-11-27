@@ -1,5 +1,19 @@
 # Progress
 
+The independent [writer-ack cut46066555955](https://github.com/mark0-cn/GoldenHoop/actions/runs/46066555955)
+passes9 groups/90 verified inputs at2f3a8a5 with Complete collection. Before
+SIGKILL, UID10000 VMM19898/start76962 is actually running in the original owned
+cgroup while both the native journal and store lack its writer receipt and no
+pending writer acknowledgement exists. The native collector reaps that VMM,
+collects the original root and both groups, then closes the original claim as
+Unconfirmed with the original typed receipt; no Activated outcome or relaunch is
+manufactured. Exact target quota/object GC reaches zero. The [cut acceptance](evidence/m4-restore-cut-acceptance-summary.json)
+preserves raw SHA256 `67cbda7e8c6764fd3a9cf717a456b41deab5f3a81d9fb957e4d7cbc96ca81b87`.
+Fixture/export carrier and final owned image collection pass. CI46066467084
+passes. Together with the separate12-group native restore acceptance below,
+this closes the private manager restoration and missing-writer collection gaps;
+public integration, templates and combined M4-M6 remain active.
+
 The [targeted native restoration gate46065591115](https://github.com/mark0-cn/GoldenHoop/actions/runs/46065591115)
 passes12 groups/90 verified runtime inputs at0caa8a7 with Complete collection.
 Its6 new native groups prove supervisor-owned restore after client disconnect,
@@ -9,8 +23,8 @@ actual restored-supervisor SIGKILL, and exact retry after object GC. CI460655668
 passes. The [acceptance](evidence/m4-managed-restore-acceptance-summary.json)
 preserves raw SHA256 `12025b9962ebbe9e748df8329cfa6fdbb79a599cb7a3634dc04bee55f110d11a`.
 Fixture/export carrier absence and exact owned image collection pass. The
-independent pre-writer-ack cut46066555955 is in progress at2f3a8a5; it remains
-unaccepted. Public snapshot/session integration, templates and full M4-M6 remain
+independent pre-writer-ack cut46066555955 passes9/90/Complete as above.
+Public snapshot/session integration, templates and full M4-M6 remain
 active; this targeted gate does not repeat the retained full70-group contract.
 
 The [native restoration writer-cut workflow](native-managed-restoration.md)
@@ -18,8 +32,8 @@ adds a separate actual live-VMM/pre-writer-ack SIGKILL contract. Its observer us
 path-filtered strace delay only, exact pidfds and original cgroup identities;
 the Rust collector must prove absence and persist Closed/Unconfirmed rather
 than Activated. Python AST3 and all344 unchanged Rust inputs are verified by the
-[harness report](evidence/m4-restore-cut-harness-validation.json). The actual cut
-remains unverified. Native manager gate46065591115 independently passes as above.
+[harness report](evidence/m4-restore-cut-harness-validation.json). The separate
+actual cut now passes9/90/Complete. Native manager gate46065591115 passes as above.
 Full hardware regression remains a stage gate.
 
 The private [native manager restoration](native-managed-restoration.md) increment

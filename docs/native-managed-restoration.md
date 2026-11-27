@@ -68,5 +68,9 @@ UID10000 Firecracker VMM in its original cgroup with canonical writer=None and n
 pending writer acknowledgement before SIGKILL. Rust must collect that VMM and
 both groups/root, then persist the original typed receipt with Closed/Unconfirmed
 and release only the target quota. The observer never writes native metadata or
-kills the VMM as a substitute for collection. Its syntax/source checks are not
-actual ptrace, cgroup or KVM acceptance; that separate runtime gate is required.
+kills the VMM as a substitute for collection. Its syntax/source checks alone do
+not accept runtime recovery. The separate [actual cut46066555955](evidence/m4-restore-cut-acceptance-summary.json)
+passes9 groups/90 verified inputs with Complete collection at2f3a8a5. Neither
+native journal nor store had acknowledged the observed live VMM; the real native
+collector persists its original root/group receipt with Closed/Unconfirmed and
+zero target reservation, followed by object GC and exact retry without relaunch.

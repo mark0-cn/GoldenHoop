@@ -9,7 +9,9 @@ authenticated live VMM PID/start and full memory length.
 The [private native manager restoration](native-managed-restoration.md) increment
 adds durable target orchestration and typed collection reconciliation. Its
 targeted native6/shared-guest6 gate passes12/90/Complete at0caa8a7. The independent
-actual missing-writer cut remains unaccepted until its own report passes.
+actual missing-writer cut also passes9/90/Complete at2f3a8a5, including a live VMM
+unacknowledged by both native journal and store, original collection proof and
+Closed/Unconfirmed with exact quota/GC and no relaunch.
 Public native snapshot/restore/template capabilities are not implemented or advertised.
 The complete M0-M6 objective in [roadmap.md](roadmap.md) is unchanged.
 
@@ -38,7 +40,7 @@ separate implementation and acceptance requirement.
 | Guest authority protocol | Protocol3 generation-bound native frames and frozen transition accepted at6c32d1a | Actual same-VMM55/371/Complete; not host restore/source-termination proof |
 | Independent content admission | Private pinned manifest and descriptor-based anonymous state/memory/disk copies; final335-source Windows290/Linux-root390 and musl21/static4 checks pass | Actual independent source deletion, exact bytes and read-only output; corrupt/truncated/untrusted inputs leave no outputs; guest provenance remains synthetic |
 | Private checkpoint | Owned Machine capture/local store accepted at47ac2cc; manager-owned capture retained in the accepted c7fbfce and9a77320 gates | All4 manager groups pass within70/384/Complete. Original39/380/Complete and41/380/Unknown failures remain preserved |
-| Private single-use memory restore | Private durable single-use claim and fresh jailed paused loader accepted; native persistent manager/supervisor increment has a separate targeted workflow | Private6 groups within70/384/Complete prove retained RAM execution, new authority, old-scope refusal and exact retry. New manager orchestration and writer-loss hardware cuts remain unverified |
+| Private single-use memory restore | Private durable single-use claim and fresh jailed paused loader accepted; native persistent manager/supervisor and missing-writer collection have separate targeted acceptance | Private6 within70/384/Complete prove retained RAM execution and old-scope refusal. Native6/shared6 passes12/90/Complete; actual writer-loss3/shared6 passes9/90/Complete with original collector proof and Closed/Unconfirmed |
 | Public integration | Persist operations, idempotency, quota and object references; add REST/CLI/Rust/Python clients and actual capability probe | Public success/failure/recovery and deletion on the supported real profile |
 | Rootfs/volume snapshots and templates | Distinguish fresh boot from memory continuation; bind volume identity and immutable template versions | Kind-specific consistency/isolation, independent instances and template update/deletion behavior |
 | Combined M4 Stage | Freeze the full implementation and execute retained plus new backend gates together | Source-verified reports, actual resource collection and requirement-by-requirement evidence |
@@ -53,7 +55,7 @@ from guest boot arguments; changing a host VMM ID alone cannot change it.
 The private [single-use continuation](native-continuation.md) implements a claim,
 same-observer source-termination fences and a fresh owned-Machine loader. Its
 actual fresh-target gate passes70/384/Complete. Native persistent manager/supervisor
-coordination is a separate implementation awaiting its targeted hardware gate;
+coordination passes its separate targeted12/90 and writer-cut9/90 hardware gates;
 public restoration remains unimplemented. Old guests refuse
 requests requiring unsupported semantics.
 
