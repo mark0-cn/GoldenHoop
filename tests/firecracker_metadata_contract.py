@@ -19,6 +19,19 @@ from firecracker_manager_fixture import Manager
 ATTRIBUTE = 'user.goldenhoop.metadata.v1'
 
 
+def wait_original_absent(tracee):
+    proc = Path('/proc')/str(tracee['pid']); until = time.monotonic()+15
+    while proc.exists():
+        try:
+            parts = (proc/'stat').read_text().rsplit(')',1)[1].split()
+        except FileNotFoundError:
+            break
+        if int(parts[19])!=tracee['start_ticks']:
+            break
+        assert time.monotonic()<until, 'original metadata writer collection unconfirmed'
+        time.sleep(.05)
+
+
 def suite(binary, boot, fixture):
     report = {'result':'failed','cleanup':'unknown','cases':[], 'observations':[],
               'scope':'actual release-manager metadata publication/recovery; no VMM or snapshot capability claim'}
@@ -107,8 +120,15 @@ def suite(binary, boot, fixture):
                 pidfd = os.pidfd_open(pid)
                 assert int((proc/'stat').read_text().rsplit(')',1)[1].split()[19])==tracee['start_ticks']
                 signal.pidfd_send_signal(pidfd,signal.SIGKILL)
+                observed['writer_sigkill_sent_via_pidfd']=True
+                # The owned observer can retain its injection timer after the
+                # tracee is killed. End it explicitly; --kill-on-exit additionally
+                # fences tracees in the kernel. Neither exit proves collection.
+                if tracer.poll() is None:
+                    tracer.kill()
                 observed['tracer_exit_status'] = tracer.wait(timeout=15)
-                assert observed['tracer_exit_status']==-signal.SIGKILL and not proc.exists()
+                assert observed['tracer_exit_status']==-signal.SIGKILL
+                wait_original_absent(tracee)
                 assert not (Path('/proc')/str(tracer.pid)).exists()
                 assert pending.exists() and pending.stat().st_ino==receipt['content']['inode']['inode']
                 observed['original_writer_absent']=True
@@ -134,22 +154,21 @@ def suite(binary, boot, fixture):
             finally:
                 if pidfd is not None:
                     os.close(pidfd)
-                if tracer and tracer.poll() is None:
-                    # The fixture owns this Popen; PTRACE_O_EXITKILL fences only
-                    # its tracees if the observer itself fails before the cut.
-                    tracer.kill(); tracer.wait(timeout=15)
-                if tracee:
-                    proc = Path('/proc')/str(tracee['pid']); until=time.monotonic()+15
-                    while proc.exists():
-                        try:
-                            parts=(proc/'stat').read_text().rsplit(')',1)[1].split()
-                        except FileNotFoundError:
-                            break
-                        if int(parts[19])!=tracee['start_ticks']:
-                            break
-                        assert time.monotonic()<until, 'original metadata writer collection unconfirmed'
-                        time.sleep(.05)
+                original_writer_collected = False
                 try:
+                    if tracer and tracer.poll() is None:
+                        # The fixture owns this Popen; PTRACE_O_EXITKILL fences
+                        # its tracees if the observer fails before the cut.
+                        tracer.kill(); tracer.wait(timeout=15)
+                    if tracer:
+                        assert tracee, 'original metadata writer identity unobserved'
+                    if tracee:
+                        wait_original_absent(tracee)
+                    original_writer_collected = True
+                except Exception as error:
+                    cleanup_errors.append(f'{ordinal} writer: {type(error).__name__}: {error}')
+                try:
+                    assert original_writer_collected, 'original metadata writer collection unconfirmed'
                     if manager.process is None and root.exists():
                         manager.maintenance_restart=True; manager.start()
                     error=manager.close()
