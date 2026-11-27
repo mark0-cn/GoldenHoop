@@ -51,7 +51,11 @@ class Contract:
         name = 'goldenhoop-source-fixture:' + self.owner + ('-volume' if volume else '-plain')
         path = self.path(uuid.uuid4().hex + '.tar')
         payload = b'goldenhoop-immutable-source\x00\xff' * 230000
-        dockerfile = b'FROM scratch\nCOPY sentinel /sentinel\nCOPY payload /payload\nENTRYPOINT ["/source-must-never-execute"]\n'
+        # A combined guest gate supplies a separately owner-verified immutable
+        # workload base. The ordinary source contract remains a scratch image.
+        base = getattr(self, 'source_base', 'scratch')
+        dockerfile = (f'FROM {base}\nCOPY sentinel /sentinel\nCOPY payload /payload\n'
+                      'ENTRYPOINT ["/source-must-never-execute"]\n').encode()
         if volume:
             dockerfile += b'VOLUME ["/anonymous"]\n'
         with tarfile.open(path, 'w') as output:

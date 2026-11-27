@@ -7,6 +7,7 @@ env:
   GH_IMAGE_OWNER: image-prepare-${{ github.run_id }}-${{ github.run_attempt }}
   GH_HOST_IMAGE: goldenhoop-image-host:${{ github.run_id }}-${{ github.run_attempt }}
   GH_BUILDER_IMAGE: goldenhoop-image-builder:${{ github.run_id }}-${{ github.run_attempt }}
+  GH_TRACE_ROOT: /var/lib/gh-runsc-${{ github.run_id }}-${{ github.run_attempt }}
 jobs:
   runsc:
     runs-on: ubuntu-latest
@@ -28,7 +29,9 @@ jobs:
           curl --fail --location --retry 3 "$base/gvisor.tar.zstd.sha512" -o gvisor.tar.zstd.sha512
           sha512sum -c gvisor.tar.zstd.sha512
           sudo tar --zstd -xf gvisor.tar.zstd -C /usr/local/bin
-          sudo /usr/local/bin/runsc install
+          sudo mkdir -m 0700 "$GH_TRACE_ROOT"
+          printf '%s\n' "$GITHUB_SHA" | sudo tee "$GH_TRACE_ROOT/source-commit" >/dev/null
+          sudo /usr/local/bin/runsc install -- --debug --strace --strace-syscalls=openat,openat2,newfstatat,statx,fstat,statfs,fstatfs,fchown,fchownat,chmod,fchmod,fchmodat,utimensat,fsync,fdatasync,mkdir,mkdirat,renameat,renameat2,readlink,readlinkat,symlinkat,linkat,unlink,unlinkat,lseek,ftruncate,copy_file_range,sendfile,getcwd,fcntl,execve,clone,clone3,setxattr --debug-log="$GH_TRACE_ROOT/trace.%ID%.%TIMESTAMP%.%COMMAND%.log"
           sudo systemctl reload docker
           runsc --version
           docker version
@@ -40,6 +43,9 @@ jobs:
           docker build --build-arg VALIDATE_WORKSPACE=0 --target image-builder --label dev.goldenhoop.task=m4-image-builder-fixture --label dev.goldenhoop.owner="$GH_IMAGE_OWNER" --tag "$GH_BUILDER_IMAGE" --file images/agent/Dockerfile .
       - name: Require actual default-runsc image preparation and collection
         run: python -B tests/image_prepare_contract.py --source-commit "$GITHUB_SHA" --image "$GH_HOST_IMAGE" --image-owner "$GH_IMAGE_OWNER" --builder-image "$GH_BUILDER_IMAGE" --builder-owner "$GH_IMAGE_OWNER" --remove-image --output evidence/image-prepare-runsc.json
+      - name: Retain bounded actual file-syscall diagnostics and collect fenced logs
+        if: always()
+        run: sudo -n "$pythonLocation/bin/python3" -B tests/runsc_trace_contract.py --root "$GH_TRACE_ROOT" --source-commit "$GITHUB_SHA" --primary-report "$PWD/evidence/image-prepare-runsc.json" --output "$PWD/evidence/image-prepare-runsc-trace.json"
       - name: Collect exact owned images and confirm absence
         if: always()
         shell: python

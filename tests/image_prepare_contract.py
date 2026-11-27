@@ -49,6 +49,8 @@ class Contract(SourceContract):
             super().__init__(args)
         self.builder = None
         self.check_volumes = []
+        self.disk_size = getattr(args, 'disk_bytes', 64 * 1024**2)
+        self.source_base_id = None
         self.report.update(suite='actual-Rust-image-preparation-pipeline', runtime=args.runtime,
                            scope='private disk pipeline; KVM placement, crash reconciliation and snapshot/template capabilities are separate gates')
         if self.recovery:
@@ -84,7 +86,7 @@ class Contract(SourceContract):
         job, generation = str(uuid.uuid4()), str(uuid.uuid4())
         self.jobs.append((job, generation, source))
         args = ['prepare', '--id', job, '--generation', generation, '--source-image', source,
-                '--builder-image', self.builder, '--disk-bytes', str(64*1024**2)]
+                '--builder-image', self.builder, '--disk-bytes', str(self.disk_size)]
         if runtime and self.args.runtime == 'runc':
             args += ['--runtime', 'runc-development']
             if opt_in:
@@ -174,6 +176,11 @@ class Contract(SourceContract):
         self.report['observations']['independent_workspace_stat'] = workspace
         self.report['observations']['independently_read_disk'] = reference
 
+    def consume_prepared_disk(self, path, preparation):
+        # A separate actual KVM gate consumes the independently verified disk.
+        # The ordinary converter contract makes no guest-execution claim.
+        pass
+
     def exercise(self):
         image = json.loads(docker('image', 'inspect', self.args.image))[0]
         assert image['Config']['Labels']['dev.goldenhoop.task'] == 'm4-image-source-export-fixture'
@@ -209,10 +216,30 @@ class Contract(SourceContract):
             assert all(row['payload']['phase'] in ['failed_collected','collected'] for row in self.report['observations']['final_jobs'])
             self.report['result'] = 'passed'
             return
+        if getattr(self.args, 'source_base_image', None):
+            base = json.loads(docker('image', 'inspect', self.args.source_base_image))[0]
+            labels = base['Config']['Labels']
+            assert labels['dev.goldenhoop.owner'] == self.args.source_base_owner
+            assert labels['dev.goldenhoop.task'] == 'm4-image-guest-source-fixture'
+            assert base['Architecture'] == 'amd64' and base['Os'] == 'linux'
+            assert re.fullmatch('sha256:[a-f0-9]{64}', base['Id'])
+            assert re.fullmatch('[a-z0-9][a-z0-9._/:-]{0,199}', self.args.source_base_image)
+            self.source_base_id = base['Id']
+            # BuildKit treats a bare image ID in FROM as a registry name.
+            # Resolve the exact owned local tag, then check both its immutable
+            # ID and the generated image's inherited content layers.
+            self.source_base = self.args.source_base_image
+            self.report['source_base_image_id'] = self.source_base_id
+            self.report['observations']['source_base_layers'] = base['RootFS']['Layers']
         self.volume = 'ghsrc-state-' + self.owner
         docker('volume', 'create', *self.labels, self.volume)
         self.isolation_observation()
         source, _ = self.source_image()
+        if self.source_base_id:
+            layers = json.loads(docker('image', 'inspect', source))[0]['RootFS']['Layers']
+            base_layers = self.report['observations']['source_base_layers']
+            assert json.loads(docker('image', 'inspect', self.args.source_base_image))[0]['Id'] == self.source_base_id
+            assert layers[:len(base_layers)] == base_layers
         if self.args.runtime == 'runc':
             denied = self.call(self.intent(source, opt_in=False), expected=2)
             assert denied['phase'] == 'failed_collected' and denied['provider_cleanup'] == 'complete'
@@ -226,7 +253,7 @@ class Contract(SourceContract):
         value = self.call(arguments)
         assert value['image_ready'] and value['provider_cleanup'] == 'complete' and value['error'] is None, value
         reference = value['disk']
-        assert reference['size_bytes'] == 64*1024**2 and value['manifest']['disk']['sha256'] == reference['sha256']
+        assert reference['size_bytes'] == self.disk_size and value['manifest']['disk']['sha256'] == reference['sha256']
         limits = value['host_observation']['limits']
         assert 0 < limits['memory_max'] <= 1024**3 and limits['swap_max'] == 0 and 16 <= limits['pids_max'] <= 128
         assert 0 < limits['cpu_quota'] <= limits['cpu_period']
@@ -259,6 +286,7 @@ class Contract(SourceContract):
         docker('image', 'rm', source)
         assert self.call(arguments)['disk'] == reference
         self.report['cases'].append('fresh_process_reopens_verified_disk_after_source_image_collection_without_relaunch')
+        self.consume_prepared_disk(output, value)
         for key, replacement in [('--generation', str(uuid.uuid4())), ('--disk-bytes', str(128*1024**2)), ('--builder-image', 'sha256:'+'b'*64)]:
             foreign = arguments.copy()
             foreign[foreign.index(key)+1] = replacement
@@ -325,7 +353,10 @@ class Contract(SourceContract):
             assert actual['Config']['Labels']['dev.goldenhoop.owner'] == self.owner
             docker('image', 'rm', image)
         if self.args.remove_image:
-            for tag, owner, image in [(self.args.image,self.args.image_owner,self.image), (self.args.builder_image,self.args.builder_owner,self.builder)]:
+            owned = [(self.args.image,self.args.image_owner,self.image), (self.args.builder_image,self.args.builder_owner,self.builder)]
+            if self.source_base_id:
+                owned.append((self.args.source_base_image,self.args.source_base_owner,self.source_base_id))
+            for tag, owner, image in owned:
                 if image:
                     actual = json.loads(docker('image', 'inspect', tag))[0]
                     assert actual['Id'] == image and actual['Config']['Labels']['dev.goldenhoop.owner'] == owner
@@ -349,6 +380,9 @@ if __name__ == '__main__':
     parser.add_argument('--image-owner', required=True)
     parser.add_argument('--builder-image', required=True)
     parser.add_argument('--builder-owner', required=True)
+    parser.add_argument('--source-base-image')
+    parser.add_argument('--source-base-owner')
+    parser.add_argument('--disk-bytes', type=int, default=64*1024**2)
     parser.add_argument('--runtime', choices=['runsc','runc'], default='runsc')
     parser.add_argument('--allow-runc-development', action='store_true')
     parser.add_argument('--remove-image', action='store_true')
@@ -356,6 +390,12 @@ if __name__ == '__main__':
     parser.add_argument('--source-commit')
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
+    if bool(args.source_base_image) != bool(args.source_base_owner):
+        parser.error('a workload fixture base requires its exact task owner')
+    if not 64*1024**2 <= args.disk_bytes <= 16*1024**3 or args.disk_bytes % 4096:
+        parser.error('disk size must be 64 MiB to 16 GiB and block aligned')
+    if args.recover_report and args.source_base_image:
+        parser.error('maintenance must not adopt a new source-base fixture')
     if args.source_commit and not re.fullmatch('[a-f0-9]{40}',args.source_commit):
         parser.error('source commit must be a complete lowercase SHA1')
     if args.runtime == 'runc' and not args.allow_runc_development:

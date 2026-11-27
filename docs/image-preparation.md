@@ -294,3 +294,50 @@ SHA256 `8d5c807409c5830f20b6181e40d5cc92ee535fbd9262d5e590c0ffa4276457ff`.
 All fresh test resources and both owned build-image tags are absent. This
 validates the revised converter locally; a new actual runsc gate and boot of a
 produced disk remain required before production image acceptance.
+
+## Actual authorized runsc failure and produced-disk guest gate
+
+[Run45927939744](evidence/m4-image-prepare-45927939744-archive.json) at
+fb1bdf3 verifies all 316 source inputs. Interface/isolation checks now complete
+and the trusted parent records actual PID/cgroup enforcement of one GiB,
+zero swap, 128 tasks and one CPU before delivering its private decision.
+The converter then reports `Invalid argument (os error 22)`, exits 2 without
+OOM, confirms its tools/staging collected, and produces no disk or manifest.
+Its operation remains Failed, with Complete resource collection. Raw report
+SHA256 is `11b520c2bc6b8abe35b381a59d157b45074f560865873756234618cadd91da19`.
+The failing filesystem operation is not yet identified. The workflow records
+runsc release-20261123.1; its upstream revision resolves to
+`81f68cb7d4661a9313d891a1758a765abe8eb27e`.
+
+Following the official [gVisor debugging procedure](https://gvisor.dev/docs/user_guide/debugging/)
+and its [runtime-argument installer](https://github.com/gvisor/gvisor/blob/81f68cb7d4661a9313d891a1758a765abe8eb27e/runsc/cmd/install.go),
+the independent runsc gate now records selected file/process syscalls.
+Runtime isolation and converter authorization remain unchanged. The collector
+retains bounded log tails and whole-file lengths/hashes under the exact Actions
+source SHA. A private root-owned trace directory has an explicit source claim;
+its logs are collected only after the primary report confirms fenced compute
+collection. An uncertain writer leaves the trace directory retained and cleanup
+Unknown. These diagnostic records grant no runtime capability.
+
+The separate `image-prepared-guest.yml` gate is implemented but not accepted.
+It requires default-runsc conversion of a 256-MiB workload disk, independently
+checks every stored chunk and its whole digest, and consumes that disk only
+after the source image is gone and a fresh process reopens the same Ready job.
+It passes the identical disk digest to the real Rust jailed KVM bootstrap,
+requires corrupt-disk refusal before launch, actual guest command/file checks
+and confirmed VMM/jail/cgroup collection. Guest writes must leave both pinned
+input copies unchanged. It neither unpacks source entries nor runs a second
+mkfs on the host. Public snapshot/template capabilities remain unavailable.
+
+The [local workload-base conversion](evidence/m4-image-prepared-guest-base-local-runc-current.json)
+passes nine groups with 316 exact bindings and Complete collection, producing
+a 268435456-byte disk. Its raw SHA256 is
+`55ccab33fde38bc4d4cf7c7afb021400f60a18226892dcc7f8ad655cdf9504b1`.
+This is explicit runc development evidence and accepts no KVM or runsc result.
+The [initial fixture failure](evidence/m4-image-prepared-guest-base-local-runc.json)
+remains Failed/Complete: BuildKit interpreted a bare local image ID in FROM as
+a registry name. The corrected fixture resolves the exact owned local tag,
+rechecks its immutable ID and verifies the generated image's inherited content
+layers before dispatching the pinned final source ID. All fresh local fixture
+resources and three owned build-image tags are absent. Production Rust inputs
+are unchanged from the 281/339-test full checks above.

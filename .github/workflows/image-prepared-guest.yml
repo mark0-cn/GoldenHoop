@@ -1,0 +1,71 @@
+name: Prepared image actual KVM handoff
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  CARGO_BUILD_JOBS: 2
+  CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS: 'true'
+  CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS: 'true'
+  GH_IMAGE_OWNER: image-guest-${{ github.run_id }}-${{ github.run_attempt }}
+  GH_HOST_IMAGE: goldenhoop-image-host:${{ github.run_id }}-${{ github.run_attempt }}
+  GH_BUILDER_IMAGE: goldenhoop-image-builder:${{ github.run_id }}-${{ github.run_attempt }}
+  GH_SOURCE_BASE: goldenhoop-image-guest-source:${{ github.run_id }}-${{ github.run_attempt }}
+jobs:
+  prepared-guest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install gVisor on this disposable runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          scratch=$(mktemp -d)
+          trap 'rm -rf "$scratch"' EXIT
+          base="https://storage.googleapis.com/gvisor/releases/release/latest/$(uname -m)"
+          cd "$scratch"
+          curl --fail --location --retry 3 "$base/gvisor.tar.zstd" -o gvisor.tar.zstd
+          curl --fail --location --retry 3 "$base/gvisor.tar.zstd.sha512" -o gvisor.tar.zstd.sha512
+          sha512sum -c gvisor.tar.zstd.sha512
+          sudo tar --zstd -xf gvisor.tar.zstd -C /usr/local/bin
+          sudo /usr/local/bin/runsc install
+          sudo systemctl reload docker
+          runsc --version
+      - name: Build the actual checked native Rust host
+        run: cargo build --locked --release -p goldenhoop-firecracker
+      - name: Build the trusted parent converter and workload fixture base
+        # Full workspace checks remain in CI and stage acceptance. These builds
+        # execute the same Rust components, without repeating that full gate.
+        run: |
+          docker build --build-arg VALIDATE_WORKSPACE=0 --label dev.goldenhoop.task=m4-image-source-export-fixture --label dev.goldenhoop.owner="$GH_IMAGE_OWNER" --tag "$GH_HOST_IMAGE" --file images/host/Dockerfile .
+          docker build --build-arg VALIDATE_WORKSPACE=0 --target image-builder --label dev.goldenhoop.task=m4-image-builder-fixture --label dev.goldenhoop.owner="$GH_IMAGE_OWNER" --tag "$GH_BUILDER_IMAGE" --file images/agent/Dockerfile .
+          docker build --build-arg VALIDATE_WORKSPACE=0 --target agent-base --label dev.goldenhoop.task=m4-image-guest-source-fixture --label dev.goldenhoop.owner="$GH_IMAGE_OWNER" --tag "$GH_SOURCE_BASE" --file images/agent/Dockerfile .
+      - name: Require default-runsc conversion and actual jailed execution of that disk
+        run: sudo -n "$pythonLocation/bin/python3" -B tests/image_prepared_guest_contract.py --source-commit "$GITHUB_SHA" --binary "$PWD/target/release/goldenhoop-firecracker" --image "$GH_HOST_IMAGE" --image-owner "$GH_IMAGE_OWNER" --builder-image "$GH_BUILDER_IMAGE" --builder-owner "$GH_IMAGE_OWNER" --source-base-image "$GH_SOURCE_BASE" --source-base-owner "$GH_IMAGE_OWNER" --remove-image --output "$PWD/evidence/image-prepared-guest.json"
+      - name: Collect only exact owned build images and confirm absence
+        if: always()
+        shell: python
+        run: |
+          import json, os, subprocess
+          for key, task in [('GH_HOST_IMAGE','m4-image-source-export-fixture'), ('GH_BUILDER_IMAGE','m4-image-builder-fixture'), ('GH_SOURCE_BASE','m4-image-guest-source-fixture')]:
+              image = os.environ[key]
+              def listed():
+                  return subprocess.check_output(['docker','image','ls','--quiet','--filter','reference='+image]).strip()
+              if listed():
+                  observed=json.loads(subprocess.check_output(['docker','image','inspect',image]))[0]
+                  assert observed['Config']['Labels']['dev.goldenhoop.owner']==os.environ['GH_IMAGE_OWNER']
+                  assert observed['Config']['Labels']['dev.goldenhoop.task']==task
+                  subprocess.run(['docker','image','rm',image],check=True)
+              assert not listed()
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: image-prepared-guest
+          path: evidence/*.json
+          if-no-files-found: error
