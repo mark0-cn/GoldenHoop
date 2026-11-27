@@ -298,8 +298,10 @@ def suite(binary, boot, fixture, guest_barrier=False, guest_authority=False, man
                         assert not os.path.lexists(root/'checkpoints'/f'capture-{capture}-{role}.bin')
                 except Exception as error:
                     cleanup_errors.append(str(error))
+        manager_drained = False
         try:
             stop_error = manager.close()
+            manager_drained = not stop_error
             if stop_error:
                 report['manager_stop_error'] = stop_error
                 report['result'] = 'failed'
@@ -308,8 +310,52 @@ def suite(binary, boot, fixture, guest_barrier=False, guest_authority=False, man
         report['observations']['manager'] = manager.diagnostics()
         report['observations']['records_before_final_collection'] = records
         report['observations']['config'] = cfg
-        report['cleanup'] = 'complete' if not cleanup_errors else 'unknown'
+        # A failed remove remains a failed operation. After the production drain,
+        # separately prove physical absence and use Rust's exact object collector
+        # so an earlier observation error does not strand owned test snapshots.
+        final_observations = []
+        final_checkpoints = []
+        final_collection = False
+        try:
+            assert manager_drained, 'production manager drain was not confirmed'
+            assert report['observations']['manager']['process_collected']
+            assert not original_group or not os.path.lexists(original_group)
+            final_records = [json.loads(path.read_bytes()) for path in sorted((root/'records').glob('*.json'))]
+            assert {v['owner']['sandbox_id'] for v in final_records} == {v['owner']['sandbox_id'] for v in records}
+            for value in records:
+                assert value['owner']['installation_id'] == installation
+                final = next(v for v in final_records if v['owner']['sandbox_id']==value['owner']['sandbox_id'])
+                assert final['owner']==value['owner'] and final['phase']=='collected'
+                observed = manager.observe(value)
+                observed['paths'] = {path:os.path.lexists(path) for path in observed['paths']}
+                final_observations.append({'owner':value['owner'],**observed})
+                assert not any(observed['paths'].values()), observed
+                assert all(not process['present'] or process.get('identity_start_matches') is False
+                           for process in observed['processes'].values()), observed
+            if managed_checkpoint and (root/'checkpoints').exists():
+                for path in sorted((root/'checkpoints').glob('capture-*.json')):
+                    capture = json.loads(path.read_bytes())['intent']['source']['capture']
+                    config = root/f'cleanup-checkpoint-{uuid.UUID(capture)}.json'
+                    config.write_text(json.dumps({'root':str(root/'checkpoints'),
+                        'installation':installation,'capture':capture,'policy':cfg['checkpoints']}),
+                        encoding='utf-8')
+                    config.chmod(0o400)
+                    result = subprocess.run([str(binary),'checkpoint-collect','--config',str(config)],
+                                            capture_output=True,timeout=45)
+                    assert result.returncode==0, result.stderr.decode(errors='replace')[-2000:]
+                    collected = json.loads(result.stdout)
+                    final_checkpoints.append(collected)
+                    assert collected['objects_absent'] and collected['reserved_bytes']==0
+                    assert all(not os.path.lexists(root/'checkpoints'/f'capture-{capture}-{role}.bin')
+                               for role in ['state','memory','disk'])
+            final_collection = True
+        except Exception as error:
+            cleanup_errors.append(f'final physical collection: {type(error).__name__}: {error}')
+        report['observations']['resources_after_manager_drain'] = final_observations
+        report['observations']['checkpoints_after_manager_drain'] = final_checkpoints
+        report['cleanup'] = 'complete' if final_collection else 'unknown'
         if cleanup_errors:
             report['cleanup_errors'] = cleanup_errors
+            report['cleanup_reconciled_by_final_observation'] = final_collection
             report['result'] = 'failed'
     return report

@@ -71,9 +71,9 @@ pub(crate) fn recorded(expected: &ProcessIdentity) -> Result<Option<Target>> {
     if start != expected.start_ticks {
         return Err(invalid("recorded reaping identity changed").into());
     }
-    if !pidfd_exited(&fd)? && process_identity(expected.pid)? != *expected {
-        return Err(invalid("live reaping identity mismatch").into());
-    }
+    // This grants only a descriptor-bound wait, never live RPC or signal
+    // authority. An exiting task can release /proc/exe before pidfd readiness;
+    // requiring executable metadata here would turn normal exit into failure.
     Ok(Some(Target {
         pid: expected.pid,
         start,
@@ -116,6 +116,25 @@ pub(crate) fn group_child(
     Ok(Some(Target { pid, start, fd }))
 }
 impl Target {
+    pub(crate) fn exited(&self) -> io::Result<bool> {
+        pidfd_exited(&self.fd)
+    }
+    pub(crate) fn authenticated_live(&self, expected: &ProcessIdentity) -> Result<bool> {
+        if self.pid != expected.pid || self.start != expected.start_ticks {
+            return Err(invalid("live process differs from its wait target").into());
+        }
+        if self.exited()? {
+            return Ok(false);
+        }
+        let observed = process_identity(expected.pid);
+        if self.exited()? {
+            return Ok(false);
+        }
+        if observed? != *expected {
+            return Err(invalid("live reaping identity mismatch").into());
+        }
+        Ok(true)
+    }
     pub(crate) fn collected(&self) -> io::Result<bool> {
         let mut information: libc::siginfo_t = unsafe { std::mem::zeroed() };
         let result = unsafe {
@@ -142,5 +161,89 @@ impl Target {
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(true),
             Err(e) => Err(e),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Child(std::process::Child);
+    impl Drop for Child {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    #[test]
+    fn actual_exit_during_recorded_observation_preserves_the_original_reap_target() {
+        for _ in 0..128 {
+            let mut child = Child(
+                std::process::Command::new("sleep")
+                    .arg("30")
+                    .spawn()
+                    .unwrap(),
+            );
+            let identity = process_identity(child.0.id()).unwrap();
+            child.0.kill().unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+            let target = loop {
+                let target = recorded(&identity)
+                    .expect("the original exit is not a failed metadata authentication")
+                    .expect("this owned child is not reaped yet");
+                if target.exited().unwrap() {
+                    break target;
+                }
+                assert!(std::time::Instant::now() < deadline);
+                std::thread::yield_now();
+            };
+            assert!(
+                !process_absent(&identity).unwrap(),
+                "a zombie must not be reported physically absent"
+            );
+            child.0.wait().unwrap();
+            assert!(target.collected().unwrap());
+            assert!(process_absent(&identity).unwrap());
+        }
+    }
+
+    #[test]
+    fn live_foreign_identity_never_grants_process_authority() {
+        let mut child = Child(
+            std::process::Command::new("sleep")
+                .arg("30")
+                .spawn()
+                .unwrap(),
+        );
+        let identity = process_identity(child.0.id()).unwrap();
+        let target = recorded(&identity).unwrap().unwrap();
+        assert!(!target.exited().unwrap());
+        assert!(target.authenticated_live(&identity).unwrap());
+        for foreign in [
+            ProcessIdentity {
+                start_ticks: identity.start_ticks + 1,
+                ..identity.clone()
+            },
+            ProcessIdentity {
+                executable_sha256: "0".repeat(64),
+                ..identity.clone()
+            },
+            ProcessIdentity {
+                uid: identity.uid + 1,
+                ..identity.clone()
+            },
+        ] {
+            assert!(
+                recorded(&foreign)
+                    .and_then(|target| target.unwrap().authenticated_live(&foreign))
+                    .is_err()
+            );
+            assert!(child.0.try_wait().unwrap().is_none());
+        }
+        child.0.kill().unwrap();
+        child.0.wait().unwrap();
+        assert!(process_absent(&identity).unwrap());
+        assert!(recorded(&identity).unwrap().is_none());
     }
 }

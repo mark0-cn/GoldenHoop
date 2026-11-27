@@ -1,0 +1,46 @@
+{
+  "scope": "Reproduced original-process exit observation failure and its proposed manager collection correction; actual KVM causality remains to be verified.",
+  "base": "ef2e9e6b3ba7baf0533e8b80d7fb2590963cc098",
+  "original_actual_gate": {
+    "run": 46051406682,
+    "source": "26d845e0441a5c379a20ba7fe48c76a23bc452ad",
+    "result": "failed",
+    "cleanup": "unknown",
+    "groups": 41,
+    "source_inputs": 380,
+    "raw_report": "m4-managed-checkpoint-46051406682-firecracker-managed-checkpoint-firecracker-managed-checkpoint.json",
+    "raw_sha256": "7757c611a5d3385d4e8d62a8d304c7135f3f8e4ec359e304758b110b9453442a",
+    "observed": "Held-source rejection and actual manager SIGKILL/reconnect pass. Source remove returns redacted unconfirmed; later original VMM/supervisor/root/cgroups are absent. Overall cleanup remains Unknown and its fixture is retained."
+  },
+  "local_reproduction": {
+    "initial": "m4-manager-exit-regression-initial.json",
+    "initial_sha256": "21e40029d64597e1e63c82083fbd8a3af8af894f77119f32545d967da2c9c32f",
+    "result": "failed",
+    "actual_error": "Original child SIGKILL followed by recorded wait observation returns OS NotFound while executable/status metadata disappears during exit.",
+    "first_attempt": "m4-manager-exit-regression-corrected.json",
+    "first_attempt_result": "failed: checking pidfd again after metadata read is insufficient; executable release can precede pidfd readiness.",
+    "corrected": "m4-manager-exit-regression-wait-target.json",
+    "corrected_result": "passed two tests:128 actual owned-child exit/reap cycles and live wrong-start/hash/UID refusal. Every child is reaped; an original zombie never counts as physical absence."
+  },
+  "primary_sources": [
+    {
+      "project": "Linux man-pages",
+      "url": "https://www.man7.org/linux/man-pages/man2/pidfd_open.2.html",
+      "application": "ESRCH means the requested process no longer exists. A pidfd identifies a specific task and can report exit; wait/reaping remains a distinct operation. The existing reaper open path already handles ESRCH without a pathname fallback."
+    },
+    {
+      "project": "youki",
+      "revision": "4b4af1efe9feafcc1ffcc4a9b709ae909719bf01",
+      "url": "https://github.com/youki-dev/youki/blob/4b4af1efe9feafcc1ffcc4a9b709ae909719bf01/crates/libcontainer/src/container/container.rs#L176",
+      "observed": "refresh_status distinguishes missing, zombie/dead and live tasks when reporting container status.",
+      "application": "Separate live service authentication from exit observation. GoldenHoop additionally requires original PID/start/boot-bound waits and actual process absence plus original directory/cgroup collection; a stopped/zombie status is not enough."
+    }
+  ],
+  "implemented": [
+    "recorded grants only a PID/start/boot-bound descriptor wait. It has no signal or RPC API and no dependency on an exiting task executable file.",
+    "authenticated_live separately requires full original UID/executable/start/boot identity and pidfd observations before treating the supervisor as a live service.",
+    "Acknowledged-stop settlement waits for original supervisor absence instead of reauthenticating its disappearing executable. Kernel reaping, empty original cgroup and complete physical absence are unchanged.",
+    "The failure cleanup harness retains the operation failure, drains the actual production manager, verifies every final journal owner/collected phase and physical path/process absence, then uses the exact Rust checkpoint collector. Only those final observations permit Complete cleanup; historical errors still keep result Failed."
+  ],
+  "remaining": "Full identical-source Windows/GNU/musl validation, exact scoped check-image collection, and fresh actual continuation gate retaining managed64. No whole-run cleanup or hardware acceptance is inferred from the local reproduction."
+}

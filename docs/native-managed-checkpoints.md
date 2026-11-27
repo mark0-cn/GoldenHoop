@@ -49,6 +49,25 @@ the [local summary](evidence/m4-manager-denial-implementation-summary.json) reco
 the exact reports and scoped collection. Actual held-source preservation and
 manager recovery still require the fresh64-group hardware gate.
 
+At26d845e, the actual gate passes capture after client disconnect, both held-source
+refusals and original paused-source/Ready-content recovery after manager SIGKILL.
+It fails on source removal after41 total groups with Unknown collection; its
+[raw archive](evidence/m4-managed-checkpoint-46051406682-archive.json) is retained.
+The new [exit-observation correction](evidence/m4-manager-exit-upstream-diagnosis.json)
+separates a descriptor-bound wait from live executable/UID authentication. A
+stopping supervisor can release `/proc/exe` before pidfd readiness; this must not
+invalidate its original wait target. Stop settlement requires its actual absence,
+not another live-service authentication. Physical process/root/cgroup fences and
+live identity checks remain enforced. Local child tests do not accept that
+hardware correction. Failure cleanup additionally requires fresh post-drain
+journal/resource observations and exact Rust object GC; it never turns an
+operation failure into a passed result.
+The [final local checks](evidence/m4-manager-exit-implementation-summary.json)
+pass Windows290/GNU-root402/musl21 on identical342 source inputs, with formatting,
+strict clippy and all4 static guest releases. Scoped image collection is complete.
+The combined actual continuation gate must still verify this correction and
+retained manager64 before either hardware behavior is accepted.
+
 Production capture has no marker command or test file write. The private probe
 alone prepares RAM/disk oracles, then invokes the same reserved capture operation.
 Both paths still require the frozen guest receipt, actual Paused state, fresh

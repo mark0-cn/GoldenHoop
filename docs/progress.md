@@ -20,6 +20,22 @@ combined M4 and complete M5-M6 remain active. See the
 [authority acceptance](evidence/m4-guest-authority-acceptance-summary.json) and
 [capture/store contract](native-checkpoint-store.md).
 
+Private single-use continuation is published at ef2e9e6 with identical342-source
+Windows290/GNU-root400/musl21 checks and passing CI46053676884. Its actual gate
+has not run because the retained managed-source removal failure must be corrected
+first. The current [exit-observation correction](evidence/m4-manager-exit-upstream-diagnosis.json)
+reproduces a disappearing process metadata failure using real child exits. It
+separates a PID/start/boot-bound wait from complete live-service authentication;
+post-stop settlement still requires actual reaping and complete physical absence.
+The initial regression and an insufficient second-poll attempt remain Failed.
+Two corrected GNU-root tests pass, covering128 original child exit/reap cycles
+and refusal of live changed start/hash/UID. Final full Windows290/GNU-root402
+checks and musl21 scoped tests/strict clippy/static4 releases pass on342 identical
+source inputs. All3 exact owned check images and both failed tags are observed
+absent; useful caches and raw failures remain in the
+[implementation summary](evidence/m4-manager-exit-implementation-summary.json).
+A fresh actual combined continuation gate remains required.
+
 Native public selected-image placement and private protocol2 quiescence remain independently accepted at376328c: actual KVM placement53/366 inputs and barrier52/365 inputs both pass with Complete collection; CI46009520892 also passes. Protocol3 and private full capture have their separate acceptance above. Host restore authority, public snapshots/templates, combined M4 and complete M5-M6 remain active.
 
 ## M4 private full capture accepted; manager integration in validation

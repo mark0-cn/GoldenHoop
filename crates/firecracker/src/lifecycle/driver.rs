@@ -905,23 +905,10 @@ impl NativeEngine {
         {
             return Err(invalid("native supervisor artifact or root identity differs").into());
         }
-        if expected.boot_id != boot_id()?
-            || !Path::new("/proc")
-                .join(expected.pid.to_string())
-                .try_exists()?
-        {
-            return Ok(false);
+        match super::reaper::recorded(expected)? {
+            Some(target) => target.authenticated_live(expected),
+            None => Ok(false),
         }
-        let raw = unsafe { libc::syscall(libc::SYS_pidfd_open, expected.pid, 0) };
-        if raw < 0 {
-            return Err(io::Error::last_os_error().into());
-        }
-        let observed = unsafe { OwnedFd::from_raw_fd(raw as i32) };
-        if pidfd_exited(&observed)? {
-            return Ok(false);
-        }
-        let fd = track_process(expected)?;
-        Ok(!pidfd_exited(&fd)?)
     }
 
     fn retain_dead_supervisor_diagnostics(
@@ -1031,7 +1018,10 @@ impl NativeEngine {
             {
                 let _ = target.collected()?;
             }
-            if !self.supervisor_alive(record)? {
+            // After an acknowledged stop, wait for the original identity's
+            // actual absence. Its /proc/exe can disappear before exit/reaping;
+            // this read-only wait must not reauthenticate a running service.
+            if self.supervisor_gone(record)? {
                 supervisor::collect_supervisor_cgroup(&self.inner.cfg, record)?;
                 if self.physical_absence(record)? {
                     let mut updated = self.load(record.owner.sandbox_id)?;
