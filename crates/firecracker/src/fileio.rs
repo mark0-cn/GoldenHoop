@@ -60,7 +60,7 @@ pub(crate) fn digest(mut input: File) -> io::Result<(String, u64)> {
 }
 
 pub(crate) fn copy(
-    mut input: File,
+    input: File,
     destination: &Path,
     expected_sha: &str,
     expected_size: u64,
@@ -69,13 +69,30 @@ pub(crate) fn copy(
     if input.metadata()?.len() != expected_size {
         return Err(invalid("artifact length mismatch"));
     }
-    input.rewind()?;
-    advise(&input, 0, 0, libc::POSIX_FADV_RANDOM)?;
-    let mut output = OpenOptions::new()
+    let output = OpenOptions::new()
+        .read(true)
         .write(true)
         .create_new(true)
         .mode(mode)
         .open(destination)?;
+    copy_to(input, output, expected_sha, expected_size)?;
+    Ok(())
+}
+
+/// The caller owns the destination descriptor and its publication/collection.
+/// A fresh unnamed output can be dropped on failure without a named partial.
+pub(crate) fn copy_to(
+    mut input: File,
+    mut output: File,
+    expected_sha: &str,
+    expected_size: u64,
+) -> io::Result<File> {
+    if input.metadata()?.len() != expected_size || output.metadata()?.len() != 0 {
+        return Err(invalid("artifact input length or fresh output differs"));
+    }
+    input.rewind()?;
+    output.rewind()?;
+    advise(&input, 0, 0, libc::POSIX_FADV_RANDOM)?;
     let mut hash = Sha256::new();
     let mut count = 0u64;
     let mut window = 0u64;
@@ -118,11 +135,12 @@ pub(crate) fn copy(
     output.sync_all()?;
     discard(&output, window, count - window)?;
     discard(&input, window, count - window)?;
-    drop(output);
-    if digest(File::open(destination)?)? != (expected_sha.to_owned(), expected_size) {
+    output.rewind()?;
+    if digest(output.try_clone()?)? != (expected_sha.to_owned(), expected_size) {
         return Err(invalid("copied artifact digest mismatch"));
     }
-    Ok(())
+    output.rewind()?;
+    Ok(output)
 }
 
 #[cfg(test)]

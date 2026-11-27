@@ -27,6 +27,7 @@ separate implementation and acceptance requirement.
 | Earlier native allocation/metadata recovery | Bind pending writes and generation allocations to durable producer/object receipts; reconcile only after writer absence | Kill at write/dispatch boundaries; preserve ambiguous/replaced objects; no create or signal replay |
 | Guest quiescence | Protocol2 accepted at376328c; separate PID1/control from agent/workloads, fence admission and drain accepted effects | Actual barrier/root52 passes with365 inputs and Complete collection; protocol3 requires its separate gate |
 | Guest authority protocol | Protocol3 generation-bound native frames and frozen transition implemented | New same-VMM private protocol gate pending; not host restore/source-termination proof |
+| Independent content admission | Private pinned manifest and descriptor-based anonymous state/memory/disk copies; final335-source Windows290/Linux-root390 and musl21/static4 checks pass | Actual independent source deletion, exact bytes and read-only output; corrupt/truncated/untrusted inputs leave no outputs; guest provenance remains synthetic |
 | Private checkpoint | Pause the actual VMM; capture full state/memory plus a stable drive copy into a bounded owned generation | Independent content/length checks, actual Paused state, unchanged immutable source assets, complete scoped collection |
 | Private single-use memory restore | Claim once; load paused into a new jailed VMM; transition guest authority before workload RPC admission | Real retained memory/file state, new identity, old authority refusal, one target after retries/crashes |
 | Public integration | Persist operations, idempotency, quota and object references; add REST/CLI/Rust/Python clients and actual capability probe | Public success/failure/recovery and deletion on the supported real profile |
@@ -73,6 +74,11 @@ CPU compatibility, resource bounds, guest barrier, quota reservation and object
 references. Keep restore authority separate from the immutable content manifest.
 
 Persistent captured content must live outside the source VM's collected jail.
+The private [content admission/materializer](native-checkpoint-content.md) can
+produce independently verified anonymous copies without depending on a source
+pathname or live producer. Durable publication, shared quota, capture producer
+fencing and restore claims are still absent; anonymous staging is not persistent
+snapshot storage.
 The existing VM-root receipt deliberately binds a host boot and PID namespace;
 it is not a persistent snapshot-reader contract. Separate immutable-object
 identity from the original producer's write/collection fence. A Ready reader

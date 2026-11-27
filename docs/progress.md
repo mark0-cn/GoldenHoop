@@ -4,6 +4,29 @@ Native public selected-image placement and private protocol2 quiescence are acce
 
 ## Active objective
 
+The next private checkpoint-content increment adds a pinned versioned manifest,
+exact runtime and reserved-byte admission, and independently verified read-only
+anonymous state/memory/disk copies. After correcting private boot identity below,
+final formatting, strict all-target workspace clippy and full tests pass Windows290
+and Linux-root390 executions, including an isolated filesystem child. The same335
+inputs also pass musl21 descriptor/control/init tests, strict clippy and all4
+static guest release builds. All3 owned check images are collected with positive
+absence, preserving useful caches and all original evidence. See the
+[implementation summary](evidence/m4-checkpoint-content-implementation-summary.json).
+It is not an implemented snapshot capture, durable
+store, shared reservation, source-absence proof or restore. See
+[content admission](native-checkpoint-content.md). The preceding protocol3
+source b18bd35 passes CI46019278574, but its same-VMM gate46019365079 fails
+before completed groups: the private boot probe omitted the generation/task
+arguments now required by protocol3. Its real guest kernel boot is observed,
+agent readiness is refused, and collection is Complete. The correction supplies
+those arguments and confirms control identity for every native boot; the retained
+harness also checks the actual kernel command line. Original367-input failure
+bytes are retained in the [archive](evidence/m4-guest-authority-46019365079-archive.json)
+and [diagnosis](evidence/m4-guest-authority-probe-generation-diagnosis.json).
+The corrected source requires its own real gate and cannot inherit acceptance
+from source376 or portable checks.
+
 Implement the complete M0-M6 design in the dedicated mark0-cn/GoldenHoop repository and push staged, verified commits.
 
 ## Current stage
@@ -21,7 +44,8 @@ for generation scope and physical-target no-dispatch. Final musl21
 release binaries also pass on those same331 inputs. All four successful local
 check images are removed and positively observed absent; useful caches and all
 original pass/fail evidence are retained. See the
-[implementation summary](evidence/m4-guest-authority-implementation-summary.json). The new same-VMM guest protocol gate remains unexecuted. See
+[implementation summary](evidence/m4-guest-authority-implementation-summary.json). The first same-VMM gate at b18bd35 fails in the preceding private probe;
+authority transition cases were not reached. The corrected gate remains required. See
 [guest authority](native-authority.md). This does not accept a memory restore.
 
 The preceding source376328c is independently accepted:

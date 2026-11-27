@@ -231,6 +231,13 @@ def main():
         assert probe['runtime_profile_published'] is False
         assert not stderr and process.returncode == 0 and probe['passed'], probe.get('error')
         assert probe['guest_started'] and len(probe['checks']) >= 5
+        boot_lines = re.findall(r'Command line: ([^\r\n]+)', probe['console'])
+        assert len(boot_lines) == 1, 'actual private guest kernel command line was not retained'
+        boot_scope = boot_lines[0].split()
+        assert 'goldenhoop.generation='+str(generation) in boot_scope
+        assert 'goldenhoop.pids=256' in boot_scope
+        report['probe_boot_scope'] = {'generation': str(generation), 'pids': 256,
+                                      'kernel_command_line': boot_lines[0]}
         report['cases'] = ['corrupt_kernel_digest_refused_before_launch_with_confirmed_collection'] + probe['checks']
         report['result'] = 'passed'
         if args.root_recovery_contract:

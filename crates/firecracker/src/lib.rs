@@ -4,6 +4,7 @@
 pub mod agent;
 #[cfg(target_os = "linux")]
 pub mod api;
+pub mod checkpoint;
 pub mod control;
 #[cfg(target_os = "linux")]
 mod fileio;

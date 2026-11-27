@@ -842,14 +842,10 @@ impl Machine {
             self.resources.memory_bytes / MIB,
         )?)
         .await?;
-        let args = if self.persistent.is_some() {
-            format!(
-                "{BOOT_ARGS} goldenhoop.pids={} goldenhoop.generation={}",
-                self.resources.pids, self.generation
-            )
-        } else {
-            BOOT_ARGS.into()
-        };
+        let args = format!(
+            "{BOOT_ARGS} goldenhoop.pids={} goldenhoop.generation={}",
+            self.resources.pids, self.generation
+        );
         api.configure_boot(&BootSource::new("/kernel".into(), args)?)
             .await?;
         api.configure_root(&RootDrive::new("/rootfs.ext4".into(), false)?)
@@ -868,15 +864,14 @@ impl Machine {
             self.check_expiry()?;
             if let Ok(reply) = agent.rpc_reply(&AgentRequest::Ping).await {
                 if matches!(reply.into_result()?, AgentResponse::Pong{version} if version==env!("CARGO_PKG_VERSION"))
-                    && (self.persistent.is_none()
-                        || agent
-                            .control_info()
-                            .await
-                            .is_ok_and(|info| info.pids == self.resources.pids))
+                    && agent
+                        .control_info()
+                        .await
+                        .is_ok_and(|info| info.pids == self.resources.pids)
                 {
                     break;
                 }
-                return Err(invalid("guest version mismatch").into());
+                return Err(invalid("guest version or control identity mismatch").into());
             }
             if tokio::time::Instant::now() >= deadline {
                 return Err(invalid("actual guest agent boot deadline").into());

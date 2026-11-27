@@ -5,6 +5,16 @@ transition. It is a prerequisite for capture/restore, not an implemented native
 memory restore or public snapshot capability. Its separate real guest protocol
 gate is still required. Full M4-M6 remains active.
 
+The first protocol3 gate46019365079 at b18bd35 failed before completed groups.
+Its real private guest kernel boot omitted generation/task arguments because
+`Machine::start` supplied them only for persistent VMs. Generation-scoped RPC
+correctly refused the unscoped probe. Every native boot now supplies the same
+identity/task contract and requires matching guest control observation. The
+harness additionally checks the actual kernel command line. The original
+failure has Complete collection and367 verified inputs; it remains Failed and
+does not accept authority transfer. See the
+[diagnosis](evidence/m4-guest-authority-probe-generation-diagnosis.json).
+
 ## Request boundary
 
 Every native workload frame now has an explicit scope:

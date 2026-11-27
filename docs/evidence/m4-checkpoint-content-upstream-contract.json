@@ -1,0 +1,24 @@
+{
+  "scope": "Primary-source comparison for private checkpoint content admission; no KVM capture, persistent publication or restore acceptance",
+  "upstream": "Firecracker",
+  "revision": "eaf83bb718a559d324613d566eaf776b31a62340",
+  "sources": [
+    "https://github.com/firecracker-microvm/firecracker/blob/eaf83bb718a559d324613d566eaf776b31a62340/docs/snapshotting/snapshot-support.md",
+    "https://github.com/firecracker-microvm/firecracker/blob/eaf83bb718a559d324613d566eaf776b31a62340/src/vmm/src/persist.rs"
+  ],
+  "observations": [
+    {
+      "upstream": "Guest memory and VMM state are separate outputs; drives are managed by the integrator. Memory backing remains required throughout a restored VMM lifetime.",
+      "implementation": "Three distinct typed content roles; exact hashes/lengths and independent anonymous inodes; no source pathname/liveness prerequisite for bytes."
+    },
+    {
+      "upstream": "Snapshot creation opens state output with create/write/truncate and releases it after serialization and optional sync; the documented output paths can be overwritten.",
+      "implementation": "No direct Ready-content path is supplied to snapshot/create. This increment accepts only a pinned content reference and creates unnamed private copies, with no named-partial fallback."
+    },
+    {
+      "upstream": "Snapshots require Paused; sync_snapshot_files defaults true and disk draining/sync are separate from host storage lifecycle.",
+      "implementation": "The typed protocol3 completed barrier and exact runtime are metadata predicates only. Actual paused capture, producer fencing, shared reservation, manifest-last durable publication and source collection remain unimplemented."
+    }
+  ],
+  "local_evidence_limits": "Portable manifest provenance is synthetic. Linux filesystem tests, once passed on the exact source, observe actual bytes, sparse copies, source deletion, read-only descriptors and refusal cleanup only. Newer sources are not accepted by the b18bd35 same-VMM gate."
+}
