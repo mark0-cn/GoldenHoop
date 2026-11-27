@@ -15,6 +15,11 @@ fn invalid() -> io::Error {
         "expected one complete private image descriptor",
     )
 }
+// libc uses size_t on glibc and socklen_t on musl for ancillary lengths.
+// Keep buffer arithmetic in usize without assuming either target's field type.
+fn length(value: impl TryInto<usize>) -> io::Result<usize> {
+    value.try_into().map_err(|_| invalid())
+}
 fn send_once(socket: RawFd, file: RawFd) -> io::Result<()> {
     let mut byte = TAG;
     let mut vector = libc::iovec {
@@ -26,14 +31,14 @@ fn send_once(socket: RawFd, file: RawFd) -> io::Result<()> {
     message.msg_iov = &mut vector;
     message.msg_iovlen = 1;
     message.msg_control = control.as_mut_ptr().cast();
-    message.msg_controllen = unsafe { libc::CMSG_SPACE(mem::size_of::<RawFd>() as u32) } as usize;
+    message.msg_controllen = unsafe { libc::CMSG_SPACE(mem::size_of::<RawFd>() as u32) } as _;
     // SAFETY: the aligned control array has room for this header and one FD;
     // the borrowed source descriptor remains live throughout sendmsg.
     let written = unsafe {
         let header = libc::CMSG_FIRSTHDR(&message);
         (*header).cmsg_level = libc::SOL_SOCKET;
         (*header).cmsg_type = libc::SCM_RIGHTS;
-        (*header).cmsg_len = libc::CMSG_LEN(mem::size_of::<RawFd>() as u32) as usize;
+        (*header).cmsg_len = libc::CMSG_LEN(mem::size_of::<RawFd>() as u32) as _;
         libc::CMSG_DATA(header)
             .cast::<RawFd>()
             .write_unaligned(file);
@@ -60,7 +65,7 @@ fn receive_once(socket: RawFd) -> io::Result<File> {
     message.msg_iov = &mut vector;
     message.msg_iovlen = 1;
     message.msg_control = control.as_mut_ptr().cast();
-    message.msg_controllen = mem::size_of_val(&control);
+    message.msg_controllen = mem::size_of_val(&control) as _;
     // MSG_CMSG_CLOEXEC installs received descriptors atomically with CLOEXEC.
     let count = unsafe {
         libc::recvmsg(
@@ -73,10 +78,11 @@ fn receive_once(socket: RawFd) -> io::Result<File> {
         return Err(io::Error::last_os_error());
     }
     let mut files = Vec::<OwnedFd>::new();
-    let mut malformed = message.msg_controllen > mem::size_of_val(&control);
+    let returned_length = length(message.msg_controllen)?;
+    let mut malformed = returned_length > mem::size_of_val(&control);
     // Even on truncation or a bad tag, adopt and drop every FD delivered by the
     // kernel. Linux closes SCM_RIGHTS entries that did not fit the control area.
-    let end = control.as_ptr() as usize + message.msg_controllen.min(mem::size_of_val(&control));
+    let end = control.as_ptr() as usize + returned_length.min(mem::size_of_val(&control));
     let mut header = unsafe { libc::CMSG_FIRSTHDR(&message) };
     while !header.is_null() {
         let start = header as usize;
@@ -85,7 +91,7 @@ fn receive_once(socket: RawFd) -> io::Result<File> {
             malformed = true;
             break;
         }
-        let size = unsafe { (*header).cmsg_len };
+        let size = length(unsafe { (*header).cmsg_len })?;
         if size < minimum || start.checked_add(size).is_none_or(|n| n > end) {
             malformed = true;
             break;

@@ -1,12 +1,38 @@
 # Progress
 
-Private Ready-image materialization is accepted at a4587f9: ten actual default-runsc groups pass with 329 source-verified inputs and Complete collection. Public native selected-image placement is implemented and passes Windows283/Linux-root370 full checks with 330 identical inputs; its new actual public/KVM gate remains unexecuted. Snapshots/restore/templates, combined M4 and complete M5-M6 remain active.
+Private Ready-image materialization is accepted at a4587f9: ten actual default-runsc groups pass with 329 source-verified inputs and Complete collection. Native selected-image placement and private guest quiescence are implemented. The first public placement gate failed during musl compilation before any VM execution; the corrected increment passes Windows285/Linux-root377 full checks and musl guest16 plus four static release builds, with 331 identical inputs. Fresh public/KVM placement and barrier gates remain required. Snapshots/restore/templates, combined M4 and complete M5-M6 remain active.
 
 ## Active objective
 
 Implement the complete M0-M6 design in the dedicated mark0-cn/GoldenHoop repository and push staged, verified commits.
 
 ## Current stage
+
+Private guest protocol v2 now closes and drains workload request admission,
+observes the actual agent/workload freezer and syncs the root filesystem before
+acknowledging quiescence. PID1/control and agent/workloads share an aggregate task
+ceiling through separate children. A dispatched agent effect without a complete
+reply permanently fences future capture for that guest; source thaw does not
+pretend to reconcile it. The current boot generation still owns guest authority;
+memory capture and restore transition remain unimplemented. Final formatting,
+strict all-target workspace clippy and all tests pass Windows285/Linux-root377.
+All 331 source inputs match the separate musl descriptor3/control-wire3/init10
+tests, strict musl clippy and four static guest release binaries. All four local
+successful check images are removed and positively observed absent, with useful
+caches and evidence retained. See [quiescence](native-quiescence.md) and the
+[implementation summary](evidence/m4-guest-barrier-implementation-summary.json).
+
+The initial native placement run46002623045 at c4b8d87 failed during static guest
+compilation, with zero runtime cases. Windows/Ubuntu CI46002592091 passes on that
+source, but does not accept placement. The correction uses target-aware libc
+ancillary lengths and filesystem integer normalization, following a pinned nix
+comparison. Ubuntu CI now exercises the musl guest ABI too. The failed broad
+musl-host root test remains Failed: this Rust implementation lacks metadata
+birthtime there, so native host receipts refuse it. GNU/Linux host root tests
+remain unchanged; the static musl guest check has an explicit distinct scope.
+See the [original failure and diagnosis](evidence/m4-native-image-input-musl-diagnosis.json).
+Independent real placement and guest-barrier workflows still need to accept the
+corrected immutable source. No skipped or synthetic test substitutes for KVM.
 
 The public native prepared-image increment resolves immutable Ready references,
 hands an anonymous verified descriptor through the authenticated manager, and
@@ -17,7 +43,8 @@ combined fixed/selected disk reservations. Same-context completed probe receipts
 can support quota-only restart validation only with a freshly authenticated live
 VM. The dedicated public two-image workflow retains root47 and adds actual
 conversion, admission, block-release, blob collection and running/paused recovery
-checks. These new KVM paths await execution; local tests do not accept them.
+checks. The first gate failed before VM launch; the ABI-corrected KVM paths await
+fresh execution, and local tests do not accept them.
 See [native images](native-images.md) and the
 [implementation evidence](evidence/m4-native-image-input-implementation-summary.json).
 

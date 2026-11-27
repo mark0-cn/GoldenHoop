@@ -23,13 +23,13 @@ fn send_many(stream: &UnixStream, file: &File, count: usize, tag: u8) {
     message.msg_iovlen = 1;
     message.msg_control = control.as_mut_ptr().cast();
     message.msg_controllen =
-        unsafe { libc::CMSG_SPACE((count * mem::size_of::<RawFd>()) as u32) } as usize;
-    assert!(message.msg_controllen <= mem::size_of_val(&control));
+        unsafe { libc::CMSG_SPACE((count * mem::size_of::<RawFd>()) as u32) } as _;
+    assert!(length(message.msg_controllen).unwrap() <= mem::size_of_val(&control));
     unsafe {
         let header = libc::CMSG_FIRSTHDR(&message);
         (*header).cmsg_level = libc::SOL_SOCKET;
         (*header).cmsg_type = libc::SCM_RIGHTS;
-        (*header).cmsg_len = libc::CMSG_LEN((count * mem::size_of::<RawFd>()) as u32) as usize;
+        (*header).cmsg_len = libc::CMSG_LEN((count * mem::size_of::<RawFd>()) as u32) as _;
         for index in 0..count {
             libc::CMSG_DATA(header)
                 .cast::<RawFd>()

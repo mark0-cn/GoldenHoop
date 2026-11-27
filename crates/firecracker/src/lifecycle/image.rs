@@ -90,10 +90,10 @@ impl PreparedImagePolicy {
             return Err(io::Error::last_os_error().into());
         }
         let stat = unsafe { stat.assume_init() };
-        let bytes = u64::try_from(stat.f_bsize)?
+        let bytes = u64::try_from(i128::from(stat.f_bsize))?
             .checked_mul(stat.f_blocks)
             .ok_or_else(|| invalid("prepared staging capacity overflow"))?;
-        if stat.f_type != libc::TMPFS_MAGIC
+        if i128::from(stat.f_type) != i128::from(libc::TMPFS_MAGIC)
             || bytes > self.staging_bytes
             || bytes < self.max_disk_bytes
         {

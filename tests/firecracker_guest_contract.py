@@ -65,6 +65,7 @@ def main():
     parser.add_argument('--metadata-recovery-contract', action='store_true')
     parser.add_argument('--cgroup-test-manifest', type=Path)
     parser.add_argument('--root-recovery-contract', action='store_true')
+    parser.add_argument('--guest-barrier-contract', action='store_true')
     parser.add_argument('--prepared-image-placement', action='store_true')
     parser.add_argument('--images-binary', type=Path)
     parser.add_argument('--builder-image')
@@ -84,6 +85,8 @@ def main():
         parser.error('root recovery requires the compiled cgroup/root test manifest and retained baseline')
     if args.prepared_image_placement and (not args.root_recovery_contract or not args.images_binary or not args.builder_image or not args.builder_owner):
         parser.error('prepared placement requires the retained root47 contract and actual host/builder components')
+    if args.guest_barrier_contract and (not args.root_recovery_contract or not args.driver_contract):
+        parser.error('guest barrier requires the retained root47 and actual native driver contract')
     assert re.fullmatch(r'[0-9a-f]{40}', args.source_commit)
     assert re.fullmatch(r'[0-9]+-[0-9]+', args.owner)
     root = Path(__file__).resolve().parent.parent
@@ -110,6 +113,8 @@ def main():
         sources += [root/'tests/firecracker_root_contract.py',root/'.github/workflows/firecracker-root-recovery.yml']
     if args.prepared_image_placement:
         sources += [root/'tests/firecracker_image_placement_contract.py',root/'.github/workflows/firecracker-image-placement.yml',root/'images/host/Dockerfile']
+    if args.guest_barrier_contract:
+        sources += [root/'tests/firecracker_barrier_contract.py',root/'.github/workflows/firecracker-guest-barrier.yml']
     sources += sorted((root / 'images/microvm').glob('*.json'))
     report = {
         'suite': 'actual jailed Firecracker guest bootstrap',
@@ -251,7 +256,7 @@ def main():
             from firecracker_driver_contract import suite
             report['scope'] = 'actual native RuntimeDriver/AgentTransport lifecycle; public Worker/SDK integration and full M4 remain unaccepted'
             guest_collected = False
-            driver = suite(binary, boot, fixture)
+            driver = suite(binary, boot, fixture, guest_barrier=args.guest_barrier_contract)
             report['driver'] = driver
             guest_collected = driver['cleanup'] == 'complete'
             report['cases'] += ['driver:' + case for case in driver['cases']]
@@ -281,6 +286,9 @@ def main():
             report['scope'] = 'actual cgroup inode receipt/descriptor/replacement/Drop fencing and retained 37-group metadata/KVM baseline; earlier VM-root/unacknowledged allocation effects, snapshots/templates and full M4 remain unaccepted'
         if args.root_recovery_contract:
             report['scope']='actual acknowledged VM root pre-marker/partial-deletion recovery and replacement/mount refusal plus retained41 groups; pre-ack production ownership remains Unknown, and snapshots/templates/full M4 remain unaccepted'
+
+        if args.guest_barrier_contract:
+            report['scope']='actual private guest admission/freeze/sync/thaw barrier plus retained root47; snapshots/restore/templates and complete M4-M6 remain unaccepted'
 
         if args.prepared_image_placement:
             from firecracker_image_placement_contract import suite as placement_suite

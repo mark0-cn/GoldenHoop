@@ -19,6 +19,16 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+      - name: Check the static guest ABI and exercise musl descriptor contracts
+        if: runner.os == 'Linux'
+        run: |
+          sudo -n apt-get update
+          sudo -n apt-get install -y --no-install-recommends musl-tools
+          rustup target add x86_64-unknown-linux-musl
+          cargo clippy --locked --target x86_64-unknown-linux-musl -p goldenhoop-firecracker -p goldenhoop-init --all-targets -- -D warnings
+          cargo test --locked --target x86_64-unknown-linux-musl -p goldenhoop-firecracker --lib lifecycle::descriptor::tests::
+          cargo test --locked --target x86_64-unknown-linux-musl -p goldenhoop-firecracker --lib control::tests::
+          cargo test --locked --target x86_64-unknown-linux-musl -p goldenhoop-init --lib
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'

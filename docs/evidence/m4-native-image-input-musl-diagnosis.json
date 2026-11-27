@@ -1,0 +1,45 @@
+{
+  "scope": "Actual musl guest build failure, not a network issue or runtime execution failure",
+  "run_id": 46002623045,
+  "source_commit": "c4b8d873731707e1a3bcc5b5d2270587431c13b6",
+  "conclusion": "failure",
+  "runtime_execution": "not_executed",
+  "original_log_sha256": "53239a38fea930306f987d83abf00c8088193ee89cf3a8cde79a4cd5cc5120cf",
+  "failure": "libc msghdr.msg_controllen/cmsghdr.cmsg_len use different types on glibc and musl; statfs.f_type signedness also differs. Seventeen original compile errors in descriptor.rs and image.rs.",
+  "upstream": {
+    "repository": "nix-rust/nix",
+    "release": "v0.30.1",
+    "commit": "3cf9007216086b17a6ef5a09fa42dc00cde5c2bf",
+    "source_url": "https://raw.githubusercontent.com/nix-rust/nix/3cf9007216086b17a6ef5a09fa42dc00cde5c2bf/src/sys/socket/mod.rs",
+    "source_sha256": "b4112a9943f73dfd4a1cd940a1fce6f7de6e4c2508505a69e2fb6f93275f3bb7",
+    "relevant_pattern": "Use inferred target field types for bounded ancillary lengths; normalize returned lengths before buffer arithmetic."
+  },
+  "adaptation": "Fixed-sized control buffers fit either ABI. Normalize received libc length fields through a generic TryInto<usize>; use inferred casts only for fixed bounded buffer assignments. Compare signed/unsigned statfs magic via exact i128 conversions. No runtime weakening or named-input fallback.",
+  "ci_prevention": "Ubuntu CI now type-checks all firecracker/init musl targets with strict clippy and executes the actual musl lib descriptor/admission tests. Real KVM gates remain separate.",
+  "local_intermediates": [
+    {
+      "report": "m4-guest-barrier-musl-targeted.json",
+      "result": "failed",
+      "reason": "inferred statfs magic cast was ambiguous"
+    },
+    {
+      "report": "m4-guest-barrier-musl-targeted-corrected.json",
+      "result": "failed",
+      "reason": "musl f_bsize=u64 causes useless-conversion lint; normalize through i128"
+    },
+    {
+      "report": "m4-guest-barrier-musl-targeted-abi-corrected.json",
+      "result": "failed",
+      "reason": "strict musl compilation passed, broad host-root execution returned Unsupported creation time (29 passed, 3 failed, 2 ignored); original report retained unchanged"
+    }
+  ],
+  "musl_host_boundary": {
+    "accepted_host": "GNU/Linux; all root/recovery assertions unchanged and required in full workspace checks",
+    "guest_target": "static Linux-musl; descriptor3/control-wire3/init10 actual lib tests and all four release binary builds",
+    "rust_commit": "0ef1bc386059596dada8fb65b50425aab2ea637a",
+    "rust_source_url": "https://raw.githubusercontent.com/rust-lang/rust/0ef1bc386059596dada8fb65b50425aab2ea637a/library/std/src/sys/fs/unix.rs",
+    "rust_source_sha256": "8d14b07d1e105b3a4ba1276b462b2f0360809494033da0bdaed7b9acfe6d80b4",
+    "source_observation": "cfg_has_statx includes only Linux GNU; metadata creation time is unsupported on this tested musl build. A missing birthtime continues to refuse native VM-root receipts.",
+    "scope_correction": "Musl guest ABI gate explicitly exercises relevant descriptor/control/init tests; it does not reclassify the failed musl host-root run as passed."
+  }
+}

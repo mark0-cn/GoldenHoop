@@ -16,7 +16,7 @@ import uuid
 from firecracker_manager_fixture import Manager
 
 
-def suite(binary, boot, fixture):
+def suite(binary, boot, fixture, guest_barrier=False):
     installation = str(uuid.uuid4())
     root = fixture / 'd'  # Native AF_UNIX endpoints must fit Linux's path bound.
     cfg = {'installation_id': installation, 'data_root': str(root), 'artifacts': boot,
@@ -159,6 +159,10 @@ def suite(binary, boot, fixture):
         absent = rpc(a, {'method': 'read_file', 'path': 'durable.txt', 'max_bytes': 128})
         assert absent['status'] == 'error' and absent['data']['code'] == 'not_found'
         report['cases'].append('actual_pause_resume_and_file_absence_after_remove')
+
+        if guest_barrier:
+            from firecracker_barrier_contract import exercise
+            exercise(a, a_record, runtime, call, rpc, command, report)
 
         forged = dict(a, backend_ref=f'fc1:{installation}:{uuid.uuid4()}')
         call({'operation': 'remove', 'handle': forged}, expect=False)

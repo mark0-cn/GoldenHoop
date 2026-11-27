@@ -7,6 +7,13 @@ The native selection path below is implemented and undergoing its separate
 public/KVM gate; it is not complete M4 acceptance. Snapshots, restore, templates
 and M5-M6 retain their original requirements.
 
+The first public placement run at `c4b8d87` failed while compiling static musl
+guest components, before runtime execution. Its zero-case build artifact is not
+placement acceptance. The [ABI diagnosis](evidence/m4-native-image-input-musl-diagnosis.json)
+records the pinned nix comparison and retained failure. The correction normalizes
+libc ancillary lengths and filesystem integer types across GNU and musl targets;
+the corrected source still requires a fresh actual public placement gate.
+
 ## Administrator policy
 
 `DriverConfig.prepared_images` is optional. Without it, the original fixed-image

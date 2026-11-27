@@ -8,7 +8,7 @@ pub mod linux;
 #[serde(default, deny_unknown_fields)]
 pub struct GuestConfig {
     pub control_port: u32,
-    /// Includes the agent and all userland descendants in its guest cgroup.
+    /// Aggregate ceiling for PID1, the agent and all userland descendants.
     pub pids: u32,
 }
 

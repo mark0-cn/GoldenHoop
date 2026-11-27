@@ -34,6 +34,9 @@ const AGENT: &str = "/usr/local/bin/goldenhoop-agent";
 const SOCKET: &str = "/run/goldenhoop/agent.sock";
 const WORKSPACE: &str = "/workspace";
 const CGROUP: &str = "/sys/fs/cgroup/goldenhoop";
+const WORKLOAD_GROUP: &str = "/sys/fs/cgroup/goldenhoop/workloads";
+
+mod barrier;
 
 fn invalid(message: &'static str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
@@ -251,10 +254,16 @@ fn prepare_tasks(config: &GuestConfig) -> io::Result<File> {
     if std::fs::read_to_string(format!("{CGROUP}/pids.max"))?.trim() != config.pids.to_string() {
         return Err(invalid("guest task budget was not applied"));
     }
+    std::fs::create_dir(format!("{CGROUP}/control"))?;
+    std::fs::write(format!("{CGROUP}/control/cgroup.procs"), b"0")?;
+    // The aggregate parent remains empty. Its task ceiling includes PID1,
+    // trusted control and the agent's entire workload subtree.
+    std::fs::write(format!("{CGROUP}/cgroup.subtree_control"), b"+pids")?;
+    std::fs::create_dir(WORKLOAD_GROUP)?;
     OpenOptions::new()
         .write(true)
         .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
-        .open(format!("{CGROUP}/cgroup.procs"))
+        .open(format!("{WORKLOAD_GROUP}/cgroup.procs"))
 }
 
 fn spawn_agent(tasks: &File) -> io::Result<Child> {
@@ -341,14 +350,26 @@ async fn wait_agent(child: &mut Child) -> io::Result<()> {
     }
 }
 
-async fn proxy(stream: SocketStream, pid: u32, identity: GuestBootIdentity) -> io::Result<()> {
+async fn proxy(
+    stream: SocketStream,
+    pid: u32,
+    identity: GuestBootIdentity,
+    barrier: Arc<barrier::Barrier>,
+) -> io::Result<()> {
     let mut host = BufReader::new(stream);
     let request = read_frame(&mut host, MAX_AGENT_FRAME).await?;
     if serde_json::from_slice::<serde_json::Value>(&request)?
         .get("guest_control")
         .is_some()
     {
-        let GuestControlRequest::Info = serde_json::from_slice(&request)?;
+        let control: GuestControlRequest = serde_json::from_slice(&request)?;
+        if !matches!(control, GuestControlRequest::Info) {
+            let info = barrier.request(control).await?;
+            let mut reply = serde_json::to_vec(&info)?;
+            reply.push(b'\n');
+            host.get_mut().write_all(&reply).await?;
+            return host.get_mut().shutdown().await;
+        }
         let observed: u32 = std::fs::read_to_string(format!("{CGROUP}/pids.max"))?
             .trim()
             .parse()
@@ -370,9 +391,26 @@ async fn proxy(stream: SocketStream, pid: u32, identity: GuestBootIdentity) -> i
         host.get_mut().write_all(&reply).await?;
         return host.get_mut().shutdown().await;
     }
+    let mut effect = match barrier.admission.enter().await {
+        Ok(effect) => effect,
+        Err(_) => {
+            let reply = AgentReply::Error(goldenhoop_protocol::ApiError::new(
+                goldenhoop_protocol::ErrorCode::InvalidState,
+                "guest workload admission is closed",
+            ));
+            let mut reply = serde_json::to_vec(&reply)?;
+            reply.push(b'\n');
+            host.get_mut().write_all(&reply).await?;
+            return host.get_mut().shutdown().await;
+        }
+    };
     let mut agent = BufReader::new(agent_connection(pid).await?);
+    effect.dispatched();
     agent.get_mut().write_all(&request).await?;
     let reply = read_frame(&mut agent, MAX_AGENT_FRAME).await?;
+    let _: AgentReply = serde_json::from_slice(&reply)?;
+    effect.confirmed();
+    drop(effect);
     host.get_mut().write_all(&reply).await?;
     host.get_mut().shutdown().await
 }
@@ -409,6 +447,7 @@ pub async fn run() -> io::Result<()> {
         .await
         .map_err(|error| io::Error::new(error.kind(), format!("guest agent readiness: {error}")))?;
     let pid = child.id();
+    let barrier = Arc::new(barrier::Barrier::new(identity.generation, pid)?);
     let listener = GuestControlListener::bind(config.control_port)?;
     let permits = Arc::new(Semaphore::new(8));
     let mut reap = tokio::time::interval(Duration::from_millis(100));
@@ -422,7 +461,8 @@ pub async fn run() -> io::Result<()> {
                 let stream=stream?;
                 if let Ok(permit)=permits.clone().try_acquire_owned() {
                     let identity=identity.clone();
-                    tokio::spawn(async move { let _permit=permit;let _=tokio::time::timeout(Duration::from_secs(120),proxy(stream,pid,identity)).await; });
+                    let barrier=barrier.clone();
+                    tokio::spawn(async move { let _permit=permit;let _=tokio::time::timeout(Duration::from_secs(120),proxy(stream,pid,identity,barrier)).await; });
                 }
             },
             _=reap.tick()=>loop {

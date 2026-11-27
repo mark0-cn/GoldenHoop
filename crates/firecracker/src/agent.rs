@@ -9,7 +9,7 @@ use tokio::io::{AsyncWriteExt, BufReader};
 use crate::{
     CallError, DispatchState,
     api::{ApiClient, authenticated_socket},
-    control::{GUEST_CONTROL_VERSION, GuestControlInfo, GuestControlRequest},
+    control::{GUEST_CONTROL_VERSION, GuestBarrierInfo, GuestControlInfo, GuestControlRequest},
     models::InstanceState,
     vsock::{MAX_AGENT_FRAME, parse_connect_ack, read_frame},
 };
@@ -70,6 +70,66 @@ impl AgentClient {
                 "guest init identity or constraints mismatch",
             ));
         }
+        Ok(info)
+    }
+
+    /// Close/drain guest request admission, freeze the agent and all workloads,
+    /// and sync the root filesystem. Snapshot orchestration remains separate.
+    pub async fn quiesce(&self, barrier: uuid::Uuid) -> Result<GuestBarrierInfo, CallError> {
+        self.barrier_exchange(
+            GuestControlRequest::Quiesce {
+                generation: self.api.peer_identity().instance,
+                barrier,
+            },
+            barrier,
+        )
+        .await
+    }
+
+    pub async fn barrier_status(&self, barrier: uuid::Uuid) -> Result<GuestBarrierInfo, CallError> {
+        self.barrier_exchange(
+            GuestControlRequest::BarrierStatus {
+                generation: self.api.peer_identity().instance,
+                barrier,
+            },
+            barrier,
+        )
+        .await
+    }
+
+    pub async fn thaw(&self, barrier: uuid::Uuid) -> Result<GuestBarrierInfo, CallError> {
+        self.barrier_exchange(
+            GuestControlRequest::Thaw {
+                generation: self.api.peer_identity().instance,
+                barrier,
+            },
+            barrier,
+        )
+        .await
+    }
+
+    async fn barrier_exchange(
+        &self,
+        request: GuestControlRequest,
+        barrier: uuid::Uuid,
+    ) -> Result<GuestBarrierInfo, CallError> {
+        if barrier.is_nil() {
+            return Err(CallError::new(
+                DispatchState::NotSent,
+                ErrorCode::InvalidRequest,
+                "nil guest barrier",
+            ));
+        }
+        self.control_info().await?;
+        let info: GuestBarrierInfo = self.exchange(&request).await?;
+        info.validate(self.api.peer_identity().instance, barrier)
+            .map_err(|message| {
+                CallError::new(
+                    DispatchState::Uncertain,
+                    ErrorCode::BackendUnavailable,
+                    message,
+                )
+            })?;
         Ok(info)
     }
 

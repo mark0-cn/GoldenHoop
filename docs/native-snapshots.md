@@ -25,7 +25,7 @@ separate implementation and acceptance requirement.
 | Increment | Concrete implementation | Required observation |
 | --- | --- | --- |
 | Earlier native allocation/metadata recovery | Bind pending writes and generation allocations to durable producer/object receipts; reconcile only after writer absence | Kill at write/dispatch boundaries; preserve ambiguous/replaced objects; no create or signal replay |
-| Guest quiescence | Separate trusted agent/control from workload task groups; fence every workload start/write path and drain accepted host requests | Actual running command, pending dispatch and concurrent file write cannot cross the acknowledged barrier |
+| Guest quiescence | Private protocol implemented; separate PID1/control from agent/workloads, fence request admission and drain accepted effects | Dedicated KVM gate pending: running command, pending dispatch and concurrent file write cannot cross the acknowledged barrier |
 | Private checkpoint | Pause the actual VMM; capture full state/memory plus a stable drive copy into a bounded owned generation | Independent content/length checks, actual Paused state, unchanged immutable source assets, complete scoped collection |
 | Private single-use memory restore | Claim once; load paused into a new jailed VMM; transition guest authority before workload RPC admission | Real retained memory/file state, new identity, old authority refusal, one target after retries/crashes |
 | Public integration | Persist operations, idempotency, quota and object references; add REST/CLI/Rust/Python clients and actual capability probe | Public success/failure/recovery and deletion on the supported real profile |
@@ -34,14 +34,16 @@ separate implementation and acceptance requirement.
 
 ## Guest barrier and authority
 
-The current guest control protocol only exposes Info, and its generation comes
-from the boot command line. Changing the host VMM ID cannot change that retained
-guest identity. Extend the private protocol explicitly; old guests must refuse
-snapshot requests before capture.
+The private guest protocol v2 now implements generation-bound quiesce/status/thaw
+as described in [native quiescence](native-quiescence.md); its real KVM gate is
+still required. Guest generation still comes from the boot command line.
+Changing the host VMM ID cannot change that retained identity. Restore authority
+transition is a separate unimplemented protocol operation; old guests must
+refuse capture/restore requests that require unsupported authority semantics.
 
-PID1 remains outside workload task groups. A future barrier must close workload
-admission, drain accepted RPC effects, freeze the exact owned workload groups,
-observe frozen state and sync guest filesystems before host pause. The trusted
+PID1 remains outside workload task groups. The implemented private barrier closes
+workload admission, drains accepted RPC effects, freezes the exact owned workload
+group, observes frozen state and syncs the root filesystem before host pause. The trusted
 control service must remain reachable to report the barrier and transition its
 authority. Keep the configured aggregate guest task limit above both trusted and
 workload subgroups; restructuring must not exempt the agent or its descendants
