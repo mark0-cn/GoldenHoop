@@ -169,6 +169,15 @@ async fn call(machine: &mut Machine, stream: UnixStream) -> Result<bool> {
 /// Root-only native service. It retains the jailer/VMM handles and bounded
 /// console drain across API/worker failures, then confirms collection at expiry.
 pub async fn run_supervisor(config: PathBuf, sandbox: Uuid, generation: Uuid) -> Result<()> {
+    run_supervisor_with_input(config, sandbox, generation, None).await
+}
+
+pub async fn run_supervisor_with_input(
+    config: PathBuf,
+    sandbox: Uuid,
+    generation: Uuid,
+    input: Option<File>,
+) -> Result<()> {
     if unsafe { libc::geteuid() } != 0 {
         return Err(invalid("native supervisor requires root").into());
     }
@@ -177,6 +186,15 @@ pub async fn run_supervisor(config: PathBuf, sandbox: Uuid, generation: Uuid) ->
     let record_path = cfg.record_path(sandbox);
     let mut record: VmJournal = read_json(&record_path)?;
     record.validate(&cfg, sandbox)?;
+    match (&record.selected_image, &input) {
+        (None, None) => (),
+        (Some(info), Some(file)) => cfg
+            .prepared_images
+            .as_ref()
+            .ok_or_else(|| invalid("prepared images are not configured"))?
+            .validate_input(info, file)?,
+        _ => return Err(invalid("supervisor image descriptor and journal differ").into()),
+    }
     if record.owner.generation != generation || record.phase != "reserved" {
         return Err(invalid("native supervisor launch intent mismatch").into());
     }
@@ -208,11 +226,14 @@ pub async fn run_supervisor(config: PathBuf, sandbox: Uuid, generation: Uuid) ->
     record.supervisor = Some(identity);
     atomic_json(&record_path, &record)?;
     let original = record.original_cgroup.clone();
-    let input = record.artifacts.clone();
+    let artifacts = record.artifacts.clone();
     let mut machine = Machine::persistent(&cfg, record)?;
+    if let Some(file) = input {
+        machine.prepared_input(file)?;
+    }
     let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let started = tokio::select! {
-        result=machine.start(&input)=>result,
+        result=machine.start(&artifacts)=>result,
         _=term.recv()=>Err(invalid("native creation interrupted; collecting owned generation").into()),
     };
     let result:Result<()>=match started {

@@ -182,6 +182,7 @@ pub(crate) struct Machine {
     persistent: Option<(PathBuf, VmJournal)>,
     resources: goldenhoop_protocol::ResourceLimits,
     recovered: bool,
+    rootfs_input: Option<File>,
 }
 
 impl Machine {
@@ -214,6 +215,7 @@ impl Machine {
                 pids: 256,
             },
             recovered: false,
+            rootfs_input: None,
         }
     }
 
@@ -231,6 +233,22 @@ impl Machine {
 
     pub(crate) fn record(&self) -> &VmJournal {
         &self.persistent.as_ref().expect("persistent machine").1
+    }
+
+    pub(crate) fn prepared_input(&mut self, file: File) -> Result<()> {
+        if self.recovered
+            || self.rootfs_input.is_some()
+            || self
+                .persistent
+                .as_ref()
+                .is_none_or(|(_, record)| record.selected_image.is_none())
+        {
+            return Err(
+                invalid("prepared input does not match a fresh selected generation").into(),
+            );
+        }
+        self.rootfs_input = Some(file);
+        Ok(())
     }
     pub(crate) fn record_error(&mut self, message: String) -> Result<()> {
         let (_, record) = self.persistent.as_mut().expect("persistent machine");
@@ -440,6 +458,13 @@ impl Machine {
 
     fn prepare(&mut self, input: &BootInput) -> Result<()> {
         self.check_expiry()?;
+        let selected = self
+            .persistent
+            .as_ref()
+            .is_some_and(|(_, record)| record.selected_image.is_some());
+        if selected != self.rootfs_input.is_some() {
+            return Err(invalid("fresh selected disk requires exactly its inherited input").into());
+        }
         if unsafe { libc::geteuid() } != 0 || !cfg!(target_arch = "x86_64") {
             return Err(invalid("jailed hardware boot requires Linux x86_64 root").into());
         }
@@ -477,7 +502,17 @@ impl Machine {
         )?;
         copy_artifact(&input.jailer, &self.root.join("bin/jailer"), 0o500)?;
         copy_artifact(&input.kernel, &self.jail.join("kernel"), 0o444)?;
-        copy_artifact(&input.rootfs, &self.jail.join("rootfs.ext4"), 0o600)?;
+        if let Some(source) = self.rootfs_input.take() {
+            crate::fileio::copy(
+                source,
+                &self.jail.join("rootfs.ext4"),
+                &input.rootfs.sha256,
+                input.rootfs.size,
+                0o600,
+            )?;
+        } else {
+            copy_artifact(&input.rootfs, &self.jail.join("rootfs.ext4"), 0o600)?;
+        }
         self.check_expiry()?;
         let rootfs = File::open(self.jail.join("rootfs.ext4"))?;
         if unsafe { libc::fchown(rootfs.as_raw_fd(), VMM_UID, VMM_UID) } != 0 {

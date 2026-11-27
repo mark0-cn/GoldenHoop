@@ -22,6 +22,7 @@ struct Inner {
     children: std::sync::Mutex<std::collections::HashMap<Uuid, OwnedChild>>,
     recovered: std::collections::BTreeSet<Uuid>,
     metadata_recovery: metadata::Recovery,
+    image_validation: Arc<tokio::sync::Semaphore>,
 }
 struct OwnedChild {
     pid: u32,
@@ -32,6 +33,16 @@ enum ChildState {
     NotOwned,
     Running,
     Exited(String),
+}
+fn probe_context(cfg: &DriverConfig) -> Result<String> {
+    let namespace = std::fs::metadata("/proc/self/ns/pid")?;
+    let mut digest = Sha256::new();
+    digest.update(b"goldenhoop.profile-probe.v1\0");
+    digest.update(super::manager::config_sha(cfg)?.as_bytes());
+    digest.update(boot_id()?.as_bytes());
+    digest.update(namespace.dev().to_le_bytes());
+    digest.update(namespace.ino().to_le_bytes());
+    Ok(format!("{:x}", digest.finalize()))
 }
 fn inventory(cfg: &DriverConfig) -> Result<Vec<VmJournal>> {
     let mut records = Vec::new();
@@ -83,6 +94,93 @@ pub(super) fn profile(cfg: &DriverConfig) -> RuntimeProfile {
 }
 
 impl NativeEngine {
+    async fn check_input(&self, input: &image::Input) -> Result<()> {
+        let policy = self
+            .inner
+            .cfg
+            .prepared_images
+            .clone()
+            .ok_or_else(|| invalid("prepared images are disabled"))?;
+        let info = input.info.clone();
+        let file = input.file.try_clone()?;
+        let permit = self.inner.image_validation.clone().acquire_owned().await?;
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            policy.validate_input(&info, &file)
+        })
+        .await??;
+        Ok(())
+    }
+    pub(super) fn validate_prepared_info(
+        &self,
+        sandbox: &Sandbox,
+        request: &CreateSandbox,
+        info: &goldenhoop_images::ReadyImageInfo,
+    ) -> Result<()> {
+        if request.profile != PROFILE
+            || sandbox.profile != PROFILE
+            || sandbox.id.is_nil()
+            || sandbox.image != request.image
+            || request.image != info.reference.to_string()
+        {
+            return Err(ApiError::new(
+                ErrorCode::InvalidRequest,
+                "prepared image request scope differs",
+            )
+            .into());
+        }
+        self.inner
+            .cfg
+            .prepared_images
+            .as_ref()
+            .ok_or_else(|| invalid("prepared images are not configured"))?
+            .validate_info(info)
+    }
+    pub(super) async fn create_prepared(
+        &self,
+        sandbox: &Sandbox,
+        request: &CreateSandbox,
+        info: goldenhoop_images::ReadyImageInfo,
+        file: File,
+    ) -> std::result::Result<RuntimeHandle, ApiError> {
+        self.validate_prepared_info(sandbox, request, &info)
+            .map_err(|error| {
+                error
+                    .downcast_ref::<ApiError>()
+                    .cloned()
+                    .unwrap_or_else(|| unavailable(error))
+            })?;
+        self.create_with_input(sandbox, request, Some(image::Input { info, file }))
+            .await
+    }
+    async fn create_with_input(
+        &self,
+        sandbox: &Sandbox,
+        request: &CreateSandbox,
+        input: Option<image::Input>,
+    ) -> std::result::Result<RuntimeHandle, ApiError> {
+        let lock = self.vm_lock(sandbox.id).await;
+        let _guard = lock.lock().await;
+        let result = self.create_owned(sandbox, request, input).await;
+        if result.is_err()
+            && let Ok(mut record) = self.load(sandbox.id)
+            && !record.ever_ready
+            && request_digest(request).is_ok_and(|digest| digest == record.owner.request_sha256)
+        {
+            if let Err(error) = &result
+                && !self.supervisor_alive(&record).unwrap_or(true)
+            {
+                let _ = self.retain_dead_supervisor_diagnostics(&mut record, &error.to_string());
+            }
+            let _ = self.remove_owned(&record).await;
+        }
+        result.map_err(|error| {
+            error
+                .downcast_ref::<ApiError>()
+                .cloned()
+                .unwrap_or_else(|| unavailable(error))
+        })
+    }
     pub fn connect(cfg: DriverConfig, lock: File) -> Result<Self> {
         cfg.validate()?;
         if unsafe { libc::geteuid() } != 0 {
@@ -90,6 +188,9 @@ impl NativeEngine {
         }
         for name in ["vm", "records"] {
             private_directory(&cfg.data_root.join(name))?;
+        }
+        if let Some(policy) = &cfg.prepared_images {
+            policy.staging_directory()?;
         }
         // Verify the actual helper before granting it root lifecycle authority.
         if digest(trusted_file(&cfg.supervisor.path)?)?
@@ -108,12 +209,7 @@ impl NativeEngine {
                 }
                 let record: VmJournal = serde_json::from_slice(bytes)?;
                 record.validate(&cfg, parsed)?;
-                if record.artifacts != cfg.artifacts || record.supervisor_artifact != cfg.supervisor
-                {
-                    return Err(
-                        invalid("pending journal artifacts differ from configuration").into(),
-                    );
-                }
+                cfg.validate_journal_image(&record)?;
                 Ok(())
             })?;
         let recovered = inventory(&cfg)?
@@ -132,6 +228,7 @@ impl NativeEngine {
                 children: std::sync::Mutex::new(Default::default()),
                 recovered,
                 metadata_recovery,
+                image_validation: Arc::new(tokio::sync::Semaphore::new(2)),
             }),
         })
     }
@@ -178,13 +275,10 @@ impl NativeEngine {
                     authenticated: false,
                 };
                 let check = async {
-                    let cfg = &actor.inner.cfg;
                     if !record.ever_ready
                         || !["running", "paused"].contains(&record.phase.as_str())
                         || record.expired()?
                         || record.process.is_none()
-                        || record.artifacts != cfg.artifacts
-                        || record.supervisor_artifact != cfg.supervisor
                     {
                         return Err(
                             invalid("native generation requires further reconciliation").into()
@@ -301,12 +395,18 @@ impl NativeEngine {
         inventory(&self.inner.cfg)
     }
 
-    fn admit(&self, resources: &ResourceLimits) -> Result<()> {
+    fn admit(&self, resources: &ResourceLimits, disk_bytes: u64) -> Result<()> {
         let mut cpu = u64::from(resources.cpu_millis);
         let mut memory = resources
             .memory_bytes
             .checked_add(256 * MIB + super::manager::MANAGER_MEMORY)
             .ok_or_else(|| invalid("native reservation overflow"))?;
+        if let Some(policy) = &self.inner.cfg.prepared_images {
+            memory = memory
+                .checked_add(policy.staging_bytes)
+                .ok_or_else(|| invalid("native staging reservation overflow"))?;
+        }
+        let mut disk = disk_bytes;
         let mut count = 1u32;
         for record in self.records()? {
             if record.phase != "collected" {
@@ -320,11 +420,20 @@ impl NativeEngine {
                 count = count
                     .checked_add(1)
                     .ok_or_else(|| invalid("native VM reservation overflow"))?;
+                disk = disk
+                    .checked_add(record.artifacts.rootfs.size)
+                    .ok_or_else(|| invalid("native disk reservation overflow"))?;
             }
         }
         if cpu > u64::from(self.inner.cfg.capacity.cpu_millis)
             || memory > self.inner.cfg.capacity.memory_bytes
             || count > self.inner.cfg.capacity.max_vms
+            || self
+                .inner
+                .cfg
+                .prepared_images
+                .as_ref()
+                .is_some_and(|policy| disk > policy.disk_budget_bytes)
         {
             return Err(ApiError::new(
                 ErrorCode::QuotaExceeded,
@@ -360,7 +469,11 @@ impl NativeEngine {
         Ok(())
     }
 
-    fn spawn_supervisor(&self, record: &VmJournal) -> Result<tokio::process::Child> {
+    fn spawn_supervisor(
+        &self,
+        record: &VmJournal,
+        input: Option<File>,
+    ) -> Result<tokio::process::Child> {
         let group = self
             .inner
             .cfg
@@ -392,6 +505,18 @@ impl NativeEngine {
             return Err(invalid("native supervisor diagnostic file ownership mismatch").into());
         }
         let mut command = tokio::process::Command::new(&record.supervisor_artifact.path);
+        let inherited = input
+            .as_ref()
+            .map(|file| {
+                let fd = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 3) };
+                if fd < 0 {
+                    Err(io::Error::last_os_error())
+                } else {
+                    Ok(unsafe { File::from_raw_fd(fd) })
+                }
+            })
+            .transpose()?;
+        let input_descriptor = inherited.as_ref().map(AsRawFd::as_raw_fd);
         command
             .arg("supervise")
             .arg("--config")
@@ -406,6 +531,9 @@ impl NativeEngine {
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(stderr);
+        if let Some(fd) = input_descriptor {
+            command.arg("--image-fd").arg(fd.to_string());
+        }
         // SAFETY: only async-signal-safe Linux syscalls execute after fork. The
         // inherited CLOEXEC installation lease fences restart until cgroup join.
         unsafe {
@@ -417,6 +545,11 @@ impl NativeEngine {
                     return Err(io::Error::last_os_error());
                 }
                 if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                if let Some(fd) = input_descriptor
+                    && libc::fcntl(fd, libc::F_SETFD, 0) != 0
+                {
                     return Err(io::Error::last_os_error());
                 }
                 Ok(())
@@ -560,12 +693,12 @@ impl NativeEngine {
         &self,
         sandbox: &Sandbox,
         request: &CreateSandbox,
+        mut input: Option<image::Input>,
     ) -> Result<RuntimeHandle> {
         let cfg = &self.inner.cfg;
         if request.profile != PROFILE
             || sandbox.profile != PROFILE
-            || request.image != cfg.image
-            || sandbox.image != cfg.image
+            || request.image != sandbox.image
             || sandbox.id.is_nil()
             || sandbox.resources != request.resources
             || request.network != NetworkPolicy::default()
@@ -614,8 +747,20 @@ impl NativeEngine {
         let path = cfg.record_path(sandbox.id);
         if path.try_exists()? {
             let mut record = self.load(sandbox.id)?;
+            let expected_image = record
+                .selected_image
+                .as_ref()
+                .map(|image| image.reference.to_string())
+                .unwrap_or_else(|| cfg.image.clone());
             if record.owner.request_sha256 != digest
                 || record.owner.expires_at != sandbox.expires_at
+                || request.image != expected_image
+                || input.as_ref().is_some_and(|input| {
+                    record
+                        .selected_image
+                        .as_ref()
+                        .is_none_or(|selected| selected.reference != input.info.reference)
+                })
             {
                 return Err(ApiError::new(
                     ErrorCode::Conflict,
@@ -633,7 +778,11 @@ impl NativeEngine {
             if record.supervisor.is_none()
                 && record.phase == "reserved"
                 && !self.inner.recovered.contains(&sandbox.id)
+                && (record.selected_image.is_none() || input.is_some())
             {
+                if let Some(input) = &input {
+                    self.check_input(input).await?;
+                }
                 let paths = cfg.paths(record.owner.generation)?;
                 if !paths.root.try_exists()?
                     && !paths.vm_cgroup.try_exists()?
@@ -643,17 +792,38 @@ impl NativeEngine {
                         supervisor::collect_supervisor_cgroup(cfg, &record)?;
                     }
                     self.prepare_supervisor_group(&mut record)?;
-                    let child = self.spawn_supervisor(&record)?;
+                    let child =
+                        self.spawn_supervisor(&record, input.take().map(|input| input.file))?;
                     return self.wait_ready(sandbox.id, Some(child)).await;
                 }
             }
             return self.wait_ready(sandbox.id, None).await;
         }
+        if let Some(input) = &input {
+            if request.image != input.info.reference.to_string() {
+                return Err(ApiError::new(
+                    ErrorCode::InvalidRequest,
+                    "prepared image reference differs from request",
+                )
+                .into());
+            }
+            self.check_input(input).await?;
+        } else if request.image != cfg.image {
+            return Err(ApiError::new(
+                ErrorCode::InvalidRequest,
+                "native new image requires a verified private input",
+            )
+            .into());
+        }
         if probe_kvm().state != KvmState::Ready {
             return Err(invalid("actual KVM is unavailable").into());
         }
         let admission = self.inner.operations.lock().await;
-        self.admit(&request.resources)?;
+        let disk_bytes = input
+            .as_ref()
+            .map(|input| input.info.manifest.disk.size_bytes)
+            .unwrap_or(cfg.artifacts.rootfs.size);
+        self.admit(&request.resources, disk_bytes)?;
         let generation = Uuid::new_v4();
         let paths = cfg.paths(generation)?;
         if paths.root.try_exists()?
@@ -677,7 +847,12 @@ impl NativeEngine {
                 host_boot_id: boot_id()?,
                 boot_deadline_ns: deadline,
             },
-            artifacts: cfg.artifacts.clone(),
+            artifacts: match &input {
+                Some(input) => cfg.selected_artifacts(generation, &input.info)?,
+                None => cfg.artifacts.clone(),
+            },
+            selected_image: input.as_ref().map(|input| input.info.clone()),
+            profile_probe_context_sha256: None,
             resources: request.resources.clone(),
             supervisor: None,
             supervisor_cgroup_identity: None,
@@ -697,7 +872,7 @@ impl NativeEngine {
         atomic_json(&path, &record)?;
         let launch = (|| -> Result<_> {
             self.prepare_supervisor_group(&mut record)?;
-            self.spawn_supervisor(&record)
+            self.spawn_supervisor(&record, input.take().map(|input| input.file))
         })();
         drop(admission);
         match launch {
@@ -1127,8 +1302,44 @@ impl RuntimeDriver for NativeEngine {
             self.remove(&handle).await?;
             Ok(())
         };
-        let checked: Result<()> = check.await;
-        if checked.is_ok() {
+        let checked: Result<()> = check.await.and_then(|()| {
+            let mut record = self.load(id)?;
+            record.profile_probe_context_sha256 = Some(probe_context(&self.inner.cfg)?);
+            record.validate(&self.inner.cfg, id)?;
+            atomic_json(&self.inner.cfg.record_path(id), &record)
+        });
+        // Resource exhaustion is not loss of support for already-running VMs.
+        // Reuse only an actual completed full probe for this exact config/boot,
+        // and resample an authenticated live generation without mutating it.
+        let recovered_probe = async {
+            if !checked.as_ref().err().is_some_and(|error| {
+                error
+                    .downcast_ref::<ApiError>()
+                    .is_some_and(|error| error.code == ErrorCode::QuotaExceeded)
+            }) || self.inner.cfg.record_path(id).try_exists()?
+                || probe_kvm().state != KvmState::Ready
+            {
+                return Ok::<bool, Box<dyn std::error::Error + Send + Sync>>(false);
+            }
+            let expected = probe_context(&self.inner.cfg)?;
+            let boot = boot_id()?;
+            if !self.records()?.iter().any(|record| {
+                record.owner.host_boot_id == boot
+                    && record.profile_probe_context_sha256.as_deref() == Some(expected.as_str())
+            }) {
+                return Ok(false);
+            }
+            Ok(self.observe_recovery().await?.iter().any(|observed| {
+                observed.authenticated
+                    && matches!(
+                        observed.observed_state,
+                        ObservedState::Running | ObservedState::Paused
+                    )
+            }))
+        }
+        .await
+        .unwrap_or(false);
+        if checked.is_ok() || recovered_probe {
             result.availability = Availability::Available;
             result.reason = None;
             result.capabilities.extend([
@@ -1155,30 +1366,7 @@ impl RuntimeDriver for NativeEngine {
         sandbox: &Sandbox,
         request: &CreateSandbox,
     ) -> std::result::Result<RuntimeHandle, ApiError> {
-        let lock = self.vm_lock(sandbox.id).await;
-        let _guard = lock.lock().await;
-        let result = self.create_owned(sandbox, request).await;
-        if result.is_err()
-            && let Ok(mut record) = self.load(sandbox.id)
-            && !record.ever_ready
-            && request_digest(request).is_ok_and(|digest| digest == record.owner.request_sha256)
-        {
-            if let Err(error) = &result
-                && !self.supervisor_alive(&record).unwrap_or(true)
-            {
-                let _ = self.retain_dead_supervisor_diagnostics(&mut record, &error.to_string());
-            }
-            // A rejected retry grants no extra authority over an adopted
-            // supervisor. Use the same process/group/acknowledgement fences
-            // as explicit removal, and retain the original create error.
-            let _ = self.remove_owned(&record).await;
-        }
-        result.map_err(|error| {
-            error
-                .downcast_ref::<ApiError>()
-                .cloned()
-                .unwrap_or_else(|| unavailable(error))
-        })
+        self.create_with_input(sandbox, request, None).await
     }
     async fn inspect(
         &self,
@@ -1324,6 +1512,7 @@ mod recovery_tests {
                 rootfs: artifact.clone(),
             },
             image: format!("sha256:{}", artifact.sha256),
+            prepared_images: None,
             supervisor: Artifact {
                 path: supervisor_path,
                 sha256,
@@ -1369,6 +1558,8 @@ mod recovery_tests {
                 boot_deadline_ns: boottime_ns().unwrap() + 120_000_000_000,
             },
             artifacts: cfg.artifacts.clone(),
+            selected_image: None,
+            profile_probe_context_sha256: None,
             resources,
             supervisor: None,
             supervisor_cgroup_identity: None,
@@ -1397,7 +1588,7 @@ mod recovery_tests {
         assert!(!observed[0].authenticated && observed[0].observed_state == ObservedState::Unknown);
         let outcome = tokio::time::timeout(
             Duration::from_millis(80),
-            engine.create_owned(&sandbox, &request),
+            engine.create_owned(&sandbox, &request, None),
         )
         .await;
         let unchanged = std::fs::read(cfg.record_path(id)).unwrap() == snapshot;

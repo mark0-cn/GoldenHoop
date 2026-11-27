@@ -1,7 +1,11 @@
 //! Durable native ownership. A separate Rust supervisor owns each VMM so worker
 //! death neither breaks its console pipes nor suspends absolute expiry.
 pub(crate) mod cgroup;
+mod descriptor;
 mod driver;
+mod image;
+pub use image::PreparedImagePolicy;
+pub use image::inherited_input;
 mod manager;
 mod metadata;
 pub(crate) use metadata::atomic_json;
@@ -12,7 +16,7 @@ mod supervisor;
 #[cfg(test)]
 mod tests;
 pub use manager::{FirecrackerDriver, run_manager};
-pub use supervisor::run_supervisor;
+pub use supervisor::{run_supervisor, run_supervisor_with_input};
 
 use crate::machine::{Artifact, BootInput, ProcessObservation, digest, trusted_file};
 use chrono::{DateTime, Utc};
@@ -62,6 +66,8 @@ pub struct DriverConfig {
     pub artifacts: BootInput,
     pub supervisor: Artifact,
     pub image: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prepared_images: Option<PreparedImagePolicy>,
     pub max_resources: ResourceLimits,
     #[serde(default)]
     pub capacity: HostCapacity,
@@ -100,6 +106,12 @@ impl DriverConfig {
             return Err(invalid("invalid native driver configuration").into());
         }
         self.paths(Uuid::new_v4())?;
+        if let Some(policy) = &self.prepared_images {
+            policy.validate()?;
+            if policy.disk_budget_bytes < self.artifacts.rootfs.size {
+                return Err(invalid("native disk budget is smaller than its fixed image").into());
+            }
+        }
         Ok(())
     }
     pub(crate) fn paths(&self, generation: Uuid) -> Result<VmPaths> {
@@ -167,6 +179,10 @@ pub(crate) struct VmJournal {
     pub format: u32,
     pub owner: VmOwner,
     pub artifacts: BootInput,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_image: Option<goldenhoop_images::ReadyImageInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_probe_context_sha256: Option<String>,
     pub resources: ResourceLimits,
     pub supervisor: Option<ProcessIdentity>,
     #[serde(default)]
@@ -204,6 +220,19 @@ impl VmJournal {
             || self.owner.generation.is_nil()
             || self.owner.request_sha256.len() != 64
             || self.root_collection_started && self.vm_root.is_none()
+            || self
+                .profile_probe_context_sha256
+                .as_ref()
+                .is_some_and(|sha| {
+                    sha.len() != 64
+                        || !sha
+                            .bytes()
+                            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                        || self.phase != "collected"
+                        || !self.ever_ready
+                        || self.process.is_none()
+                        || self.error.is_some()
+                })
             || ![
                 "reserved",
                 "preparing",
@@ -229,6 +258,7 @@ impl VmJournal {
             },
         )?;
         cfg.paths(self.owner.generation)?;
+        cfg.validate_journal_image(self)?;
         Ok(())
     }
 }

@@ -34,6 +34,8 @@ enum Action {
         sandbox: uuid::Uuid,
         #[arg(long)]
         generation: uuid::Uuid,
+        #[arg(long, hide = true)]
+        image_fd: Option<u32>,
     },
     /// Exercise the native driver traits using private root-owned input files.
     DriverCall {
@@ -78,12 +80,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             config,
             sandbox,
             generation,
+            image_fd,
         } => {
             #[cfg(target_os = "linux")]
-            goldenhoop_firecracker::lifecycle::run_supervisor(config, sandbox, generation).await?;
+            {
+                let input = image_fd
+                    .map(goldenhoop_firecracker::lifecycle::inherited_input)
+                    .transpose()?;
+                goldenhoop_firecracker::lifecycle::run_supervisor_with_input(
+                    config, sandbox, generation, input,
+                )
+                .await?;
+            }
             #[cfg(not(target_os = "linux"))]
             {
-                let _ = (config, sandbox, generation);
+                let _ = (config, sandbox, generation, image_fd);
                 return Err("native supervisor requires Linux root/KVM".into());
             }
         }

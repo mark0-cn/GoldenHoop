@@ -217,7 +217,7 @@ impl ImagePreparer {
         id: Uuid,
         policy: &BuilderInventory,
     ) -> Result<ReadyImageInfo, ApiError> {
-        let lease = self.coordinator.acquire(id)?;
+        let lease = self.coordinator.acquire_reader(id)?;
         let job = self.store.image_job(id).await?;
         let (value, info) = ready_state(&job, &self.blobs, policy, self.allow_runc_development)?;
         lease.check(value.coordination.as_ref(), true)?;
@@ -235,7 +235,7 @@ impl ImagePreparer {
         staging_root: &Path,
     ) -> Result<MaterializedImage, ApiError> {
         reference.validate()?;
-        let lease = self.coordinator.acquire(reference.id)?;
+        let lease = self.coordinator.acquire_reader(reference.id)?;
         let job = self.store.image_job(reference.id).await?;
         let (value, info) = ready_state(&job, &self.blobs, policy, self.allow_runc_development)?;
         if &info.reference != reference {

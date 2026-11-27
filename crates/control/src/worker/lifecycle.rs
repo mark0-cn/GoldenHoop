@@ -160,7 +160,12 @@ impl Worker {
                     .finish_operations(id, "create", OperationState::Running, None)
                     .await?;
                 let handle = driver
-                    .create(&stored.sandbox, &self.runtime_request(&stored)?)
+                    .create_workload(
+                        &self.store,
+                        &self.artifacts,
+                        &stored.sandbox,
+                        &self.runtime_request(&stored)?,
+                    )
                     .await?;
                 stored.handle = Some(handle);
                 self.save(stored, SandboxState::Running, CleanupState::Pending, None)
@@ -187,7 +192,12 @@ impl Worker {
                     .save(stored, SandboxState::Starting, CleanupState::Pending, None)
                     .await?;
                 let handle = driver
-                    .create(&stored.sandbox, &self.runtime_request(&stored)?)
+                    .create_workload(
+                        &self.store,
+                        &self.artifacts,
+                        &stored.sandbox,
+                        &self.runtime_request(&stored)?,
+                    )
                     .await?;
                 stored.handle = Some(handle);
                 self.save(stored, SandboxState::Running, CleanupState::Pending, None)

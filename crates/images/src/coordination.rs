@@ -209,6 +209,12 @@ impl Coordinator {
         Ok(result)
     }
     pub(crate) fn acquire(&self, id: Uuid) -> Result<Lease, ApiError> {
+        self.acquire_mode(id, libc::LOCK_EX)
+    }
+    pub(crate) fn acquire_reader(&self, id: Uuid) -> Result<Lease, ApiError> {
+        self.acquire_mode(id, libc::LOCK_SH)
+    }
+    fn acquire_mode(&self, id: Uuid, mode: libc::c_int) -> Result<Lease, ApiError> {
         if id.is_nil() {
             return Err(conflict("invalid image job lock identity"));
         }
@@ -264,7 +270,7 @@ impl Coordinator {
             return Err(conflict("image lock ownership/type/content differs"));
         }
         // SAFETY: flock uses this live descriptor and nonblocking integer flags.
-        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+        if unsafe { libc::flock(file.as_raw_fd(), mode | libc::LOCK_NB) } != 0 {
             return Err(conflict("image job has an active producer or collector"));
         }
         let actual =
@@ -291,6 +297,37 @@ impl Coordinator {
 mod tests {
     use super::*;
     use std::os::unix::fs::{PermissionsExt, symlink};
+
+    #[test]
+    fn actual_shared_readers_coexist_and_exclude_producers_until_both_release() {
+        let Some((directory, coordinator)) = fixture() else {
+            return;
+        };
+        let id = Uuid::new_v4();
+        let release = |lease: Lease| {
+            // Explicit fixture unlock avoids a parallel test fork temporarily
+            // retaining this test's descriptions until its CLOEXEC completes.
+            assert_eq!(
+                unsafe { libc::flock(lease._file.as_raw_fd(), libc::LOCK_UN) },
+                0
+            );
+            drop(lease);
+        };
+        let producer = coordinator.acquire(id).unwrap();
+        assert!(coordinator.acquire_reader(id).is_err());
+        let stamp = producer.stamp.clone();
+        release(producer);
+        let first = coordinator.acquire_reader(id).unwrap();
+        let second = coordinator.acquire_reader(id).unwrap();
+        first.check(Some(&stamp), false).unwrap();
+        second.check(Some(&stamp), false).unwrap();
+        assert!(coordinator.acquire(id).is_err());
+        release(first);
+        assert!(coordinator.acquire(id).is_err());
+        release(second);
+        release(coordinator.acquire(id).unwrap());
+        directory.close().unwrap();
+    }
 
     fn fixture() -> Option<(tempfile::TempDir, Coordinator)> {
         if unsafe { libc::geteuid() } != 0 {

@@ -44,7 +44,15 @@ struct ManagerRecord {
 #[serde(tag = "method", rename_all = "snake_case", deny_unknown_fields)]
 enum Operation {
     Call { call: Box<DriverCall> },
+    CreatePrepared { create: Box<PreparedCreate> },
     Shutdown,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PreparedCreate {
+    sandbox: Sandbox,
+    request: CreateSandbox,
+    image: goldenhoop_images::ReadyImageInfo,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -63,8 +71,19 @@ struct Reply {
     result: std::result::Result<serde_json::Value, ApiError>,
 }
 
-fn config_sha(cfg: &DriverConfig) -> Result<String> {
+pub(super) fn config_sha(cfg: &DriverConfig) -> Result<String> {
     Ok(format!("{:x}", Sha256::digest(serde_json::to_vec(cfg)?)))
+}
+fn decode_reply(frame: &[u8], owner: &ManagerRecord, pidfd: &OwnedFd) -> Result<Reply> {
+    let reply: Reply = serde_json::from_slice(frame)?;
+    if reply.installation_id != owner.installation_id
+        || reply.epoch != owner.epoch
+        || reply.config_sha256 != owner.config_sha256
+        || pidfd_exited(pidfd)?
+    {
+        return Err(invalid("native manager response ownership mismatch").into());
+    }
+    Ok(reply)
 }
 fn manager_group(cfg: &DriverConfig, epoch: Uuid) -> PathBuf {
     Path::new("/sys/fs/cgroup").join(format!(
@@ -161,6 +180,7 @@ impl FirecrackerDriver {
         &self,
         operation: Operation,
         duration: Duration,
+        input: Option<&File>,
     ) -> std::result::Result<serde_json::Value, ApiError> {
         let exchange = async {
             let (owner, pidfd) = self.manager()?;
@@ -188,15 +208,21 @@ impl FirecrackerDriver {
             }
             bytes.push(b'\n');
             stream.get_mut().write_all(&bytes).await?;
-            let frame = read_frame(&mut stream, FRAME_LIMIT).await?;
-            let reply: Reply = serde_json::from_slice(&frame)?;
-            if reply.installation_id != owner.installation_id
-                || reply.epoch != owner.epoch
-                || reply.config_sha256 != owner.config_sha256
-                || pidfd_exited(&pidfd)?
-            {
-                return Err(invalid("native manager response ownership mismatch").into());
+            if let Some(file) = input {
+                let frame = read_frame(&mut stream, FRAME_LIMIT).await?;
+                let ready = decode_reply(&frame, &owner, &pidfd)?;
+                match ready.result {
+                    Err(error) => return Ok(Err(error)),
+                    Ok(value) if value == serde_json::json!({"image_input":"ready"}) => (),
+                    _ => return Err(invalid("native image input acknowledgement differs").into()),
+                }
+                if !stream.buffer().is_empty() {
+                    return Err(invalid("unexpected buffered bytes before image handoff").into());
+                }
+                super::descriptor::send(stream.get_ref(), file).await?;
             }
+            let frame = read_frame(&mut stream, FRAME_LIMIT).await?;
+            let reply = decode_reply(&frame, &owner, &pidfd)?;
             Ok::<_, Box<dyn std::error::Error + Send + Sync>>(reply.result)
         };
         tokio::time::timeout(duration, exchange)
@@ -215,12 +241,53 @@ impl FirecrackerDriver {
                     call: Box::new(call),
                 },
                 duration,
+                None,
             )
             .await?;
         serde_json::from_value(value).map_err(|_| unavailable())
     }
     pub async fn profile_snapshot(&self) -> RuntimeProfile {
         self.profile.read().await.clone()
+    }
+    pub fn prepared_image_policy(&self) -> Option<&PreparedImagePolicy> {
+        self.cfg.prepared_images.as_ref()
+    }
+    pub async fn create_prepared(
+        &self,
+        sandbox: &Sandbox,
+        request: &CreateSandbox,
+        image: goldenhoop_images::ReadyImageInfo,
+        file: File,
+    ) -> std::result::Result<RuntimeHandle, ApiError> {
+        let policy = self.cfg.prepared_images.as_ref().ok_or_else(|| {
+            ApiError::new(
+                ErrorCode::UnsupportedCapability,
+                "native prepared images are not configured",
+            )
+        })?;
+        policy.validate_info(&image).map_err(|_| {
+            ApiError::new(ErrorCode::InvalidRequest, "prepared image policy differs")
+        })?;
+        if sandbox.image != request.image || request.image != image.reference.to_string() {
+            return Err(ApiError::new(
+                ErrorCode::InvalidRequest,
+                "prepared image request differs",
+            ));
+        }
+        let value = self
+            .exchange(
+                Operation::CreatePrepared {
+                    create: Box::new(PreparedCreate {
+                        sandbox: sandbox.clone(),
+                        request: request.clone(),
+                        image,
+                    }),
+                },
+                Duration::from_secs(150),
+                Some(&file),
+            )
+            .await?;
+        serde_json::from_value(value).map_err(|_| unavailable())
     }
     pub async fn reap_expired(&self) -> std::result::Result<Vec<Uuid>, ApiError> {
         self.call(DriverCall::Reap).await
@@ -229,7 +296,7 @@ impl FirecrackerDriver {
     /// and observe actual service/process/cgroup collection.
     pub async fn request_manager_shutdown(&self) -> std::result::Result<(), ApiError> {
         let value = self
-            .exchange(Operation::Shutdown, Duration::from_secs(10))
+            .exchange(Operation::Shutdown, Duration::from_secs(10), None)
             .await?;
         if value != serde_json::json!({"stop_requested":true,"cleanup":"pending"}) {
             return Err(unavailable());
@@ -386,6 +453,44 @@ async fn serve(
     let result = match request.operation {
         Operation::Shutdown => Ok(serde_json::json!({"stop_requested":true,"cleanup":"pending"})),
         Operation::Call { call } => dispatch(&engine, *call).await,
+        Operation::CreatePrepared { create } => {
+            let check =
+                engine.validate_prepared_info(&create.sandbox, &create.request, &create.image);
+            if let Err(error) = check {
+                Err(error
+                    .downcast_ref::<ApiError>()
+                    .cloned()
+                    .unwrap_or_else(unavailable))
+            } else {
+                if !stream.buffer().is_empty() {
+                    return Err(
+                        invalid("unexpected buffered bytes before private image input").into(),
+                    );
+                }
+                let mut ready = serde_json::to_vec(&Reply {
+                    installation_id: owner.installation_id,
+                    epoch: owner.epoch,
+                    config_sha256: owner.config_sha256.clone(),
+                    result: Ok(serde_json::json!({"image_input":"ready"})),
+                })?;
+                ready.push(b'\n');
+                tokio::time::timeout(Duration::from_secs(10), stream.get_mut().write_all(&ready))
+                    .await??;
+                let file = tokio::time::timeout(
+                    Duration::from_secs(10),
+                    super::descriptor::receive(stream.get_ref()),
+                )
+                .await??;
+                engine
+                    .create_prepared(&create.sandbox, &create.request, create.image, file)
+                    .await
+                    .and_then(|handle| {
+                        serde_json::to_value(handle).map_err(|_| {
+                            ApiError::new(ErrorCode::Internal, "cannot encode native result")
+                        })
+                    })
+            }
+        }
     };
     let mut bytes = serde_json::to_vec(&Reply {
         installation_id: owner.installation_id,
@@ -652,6 +757,7 @@ mod tests {
             },
             supervisor: artifact,
             image: format!("sha256:{}", "a".repeat(64)),
+            prepared_images: None,
             max_resources: ResourceLimits {
                 cpu_millis: 1000,
                 memory_bytes: 256 * MIB,
@@ -784,6 +890,9 @@ mod tests {
                 assert_eq!(request.config_sha256, digest);
                 match request.operation {
                     Operation::Shutdown => (),
+                    Operation::CreatePrepared { .. } => {
+                        panic!("unexpected private image method in ordinary frame contract")
+                    }
                     Operation::Call { call } => match *call {
                         DriverCall::Rpc {
                             request: AgentRequest::WriteFile { path, data_base64 },

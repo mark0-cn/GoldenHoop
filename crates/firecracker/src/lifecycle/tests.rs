@@ -88,6 +88,7 @@ fn oversized_unix_endpoints_are_rejected_before_directory_creation() {
         },
         supervisor: artifact,
         image: format!("sha256:{}", "a".repeat(64)),
+        prepared_images: None,
         max_resources: ResourceLimits {
             cpu_millis: 1000,
             memory_bytes: 256 * MIB,

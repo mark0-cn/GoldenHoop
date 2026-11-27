@@ -1,12 +1,25 @@
 # Progress
 
-Acknowledged VM-root recovery is accepted at 2038512: Windows281/Linux-root357 full checks and all 47 actual root/cgroup/metadata/KVM groups pass with Complete collection. Pre-ack ownership stays Unknown with its reservation; public image placement, snapshots/restore/templates and complete M4-M6 remain active.
+Private Ready-image materialization is accepted at a4587f9: ten actual default-runsc groups pass with 329 source-verified inputs and Complete collection. Public native selected-image placement is implemented and passes Windows283/Linux-root370 full checks with 330 identical inputs; its new actual public/KVM gate remains unexecuted. Snapshots/restore/templates, combined M4 and complete M5-M6 remain active.
 
 ## Active objective
 
 Implement the complete M0-M6 design in the dedicated mark0-cn/GoldenHoop repository and push staged, verified commits.
 
 ## Current stage
+
+The public native prepared-image increment resolves immutable Ready references,
+hands an anonymous verified descriptor through the authenticated manager, and
+copies it into the acknowledged VM-owned jail. Per-generation journals retain
+the selected manifest, and recovery no longer depends on source jobs or blobs.
+Administrator policy pins the builder inventory and bounds tmpfs staging and
+combined fixed/selected disk reservations. Same-context completed probe receipts
+can support quota-only restart validation only with a freshly authenticated live
+VM. The dedicated public two-image workflow retains root47 and adds actual
+conversion, admission, block-release, blob collection and running/paused recovery
+checks. These new KVM paths await execution; local tests do not accept them.
+See [native images](native-images.md) and the
+[implementation evidence](evidence/m4-native-image-input-implementation-summary.json).
 
 Same-boot/exact-configuration native-manager recovery is accepted at ef8c360: Windows281/Linux-root348 full checks and all 32 actual KVM groups pass, including three real manager SIGKILLs, same-VM command continuation, paused recovery and expiry with worker/manager dead. The hardware report binds 342 source inputs and confirms Complete collection. The first fixture failure remains Failed/Unknown. Earlier unacknowledged metadata/allocation, snapshots, restore, templates, combined M4 and all M5-M6 remain active.
 
@@ -20,7 +33,7 @@ M0-M3 are accepted on the tested Linux runc-development/gVisor and retained S3-c
 
 ## Implementation and validation log
 
-The private Ready-image consumption bridge is implemented and locally checked.
+The private Ready-image consumption bridge is accepted at a4587f9.
 It adds canonical job/generation/manifest references, administrator-pinned
 inventory checks, actual provider-absence checks and a locked, verified
 anonymous disk copy. The library hands an owned descriptor to its host consumer;
@@ -36,10 +49,26 @@ The failed intermediate full check remains Failed: its immediate root-lock
 reacquisition assertion failed during parallel process tests. The unchanged
 assertions now execute in an exact isolated child process; production locking
 is unchanged, and the original transient holder was not traced. Both owned
-local check images are removed and their absence is recorded. The extended
-actual default-runsc preparation/materialization gate is pending source-bound
-CI. This is a private handoff increment; native selected-image journaling,
-public placement, snapshots/restore/templates and M5-M6 remain open.
+local check images are removed and their absence is recorded. Source-bound
+CI45989941212 passes on Windows and Ubuntu. Actual default-runsc
+[run45990105658](https://github.com/mark0-cn/GoldenHoop/actions/runs/45990105658)
+passes ten groups and verifies 329 inputs with Complete collection, including
+67108864 anonymous materialized bytes and actual descriptor closure. Its trace
+artifact is a separate zero-group diagnostic. See the
+[acceptance summary](evidence/m4-ready-materialization-pipeline-acceptance-summary.json).
+The newer native selected-image implementation above remains subject to its
+public/KVM gate; snapshots/restore/templates and M5-M6 remain open.
+
+The native prepared-image increment passes final formatting, strict all-target
+workspace clippy and all workspace tests on Windows283/Linux-root370 with 330
+identical frozen source inputs. Actual Linux descriptor tests exercise SCM_RIGHTS,
+CLOEXEC and excess/truncated-rights closure; a kernel-lock test exercises parallel
+Ready readers and exclusive producer/collector exclusion. Policy/journal tests
+are synthetic. Earlier compile/lint failures and pre-final successful checks
+remain unchanged historical evidence. All five successful local check images
+have been scoped, removed and positively observed absent; useful caches and all
+evidence are retained. Python harness AST checks pass. The dedicated real
+public/KVM placement report is still required before this increment is accepted.
 
 M0 is implemented and pushed in commit 94cb4e75f07e6df447d9beca6b0453a0e6014012: independent repository, domain contracts, state/capability invariants, driver boundary, schema export and CI definition.
 
