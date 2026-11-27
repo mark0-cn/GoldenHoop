@@ -3,7 +3,10 @@
 The optional native `checkpoints` policy enables private manager capture jobs.
 Public snapshot capability registration and restoration remain separate work.
 The preceding owned-Machine implementation passed the actual 60-group capture
-gate at 47ac2cc; manager integration needs its own immutable-source hardware gate.
+gate at47ac2cc. Manager capture64 is retained in the accepted c7fbfce actual
+70-group/384-input continuation gate with Complete collection and passing CI.
+The [acceptance summary](evidence/m4-continuation-acceptance-summary.json) records
+the external backing-sample limitation and required strengthened follow-up.
 
 `DriverConfig.checkpoints` contains `max_bytes` and `max_checkpoints`. Its store
 is fixed at `<data_root>/checkpoints` and bound to the configured installation.
@@ -65,8 +68,9 @@ operation failure into a passed result.
 The [final local checks](evidence/m4-manager-exit-implementation-summary.json)
 pass Windows290/GNU-root402/musl21 on identical342 source inputs, with formatting,
 strict clippy and all4 static guest releases. Scoped image collection is complete.
-The combined actual continuation gate must still verify this correction and
-retained manager64 before either hardware behavior is accepted.
+The actual c7fbfce continuation gate verifies this correction and all retained
+manager64 groups with Complete collection. Native manager restoration remains
+separate from manager capture and private owned-Machine continuation.
 
 Production capture has no marker command or test file write. The private probe
 alone prepares RAM/disk oracles, then invokes the same reserved capture operation.

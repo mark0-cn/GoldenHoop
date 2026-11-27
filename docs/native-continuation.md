@@ -1,8 +1,10 @@
 # Private single-use memory continuation
 
-The private continuation code is in local validation. Its actual fresh-VMM gate
-has not executed. This does not register native-manager/public restore or memory
-template capabilities, and does not complete M4-M6.
+Private same-host continuation at c7fbfce passes the actual70-group/384-input
+[gate46057014437](https://github.com/mark0-cn/GoldenHoop/actions/runs/46057014437)
+with Complete collection and passing CI. This includes retained manager capture64.
+Native-manager/public restore and memory templates remain separate work; M4-M6
+are incomplete. See the [acceptance](evidence/m4-continuation-acceptance-summary.json).
 
 A Ready capture reference remains immutable content. Its continuation is a
 separate mutable lifecycle, with a permanent inode/birth-bound witness pinning
@@ -51,7 +53,11 @@ same captured execution UUID without a Start replay, and releases that process
 to emit its retained token. It verifies captured drive contents, refusal of an
 old-generation frame, unchanged original checkpoint objects after target drive
 changes, actual target process/root/cgroup collection and reference release.
-The Python observer also samples actual protected backing ownership/permissions.
+The original Python observer sampled protected permissions during copying. Its
+27,787,264-byte sample cannot establish live/full backing for the268,435,456-byte
+memory object. Rust independently checks full length/hash/protection after load.
+The tightened observer requires full manifest length and live UID10000 VMM
+PID/start matching Rust's authenticated process; a fresh actual gate is required.
 Exact retry must return the old closed target with no launch; changed target intent
 must fail before allocation. Temporary output files use anonymous descriptors.
 
@@ -69,6 +75,7 @@ records exact evidence.
 The retained managed gate at26d845e passes capture, hold/refusal and actual manager
 SIGKILL/reconnect, then fails on source removal after41 groups with Unknown
 collection. Its original [archive](evidence/m4-managed-checkpoint-46051406682-archive.json)
-is retained. The new continuation gate has not run and must follow correction of
-that retained collection failure; publishing the private implementation does not
-accept its hardware behavior.
+is retained. The corrected c7fbfce continuation gate passes all70 groups with
+Complete collection, including the full retained manager contract. Independent
+full/live backing sampling remains a follow-up; native persistent/public
+restoration and complete M4-M6 remain unaccepted.

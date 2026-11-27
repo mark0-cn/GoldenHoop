@@ -9,7 +9,7 @@ import time
 import uuid
 
 
-def exercise(binary, boot, fixture, checkpoint, reference, capture, source_generation):
+def exercise(binary, boot, fixture, checkpoint, reference, capture, source_generation, manifest):
     generation = str(uuid.uuid4())
     source = capture['reference']
     cfg = {'artifacts':boot, 'checkpoint':checkpoint, 'reference':reference,
@@ -35,11 +35,26 @@ def exercise(binary, boot, fixture, checkpoint, reference, capture, source_gener
                         protected=(parent.st_uid==0 and stat.S_IMODE(parent.st_mode)==0o755
                             and stat.S_ISDIR(folder.st_mode) and folder.st_uid==0 and stat.S_IMODE(folder.st_mode)==0o555
                             and stat.S_ISREG(memory.st_mode) and memory.st_uid==0 and stat.S_IMODE(memory.st_mode)==0o444 and memory.st_nlink==1)
-                        if protected and not samples:
-                            samples.append({'jail_uid':parent.st_uid,'jail_mode':stat.S_IMODE(parent.st_mode),
-                                            'memory_uid':memory.st_uid,'memory_mode':stat.S_IMODE(memory.st_mode),
-                                            'memory_device':memory.st_dev,'memory_inode':memory.st_ino,'memory_length':memory.st_size})
-                    except FileNotFoundError:
+                        # Before jailer starts, the incomplete copy also has
+                        # root-owned permissions. Count only a full backing with
+                        # an actual live unprivileged VMM, then bind its identity
+                        # to Rust's authenticated target observation below.
+                        if protected and memory.st_size==manifest['memory']['size_bytes'] and not samples:
+                            descriptor=os.open(jail/'firecracker.pid',os.O_RDONLY|os.O_NOFOLLOW)
+                            with os.fdopen(descriptor,'rb') as source:
+                                raw=source.read(17)
+                            if raw.strip().isdigit() and len(raw)<=16 and int(raw)>1:
+                                pid=int(raw)
+                                proc=Path('/proc')/str(pid)
+                                fields=(proc/'stat').read_text().rsplit(')',1)[1].split()
+                                status=(proc/'status').read_text()
+                                uids=next((line.split()[1:] for line in status.splitlines() if line.startswith('Uid:')),None)
+                                if len(fields)>19 and fields[0] not in ['Z','X'] and uids==['10000']*4:
+                                    samples.append({'jail_uid':parent.st_uid,'jail_mode':stat.S_IMODE(parent.st_mode),
+                                                    'memory_uid':memory.st_uid,'memory_mode':stat.S_IMODE(memory.st_mode),
+                                                    'memory_device':memory.st_dev,'memory_inode':memory.st_ino,'memory_length':memory.st_size,
+                                                    'vmm_pid':pid,'vmm_start_ticks':int(fields[19]),'vmm_uid':10000})
+                    except (FileNotFoundError,ProcessLookupError):
                         pass
                     if time.monotonic()>=until:
                         process.terminate();process.wait(timeout=60);break
@@ -73,6 +88,8 @@ def exercise(binary, boot, fixture, checkpoint, reference, capture, source_gener
         assert not os.path.lexists(Path('/var/lib')/suffix)
         assert not os.path.lexists(Path('/sys/fs/cgroup')/suffix)
         process = target['process']
+        assert all(sample['vmm_pid']==process['pid'] and sample['vmm_start_ticks']==process['start_ticks']
+                   and sample['memory_length']==manifest['memory']['size_bytes'] for sample in samples)
         assert process['uid']==10000 and process['no_new_privileges'] and process['effective_capabilities']=='0000000000000000'
         assert process['seccomp_mode']==2 and process['namespace_isolated'] and process['network_namespace_isolated']
         for case in first['checks']:

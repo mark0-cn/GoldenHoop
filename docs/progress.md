@@ -1,44 +1,36 @@
 # Progress
 
-Private owned-Machine full capture and its persistent store are accepted at47ac2cc:
-[actual gate46036731540](https://github.com/mark0-cn/GoldenHoop/actions/runs/46036731540)
-passes60 groups/377 source inputs with Complete collection; CI46036631569 passes.
-Its [raw archive](evidence/m4-checkpoint-capture-46036731540-archive.json) preserves
-SHA256 `346850b1eaedb79146247a989ed392f6616e492e5a156caea352d7594b1c02a9`.
-Protocol3 private authority remains accepted at6c32d1a (55/371/Complete), and the
-original b18bd35 missing-probe-generation failure remains Failed. The new private
-native-manager capture at9f260a6 passes local Windows290/GNU397 and musl21 on340
-inputs, but actual gate46043276070 fails after39 groups/380 inputs with Complete
-collection. Capture succeeds; Resume refusal incorrectly poisons and collects
-the held source. Its correction passes Windows290/GNU398/musl21 on identical340
-inputs, including formatting and strict clippy. Its actual46051406682 run passes
-the held-source rejection and manager SIGKILL/reconnect groups, then fails at
-source removal after41 total groups/380 inputs with Unknown collection. The
-fresh complete managed64 gate remains required.
-Public snapshot integration, actual restore, templates,
-combined M4 and complete M5-M6 remain active. See the
-[authority acceptance](evidence/m4-guest-authority-acceptance-summary.json) and
-[capture/store contract](native-checkpoint-store.md).
+At c7fbfce, the [actual continuation gate46057014437](https://github.com/mark0-cn/GoldenHoop/actions/runs/46057014437)
+passes70 groups/384 source inputs with Complete collection. It retains manager
+capture64 and proves a source-absent fresh VMM resumes the original captured
+execution and RAM token without Start replay, transfers frozen authority, refuses
+old scope, preserves snapshot objects, collects the target and refuses relaunch.
+CI46056911259 passes. The [acceptance summary](evidence/m4-continuation-acceptance-summary.json)
+preserves raw SHA256 `7038b276c6942b885fc05b70718fadb6ce4c8a5ae8f5d30e8bb588c110a60815`.
 
-Private single-use continuation is published at ef2e9e6 with identical342-source
-Windows290/GNU-root400/musl21 checks and passing CI46053676884. Its actual gate
-has not run because the retained managed-source removal failure must be corrected
-first. The current [exit-observation correction](evidence/m4-manager-exit-upstream-diagnosis.json)
-reproduces a disappearing process metadata failure using real child exits. It
-separates a PID/start/boot-bound wait from complete live-service authentication;
-post-stop settlement still requires actual reaping and complete physical absence.
-The initial regression and an insufficient second-poll attempt remain Failed.
-Two corrected GNU-root tests pass, covering128 original child exit/reap cycles
-and refusal of live changed start/hash/UID. Final full Windows290/GNU-root402
-checks and musl21 scoped tests/strict clippy/static4 releases pass on342 identical
-source inputs. All3 exact owned check images and both failed tags are observed
-absent; useful caches and raw failures remain in the
-[implementation summary](evidence/m4-manager-exit-implementation-summary.json).
-A fresh actual combined continuation gate remains required.
+The external permissions observer sampled a partial27,787,264-byte file during
+copying; the memory object is268,435,456 bytes. That sample cannot independently
+establish live/full backing protection. Rust post-load full-length/hash/protection
+checks and retained execution passed. The strengthened observer requires full
+manifest length and live UID10000 VMM PID/start matching the authenticated target.
+Its fresh70-group gate remains required.
+
+The [exit correction](evidence/m4-manager-exit-upstream-diagnosis.json) separates
+exact descriptor waits from full live-service authentication. Windows290/GNU402/
+musl21 checks bind identical342 inputs; all3 check images and both failed tags
+are absent. Original39-group Failed/Complete and41-group Failed/Unknown reports
+remain unchanged. Manager deletion and all4 managed capture groups pass at c7fbfce.
+Earlier private capture47ac2cc60/377/Complete and authority6c32d1a55/371/Complete
+remain retained.
+
+Native persistent manager/supervisor restoration, public snapshots and execution/
+session rebinding, rootfs/volume snapshots, templates, combined M4 and complete
+M5-M6 remain active. A separate uncommitted worktree implements manager restoration;
+its compilation/intent tests do not accept hardware recovery.
 
 Native public selected-image placement and private protocol2 quiescence remain independently accepted at376328c: actual KVM placement53/366 inputs and barrier52/365 inputs both pass with Complete collection; CI46009520892 also passes. Protocol3 and private full capture have their separate acceptance above. Host restore authority, public snapshots/templates, combined M4 and complete M5-M6 remain active.
 
-## M4 private full capture accepted; manager integration in validation
+## M4 private capture, manager capture and continuation evidence
 
 - The source-bound [capture acceptance](evidence/m4-checkpoint-capture-acceptance-summary.json)
   records all60 actual groups at47ac2cc. Five new groups verify an actual frozen,

@@ -82,7 +82,7 @@ def suite(binary, boot, fixture, continuation=False):
 
         if continuation:
             from firecracker_continuation_contract import exercise
-            restored = exercise(binary,boot,fixture,cfg,reference,capture,captured['generation'])
+            restored = exercise(binary,boot,fixture,cfg,reference,capture,captured['generation'],manifest)
             report['observations']['continuation']=restored
             if restored['cleanup']!='complete':
                 sources_collected=False

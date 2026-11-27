@@ -2,7 +2,9 @@
 
 This is the remaining M4 implementation contract. Private owned-Machine capture
 and storage are accepted at47ac2cc (actual60 groups/377 inputs/Complete).
-Native-manager capture and private fresh-VMM continuation have separate gates.
+Native-manager capture64 and private fresh-VMM continuation pass the c7fbfce
+70-group/384-input gate with Complete collection. Its independent external
+full/live backing sampler is being strengthened and needs a fresh actual gate.
 Public native snapshot/restore/template capabilities are not implemented or advertised.
 The complete M0-M6 objective in [roadmap.md](roadmap.md) is unchanged.
 
