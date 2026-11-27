@@ -40,6 +40,12 @@ The Python observer independently samples final group and original PID/start
 absence; it implements no runtime mutation.
 
 `firecracker-cgroup-receipts.yml` requires these four groups plus all 37 retained
-metadata/KVM groups. Its acceptance remains pending. VM-root inode receipts,
+metadata/KVM groups. [Run45971316239](https://github.com/mark0-cn/GoldenHoop/actions/runs/45971316239)
+at 75bda2b passes all 41 with Complete collection; its [archive](evidence/m4-cgroup-receipts-45971316239-archive.json)
+verifies 350 runtime inputs. The separate source-fenced build-only report verifies 320
+inputs and records no runtime result. The actual root test binary binds 318 compiled
+inputs, while ordinary full checks bind 320 Rust/build inputs. The observer confirms
+the final group and original PID/start are absent. The old failed build remains
+Failed/NotExecuted. VM-root inode receipts,
 irreducible effects before allocation acknowledgement, public prepared-image
 placement, snapshots/restore/templates, combined M4 and all M5-M6 remain open.
