@@ -59,3 +59,13 @@ supervisor SIGKILL with native collection; and exact retry after object GC. Full
 retained hardware regression belongs to stage acceptance. Until its actual report
 passes, these hardware cases remain unverified. Public snapshot/session rebinding,
 prepared-image restoration, templates and combined M4-M6 remain open.
+
+The independent `firecracker-restore-cut.yml` workflow targets the missing-writer
+window. A root observer attaches only to the original acknowledged supervisor,
+delays matching executable opens without fake returns, and requires a live
+UID10000 Firecracker VMM in its original cgroup with canonical writer=None and no
+pending writer acknowledgement before SIGKILL. Rust must collect that VMM and
+both groups/root, then persist the original typed receipt with Closed/Unconfirmed
+and release only the target quota. The observer never writes native metadata or
+kills the VMM as a substitute for collection. Its syntax/source checks are not
+actual ptrace, cgroup or KVM acceptance; that separate runtime gate is required.

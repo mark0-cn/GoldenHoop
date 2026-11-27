@@ -1,0 +1,60 @@
+name: Firecracker targeted native restoration writer cut
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  CARGO_BUILD_JOBS: 2
+  CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS: 'true'
+  CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS: 'true'
+  M4_IMAGE: goldenhoop-m4-restore-cut-rootfs:${{ github.run_id }}-${{ github.run_attempt }}
+  M4_OWNER: ${{ github.run_id }}-${{ github.run_attempt }}
+jobs:
+  restore-cut:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install httpx==0.28.1
+      - name: Require actual syscall observation and bounded delay injection
+        run: |
+          if ! command -v strace; then
+            sudo -n apt-get update
+            sudo -n apt-get install -y --no-install-recommends strace
+          fi
+          strace --version
+      - name: Build the optimized checked Rust manager and supervisor
+        run: cargo build --locked --release -p goldenhoop-firecracker
+      - name: Build the actual Rust guest components
+        # Workspace checks stay in CI/stage. This gate requires actual KVM;
+        # containers or an emulator cannot supply recovery acceptance.
+        run: docker build --build-arg VALIDATE_WORKSPACE=0 --target microvm-rootfs --label dev.goldenhoop.task=m4-guest --label dev.goldenhoop.run="$M4_OWNER" --tag "$M4_IMAGE" --file images/agent/Dockerfile .
+      - name: Require actual unacknowledged launch cut and original native collector proof
+        run: sudo -n env PYTHONPATH="$PWD/sdk/python/src" "$pythonLocation/bin/python3" -B tests/firecracker_guest_contract.py --managed-restore-cut-contract --source-commit "$GITHUB_SHA" --binary "$PWD/target/release/goldenhoop-firecracker" --image "$M4_IMAGE" --owner "$M4_OWNER" --output "$PWD/evidence/firecracker-restore-cut.json"
+      - name: Collect the exact owned test image and positively observe absence
+        if: always()
+        shell: python
+        run: |
+          import json, os, subprocess
+          image = os.environ['M4_IMAGE']
+          def listed():
+              return subprocess.check_output(['docker','image','ls','--no-trunc','--filter','reference='+image,'--format','{{.ID}}']).strip()
+          if listed():
+              value=json.loads(subprocess.check_output(['docker','image','inspect',image]))[0]
+              assert value['Config']['Labels']['dev.goldenhoop.run']==os.environ['M4_OWNER']
+              assert value['Config']['Labels']['dev.goldenhoop.task']=='m4-guest'
+              subprocess.run(['docker','image','rm',image],check=True)
+          assert not listed()
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: firecracker-restore-cut
+          path: evidence/*.json
+          if-no-files-found: error

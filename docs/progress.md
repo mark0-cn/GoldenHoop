@@ -1,5 +1,14 @@
 # Progress
 
+The [native restoration writer-cut workflow](native-managed-restoration.md)
+adds a separate actual live-VMM/pre-writer-ack SIGKILL contract. Its observer uses
+path-filtered strace delay only, exact pidfds and original cgroup identities;
+the Rust collector must prove absence and persist Closed/Unconfirmed rather
+than Activated. Python AST3 and all344 unchanged Rust inputs are verified by the
+[harness report](evidence/m4-restore-cut-harness-validation.json). The actual cut
+remains unverified. Native manager gate46065591115 is independently in progress
+at0caa8a7; CI46065566837 passes. Full hardware regression remains a stage gate.
+
 The private [native manager restoration](native-managed-restoration.md) increment
 adds immutable target admission, supervisor-owned continuation leases and original
 collector receipts for a lost writer acknowledgement. Exact completed retries

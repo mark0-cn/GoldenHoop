@@ -16,7 +16,7 @@ import uuid
 from firecracker_manager_fixture import Manager
 
 
-def suite(binary, boot, fixture, guest_barrier=False, guest_authority=False, managed_checkpoint=False, managed_restore_only=False):
+def suite(binary, boot, fixture, guest_barrier=False, guest_authority=False, managed_checkpoint=False, managed_restore_only=False, managed_restore_cut=False):
     installation = str(uuid.uuid4())
     root = fixture / 'd'  # Native AF_UNIX endpoints must fit Linux's path bound.
     cfg = {'installation_id': installation, 'data_root': str(root), 'artifacts': boot,
@@ -121,8 +121,12 @@ def suite(binary, boot, fixture, guest_barrier=False, guest_authority=False, man
         manager.start()
         if managed_restore_only:
             assert managed_checkpoint
-            from firecracker_managed_restore_contract import exercise as restore_exercise
-            restore_exercise(root,cfg,manager,request,call,rpc,command,record,remove,handles,report)
+            if managed_restore_cut:
+                from firecracker_restore_cut_contract import exercise as cut_exercise
+                cut_exercise(binary,root,cfg,manager,request,call,rpc,record,remove,handles,report)
+            else:
+                from firecracker_managed_restore_contract import exercise as restore_exercise
+                restore_exercise(root,cfg,manager,request,call,rpc,command,record,remove,handles,report)
             report['result']='passed'
             return report
         observed = call({'operation': 'probe'}, timeout=220)
