@@ -303,9 +303,26 @@ pub async fn run_supervisor_with_input(
         machine.prepared_input(file)?;
     }
     let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-    let started = tokio::select! {
-        result=machine.start(&artifacts)=>result,
-        _=term.recv()=>Err(invalid("native creation interrupted; collecting owned generation").into()),
+    let mut restoration: Option<Box<crate::checkpoint::storage::restore::RestoreSession>> = None;
+    let started = {
+        let operation = async {
+            if let Some(binding) = machine.record().restore.clone() {
+                restoration = Some(binding.claim(&cfg)?);
+                machine
+                    .restore_reserved(
+                        &artifacts,
+                        restoration.as_mut().expect("original restore session"),
+                    )
+                    .await?;
+            } else {
+                machine.start(&artifacts).await?;
+            }
+            Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
+        };
+        tokio::select! {
+            result=operation=>result,
+            _=term.recv()=>Err(invalid("native creation interrupted; collecting owned generation").into()),
+        }
     };
     let result:Result<()>=match started {
         Ok(_)=>async {
@@ -339,6 +356,13 @@ pub async fn run_supervisor_with_input(
         )
         .await;
     }
+    if let (Some(session), Err(error)) = (&mut restoration, &result) {
+        // All capture/load I/O is on this supervisor's reactor. It has ended
+        // before this settlement acknowledgement; the original lease remains
+        // held through physical VM collection.
+        let _ = session.fail(&error.to_string());
+    }
+    drop(restoration);
     // Leave only this owned process in its original host group, then remove the
     // positively empty supervisor group. Never move or kill unrelated members.
     if machine.record().phase == "vm_collected" {
@@ -420,6 +444,7 @@ mod tests {
             selected_image: None,
             profile_probe_context_sha256: None,
             capture_hold: Some(hold),
+            restore: None,
             resources,
             supervisor: None,
             supervisor_cgroup_identity: None,

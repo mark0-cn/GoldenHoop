@@ -28,6 +28,9 @@ drive copy; the capture already reserves two RAM/state copies. Reservations stay
 until the tracked target writer and target directory are absent. A private target
 launch without an acknowledged writer remains unconfirmed, even if a caller says
 it cleaned up. Closed claims retain their permanent identity history.
+The separate [native manager increment](native-managed-restoration.md) adds a
+typed original-collector receipt for that acknowledgement-loss window; its
+synthetic cgroup unit fixture is not actual hardware cut acceptance.
 
 The writer session owns a shared capture lease and an exclusive continuation
 lease. Ready readers can still verify immutable content during target copying.

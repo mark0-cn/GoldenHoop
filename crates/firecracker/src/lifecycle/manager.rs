@@ -137,7 +137,7 @@ fn unavailable() -> ApiError {
 fn deadline(call: &DriverCall) -> Duration {
     Duration::from_secs(match call {
         DriverCall::Probe => 240,
-        DriverCall::Create { .. } => 150,
+        DriverCall::Create { .. } | DriverCall::CheckpointRestore { .. } => 150,
         DriverCall::Remove { .. } => 45,
         DriverCall::Reap => 240,
         _ => 20,
@@ -256,6 +256,15 @@ impl FirecrackerDriver {
     }
     pub async fn profile_snapshot(&self) -> RuntimeProfile {
         self.profile.read().await.clone()
+    }
+    pub async fn checkpoint_restore(
+        &self,
+        restore: &ManagedRestoreRequest,
+    ) -> std::result::Result<RuntimeHandle, ApiError> {
+        self.call(DriverCall::CheckpointRestore {
+            restore: Box::new(restore.clone()),
+        })
+        .await
     }
     pub fn prepared_image_policy(&self) -> Option<&PreparedImagePolicy> {
         self.cfg.prepared_images.as_ref()
@@ -449,6 +458,9 @@ async fn dispatch(
         }
         DriverCall::CheckpointCollect { capture } => {
             Ok(engine.checkpoint_read(capture, true).await?)
+        }
+        DriverCall::CheckpointRestore { restore } => {
+            serde_json::to_value(engine.checkpoint_restore(&restore).await?)
         }
     };
     data.map_err(|_| ApiError::new(ErrorCode::Internal, "cannot encode native manager result"))

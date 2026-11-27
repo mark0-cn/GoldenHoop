@@ -73,6 +73,8 @@ pub(super) struct Restoration {
     launch_intent: bool,
     directory: Option<SourceDirectory>,
     writer: Option<Writer>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    native_collection: Option<crate::lifecycle::CollectedNativeRestore>,
     error: Option<String>,
 }
 impl Restoration {
@@ -101,6 +103,14 @@ impl Restoration {
             ) && self.writer.is_none()
             || self.phase == RestorePhase::Activated && self.outcome != RestoreOutcome::Activated
             || self.phase == RestorePhase::Closed && self.outcome == RestoreOutcome::Pending
+            || self.native_collection.is_some()
+                && (self.phase != RestorePhase::Closed
+                    || !self.launch_intent
+                    || self.writer.is_some())
+            || self.phase == RestorePhase::Closed
+                && self.launch_intent
+                && self.writer.is_none()
+                && self.native_collection.is_none()
             || self.outcome == RestoreOutcome::Activated
                 && (!self.producer_settled || self.error.is_some())
         {
@@ -119,6 +129,20 @@ impl Restoration {
                 return Err(invalid("restore VMM writer identity differs").into());
             }
         }
+        if let Some(proof) = &self.native_collection {
+            proof.matches(&self.intent, &self.producer.process)?;
+            if !proof.directory().context_matches(
+                &self.producer.context.boot,
+                self.producer.context.namespace_device,
+                self.producer.context.namespace_inode,
+            ) {
+                return Err(invalid("native collected producer observer context differs").into());
+            }
+            self.directory
+                .as_ref()
+                .ok_or_else(|| invalid("native collection original directory absent"))?
+                .matches_collected(proof.directory())?;
+        }
         Ok(())
     }
     pub(super) fn active_bytes(&self, disk: u64) -> u64 {
@@ -133,10 +157,10 @@ impl Restoration {
         if let Some(writer) = &self.writer {
             writer.require_absent()?;
         } else if self.launch_intent {
-            return Err(invalid(
-                "restore launch lacks an acknowledged VMM writer; absence is unconfirmed",
-            )
-            .into());
+            let proof = self.native_collection.as_ref().ok_or_else(|| {
+                invalid("restore launch lacks an acknowledged VMM writer; absence is unconfirmed")
+            })?;
+            proof.require_absent()?;
         }
         self.intent.destination.require_absent()?;
         if let Some(directory) = &self.directory {
@@ -156,7 +180,53 @@ pub(crate) struct RestoreSession {
     _continuation_lease: File,
     record: Record,
 }
+struct NativeClose<'a> {
+    intent: &'a RestoreIntent,
+    producer: &'a crate::lifecycle::ProcessIdentity,
+    collected: Option<&'a crate::lifecycle::CollectedNativeRestore>,
+}
 impl CheckpointStore {
+    pub(crate) fn require_fresh_native_target(
+        &self,
+        reference: &CheckpointReference,
+    ) -> Result<()> {
+        let _quota = self.root.quota(false)?;
+        let record: Record = self.root.json(&record_name(reference.capture))?;
+        record.validate(&self.root)?;
+        if record.reference.as_ref() != Some(reference)
+            || record.phase != Phase::Ready
+            || record.restoration.is_some()
+        {
+            return Err(goldenhoop_protocol::ApiError::new(
+                goldenhoop_protocol::ErrorCode::Conflict,
+                "checkpoint continuation already has an immutable target or is not Ready",
+            )
+            .into());
+        }
+        self.root.job_mutex(
+            reference.capture,
+            &record.mutex,
+            &record.intent.digest()?,
+            false,
+        )?;
+        Ok(())
+    }
+    pub(crate) fn close_native_restore(
+        &self,
+        intent: &RestoreIntent,
+        producer: &crate::lifecycle::ProcessIdentity,
+        collected: Option<&crate::lifecycle::CollectedNativeRestore>,
+    ) -> Result<serde_json::Value> {
+        self.close_restore_inner(
+            intent.reference.capture,
+            Some(NativeClose {
+                intent,
+                producer,
+                collected,
+            }),
+        )
+    }
+
     pub(crate) fn claim_restore(&self, intent: RestoreIntent) -> Result<RestoreAdmission> {
         let id = intent.reference.capture;
         let quota = self.root.quota(true)?;
@@ -230,6 +300,7 @@ impl CheckpointStore {
             launch_intent: false,
             directory: None,
             writer: None,
+            native_collection: None,
             error: None,
         });
         next.validate(&self.root)?;
@@ -250,10 +321,32 @@ impl CheckpointStore {
     }
 
     pub(crate) fn close_restore(&self, id: Uuid) -> Result<serde_json::Value> {
+        self.close_restore_inner(id, None)
+    }
+    fn close_restore_inner(
+        &self,
+        id: Uuid,
+        native: Option<NativeClose<'_>>,
+    ) -> Result<serde_json::Value> {
         let _quota = self.root.quota(true)?;
         self.root.recover_capture(id)?;
         let mut record: Record = self.root.json(&record_name(id))?;
         record.validate(&self.root)?;
+        if let Some(NativeClose {
+            intent, producer, ..
+        }) = &native
+        {
+            match &record.restoration {
+                None => return Ok(serde_json::json!({"owned_restoration":false})),
+                Some(original) if original.intent != **intent => {
+                    return Ok(serde_json::json!({"owned_restoration":false}));
+                }
+                Some(original) if original.producer.process != **producer => {
+                    return Err(invalid("native restoration original supervisor differs").into());
+                }
+                Some(_) => (),
+            }
+        }
         let _lease = self
             .root
             .job_lock(id, &record.mutex, &record.intent.digest()?, true)?;
@@ -272,6 +365,23 @@ impl CheckpointStore {
         if !restoration.closed() {
             if !restoration.producer_settled {
                 restoration.producer.require_absent()?;
+            }
+            if restoration.launch_intent
+                && restoration.writer.is_none()
+                && let Some(NativeClose {
+                    intent,
+                    producer,
+                    collected: Some(proof),
+                }) = &native
+            {
+                proof.matches(intent, producer)?;
+                proof.require_absent()?;
+                restoration
+                    .directory
+                    .as_ref()
+                    .ok_or_else(|| invalid("native restore original directory absent"))?
+                    .matches_collected(proof.directory())?;
+                restoration.native_collection = Some((*proof).clone());
             }
             restoration.target_absent()?;
             if restoration.outcome == RestoreOutcome::Pending {

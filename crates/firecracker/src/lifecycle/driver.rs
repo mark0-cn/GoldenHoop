@@ -13,6 +13,7 @@ use tokio::{
     sync::{Mutex, RwLock},
 };
 mod checkpoints;
+mod restores;
 
 struct Inner {
     cfg: DriverConfig,
@@ -153,7 +154,7 @@ impl NativeEngine {
                     .cloned()
                     .unwrap_or_else(|| unavailable(error))
             })?;
-        self.create_with_input(sandbox, request, Some(image::Input { info, file }))
+        self.create_with_input(sandbox, request, Some(image::Input { info, file }), None)
             .await
     }
     async fn create_with_input(
@@ -161,14 +162,26 @@ impl NativeEngine {
         sandbox: &Sandbox,
         request: &CreateSandbox,
         input: Option<image::Input>,
+        restore_request: Option<&ManagedRestoreRequest>,
     ) -> std::result::Result<RuntimeHandle, ApiError> {
         let lock = self.vm_lock(sandbox.id).await;
         let _guard = lock.lock().await;
-        let result = self.create_owned(sandbox, request, input).await;
+        let result = async {
+            let restore = match restore_request {
+                Some(request) => Some(self.restore_binding(request).await?),
+                None => None,
+            };
+            self.create_owned(sandbox, request, input, restore).await
+        }
+        .await;
+        let digest = match restore_request {
+            Some(request) => request.digest(),
+            None => request_digest(request),
+        };
         if result.is_err()
             && let Ok(mut record) = self.load(sandbox.id)
             && !record.ever_ready
-            && request_digest(request).is_ok_and(|digest| digest == record.owner.request_sha256)
+            && digest.is_ok_and(|digest| digest == record.owner.request_sha256)
         {
             if let Err(error) = &result
                 && !self.supervisor_alive(&record).unwrap_or(true)
@@ -704,8 +717,10 @@ impl NativeEngine {
         sandbox: &Sandbox,
         request: &CreateSandbox,
         mut input: Option<image::Input>,
+        restore: Option<RestoreBinding>,
     ) -> Result<RuntimeHandle> {
         let cfg = &self.inner.cfg;
+        let original_restore = restore.is_some() && cfg.record_path(sandbox.id).try_exists()?;
         if request.profile != PROFILE
             || sandbox.profile != PROFILE
             || request.image != sandbox.image
@@ -716,7 +731,7 @@ impl NativeEngine {
             || request.feature_limit.is_some()
             || request.ttl_seconds == 0
             || request.ttl_seconds > cfg.max_ttl_seconds
-            || sandbox.expires_at <= Utc::now()
+            || !original_restore && sandbox.expires_at <= Utc::now()
             || sandbox.created_at > Utc::now()
             || sandbox.desired_state != DesiredState::Running
             || sandbox.expires_at - sandbox.created_at
@@ -753,10 +768,32 @@ impl NativeEngine {
                 "native resource bounds or memory granularity are invalid",
             )
         })?;
-        let digest = request_digest(request)?;
+        let digest = match &restore {
+            Some(restore) => ManagedRestoreRequest {
+                sandbox: sandbox.clone(),
+                request: request.clone(),
+                reference: restore.intent.reference.clone(),
+                restoration: restore.intent.restoration,
+            }
+            .digest()?,
+            None => request_digest(request)?,
+        };
         let path = cfg.record_path(sandbox.id);
         if path.try_exists()? {
             let mut record = self.load(sandbox.id)?;
+            if record.restore.is_some() != restore.is_some()
+                || record
+                    .restore
+                    .as_ref()
+                    .zip(restore.as_ref())
+                    .is_some_and(|(a, b)| a.intent != b.intent)
+            {
+                return Err(ApiError::new(
+                    ErrorCode::Conflict,
+                    "native target boot/restore intent differs",
+                )
+                .into());
+            }
             let expected_image = record
                 .selected_image
                 .as_ref()
@@ -779,13 +816,17 @@ impl NativeEngine {
                 .into());
             }
             if record.phase == "collected" || record.phase == "vm_collected" {
+                if restore.is_some() {
+                    return Ok(self.handle(&record));
+                }
                 return Err(ApiError::new(
                     ErrorCode::InvalidState,
                     "collected native generations cannot be recreated",
                 )
                 .into());
             }
-            if record.supervisor.is_none()
+            if restore.is_none()
+                && record.supervisor.is_none()
                 && record.phase == "reserved"
                 && !self.inner.recovered.contains(&sandbox.id)
                 && (record.selected_image.is_none() || input.is_some())
@@ -829,12 +870,35 @@ impl NativeEngine {
             return Err(invalid("actual KVM is unavailable").into());
         }
         let admission = self.inner.operations.lock().await;
+        if let Some(binding) = &restore {
+            // Admission serializes native reservations. An earlier immutable
+            // journal consumes this capture even before its supervisor starts;
+            // competing native targets therefore fail before any allocation.
+            if self.records()?.iter().any(|record| {
+                record.restore.as_ref().is_some_and(|original| {
+                    original.intent.reference.capture == binding.intent.reference.capture
+                })
+            }) {
+                return Err(ApiError::new(
+                    ErrorCode::Conflict,
+                    "checkpoint already belongs to an original native target",
+                )
+                .into());
+            }
+            crate::checkpoint::storage::CheckpointStore::open_or_initialize(
+                &cfg.checkpoint_config(binding.intent.reference.capture)?,
+            )?
+            .require_fresh_native_target(&binding.intent.reference)?;
+        }
         let disk_bytes = input
             .as_ref()
             .map(|input| input.info.manifest.disk.size_bytes)
             .unwrap_or(cfg.artifacts.rootfs.size);
         self.admit(&request.resources, disk_bytes)?;
-        let generation = Uuid::new_v4();
+        let generation = restore
+            .as_ref()
+            .map(|r| r.intent.generation)
+            .unwrap_or_else(Uuid::new_v4);
         let paths = cfg.paths(generation)?;
         if paths.root.try_exists()?
             || paths.vm_cgroup.try_exists()?
@@ -863,6 +927,7 @@ impl NativeEngine {
             },
             selected_image: input.as_ref().map(|input| input.info.clone()),
             capture_hold: None,
+            restore,
             profile_probe_context_sha256: None,
             resources: request.resources.clone(),
             supervisor: None,
@@ -880,6 +945,7 @@ impl NativeEngine {
             supervisor_stderr_tail: String::new(),
             supervisor_cgroup_events: Default::default(),
         };
+        record.validate(cfg, sandbox.id)?;
         atomic_json(&path, &record)?;
         let launch = (|| -> Result<_> {
             self.prepare_supervisor_group(&mut record)?;
@@ -1024,6 +1090,7 @@ impl NativeEngine {
             if self.supervisor_gone(record)? {
                 supervisor::collect_supervisor_cgroup(&self.inner.cfg, record)?;
                 if self.physical_absence(record)? {
+                    self.close_collected_restore(record).await?;
                     let mut updated = self.load(record.owner.sandbox_id)?;
                     if updated.owner != record.owner {
                         return Err(invalid("native generation changed during collection").into());
@@ -1371,7 +1438,7 @@ impl RuntimeDriver for NativeEngine {
         sandbox: &Sandbox,
         request: &CreateSandbox,
     ) -> std::result::Result<RuntimeHandle, ApiError> {
-        self.create_with_input(sandbox, request, None).await
+        self.create_with_input(sandbox, request, None, None).await
     }
     async fn inspect(
         &self,
@@ -1572,6 +1639,7 @@ mod recovery_tests {
             artifacts: cfg.artifacts.clone(),
             selected_image: None,
             capture_hold: None,
+            restore: None,
             profile_probe_context_sha256: None,
             resources,
             supervisor: None,
@@ -1601,7 +1669,7 @@ mod recovery_tests {
         assert!(!observed[0].authenticated && observed[0].observed_state == ObservedState::Unknown);
         let outcome = tokio::time::timeout(
             Duration::from_millis(80),
-            engine.create_owned(&sandbox, &request, None),
+            engine.create_owned(&sandbox, &request, None, None),
         )
         .await;
         let unchanged = std::fs::read(cfg.record_path(id)).unwrap() == snapshot;

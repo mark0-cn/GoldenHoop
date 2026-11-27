@@ -11,6 +11,9 @@ pub(crate) struct PathIdentity {
     inode: u64,
 }
 impl PathIdentity {
+    pub(crate) fn device_inode(&self) -> (u64, u64) {
+        (self.device, self.inode)
+    }
     pub(crate) fn matches(&self, value: &std::fs::Metadata) -> bool {
         self.device == value.dev() && self.inode == value.ino()
     }

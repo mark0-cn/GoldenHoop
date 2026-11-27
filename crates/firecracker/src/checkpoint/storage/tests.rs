@@ -450,6 +450,9 @@ fn continuation_requires_source_absence_reserves_drive_and_never_reissues_an_occ
     f.publish(&store);
     let intent = continuation(&f);
     let id = f.cfg.capture;
+    store
+        .require_fresh_native_target(&intent.reference)
+        .unwrap();
     assert!(store.claim_restore(intent.clone()).is_err());
     assert!(!store.root.continuation_exists(id).unwrap());
     f.writer.stop();
@@ -476,6 +479,11 @@ fn continuation_requires_source_absence_reserves_drive_and_never_reissues_an_occ
     else {
         panic!("first claim was not granted")
     };
+    assert!(
+        store
+            .require_fresh_native_target(&intent.reference)
+            .is_err()
+    );
     assert_eq!(store.reserved_bytes().unwrap(), base + f.intent.disk_bytes);
     assert!(matches!(
         store.claim_restore(intent.clone()).unwrap(),
@@ -538,6 +546,299 @@ struct ContinuationParameters {
     cfg: CheckpointProbeConfig,
     intent: RestoreIntent,
     marker: PathBuf,
+}
+
+#[derive(Serialize, Deserialize)]
+struct NativeCollectionParameters {
+    cfg: CheckpointProbeConfig,
+    intent: RestoreIntent,
+    receipt: PathBuf,
+}
+#[test]
+fn real_native_collection_closes_lost_writer_ack_only_with_original_collected_receipts() {
+    use crate::machine::{Artifact, BootInput};
+    use lifecycle::{
+        CollectedNativeRestore, DriverConfig, HostCapacity, VmJournal, VmOwner,
+        recovery::PathIdentity, root,
+    };
+    if unsafe { libc::geteuid() } != 0 {
+        return;
+    }
+    const CHILD: &str = "GH_NATIVE_COLLECTION_CHILD";
+    if let Some(path) = std::env::var_os(CHILD) {
+        let p: NativeCollectionParameters =
+            serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        let store = CheckpointStore::open(&p.cfg).unwrap();
+        let RestoreAdmission::Granted(mut session) = store.claim_restore(p.intent.clone()).unwrap()
+        else {
+            panic!("claim not fresh")
+        };
+        let root = root::Root::create(p.intent.destination.path(), p.intent.generation).unwrap();
+        session.allocated().unwrap();
+        session.launching().unwrap();
+        metadata::atomic_json(&p.receipt, &root.receipt()).unwrap();
+        assert_eq!(unsafe { libc::raise(libc::SIGSTOP) }, 0);
+        return;
+    }
+    let mut f = Fixture::new();
+    let binary = PathBuf::from("/usr/bin/sleep");
+    let (sha256, size) =
+        crate::machine::digest(crate::machine::trusted_file(&binary).unwrap()).unwrap();
+    let artifact = Artifact {
+        path: binary,
+        sha256,
+        size,
+    };
+    f.manifest.runtime.jailer_sha256 = artifact.sha256.clone();
+    f.manifest.runtime.kernel_sha256 = artifact.sha256.clone();
+    f.intent.runtime = f.manifest.runtime.clone();
+    let store = f.store();
+    f.publish(&store);
+    f.collect_source();
+    let native = tempfile::Builder::new()
+        .prefix("gn-")
+        .tempdir_in("/var/lib")
+        .unwrap();
+    std::fs::set_permissions(native.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    let cfg = DriverConfig {
+        installation_id: f.cfg.installation,
+        data_root: native.path().join("d"),
+        artifacts: BootInput {
+            firecracker: artifact.clone(),
+            jailer: artifact.clone(),
+            kernel: artifact.clone(),
+            rootfs: artifact.clone(),
+        },
+        supervisor: artifact.clone(),
+        image: format!("sha256:{}", artifact.sha256),
+        prepared_images: None,
+        checkpoints: Some(f.cfg.policy.clone()),
+        max_resources: f.manifest.resources.clone(),
+        capacity: HostCapacity::default(),
+        max_ttl_seconds: 300,
+    };
+    let mut intent = continuation(&f);
+    let paths = cfg.paths(intent.generation).unwrap();
+    std::fs::create_dir_all(paths.root.parent().unwrap()).unwrap();
+    intent.destination = Destination::observe(&paths.root, intent.generation).unwrap();
+    let receipt_path = native.path().join("receipt.json");
+    let parameter = native.path().join("child.json");
+    metadata::atomic_json(
+        &parameter,
+        &NativeCollectionParameters {
+            cfg: f.cfg.clone(),
+            intent: intent.clone(),
+            receipt: receipt_path.clone(),
+        },
+    )
+    .unwrap();
+    let mut child=ChildOwner(Command::new(std::env::current_exe().unwrap()).args(["--exact","checkpoint::storage::tests::real_native_collection_closes_lost_writer_ack_only_with_original_collected_receipts","--nocapture","--test-threads=1"]).env(CHILD,&parameter).spawn().unwrap());
+    let until = Instant::now() + Duration::from_secs(120);
+    while !receipt_path.exists() {
+        assert!(child.0.try_wait().unwrap().is_none());
+        assert!(Instant::now() < until);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let receipt: root::Receipt =
+        serde_json::from_slice(&std::fs::read(&receipt_path).unwrap()).unwrap();
+    let producer = receipt.producer.clone();
+    let base = f.intent.validate().unwrap();
+    assert_eq!(store.reserved_bytes().unwrap(), base + f.intent.disk_bytes);
+    let mut journal = VmJournal {
+        format: 1,
+        owner: VmOwner {
+            installation_id: cfg.installation_id,
+            sandbox_id: intent.sandbox,
+            generation: intent.generation,
+            request_sha256: "a".repeat(64),
+            expires_at: chrono::Utc::now() + chrono::Duration::seconds(120),
+            host_boot_id: producer.boot_id.clone(),
+            boot_deadline_ns: lifecycle::boottime_ns().unwrap() + 120_000_000_000,
+        },
+        artifacts: cfg.artifacts.clone(),
+        selected_image: None,
+        profile_probe_context_sha256: None,
+        capture_hold: None,
+        restore: Some(lifecycle::RestoreBinding {
+            intent: intent.clone(),
+        }),
+        resources: f.manifest.resources.clone(),
+        supervisor: Some(producer.clone()),
+        // Synthetic native collector acknowledgements; actual cgroup kill/reap
+        // remains a separate hardware gate. The root/producer below are real.
+        supervisor_cgroup_identity: Some(
+            PathIdentity::capture(Path::new("/sys/fs/cgroup"), false).unwrap(),
+        ),
+        vm_cgroup_identity: Some(
+            PathIdentity::capture(Path::new("/sys/fs/cgroup"), false).unwrap(),
+        ),
+        vm_root: Some(receipt.clone()),
+        root_collection_started: true,
+        supervisor_artifact: artifact,
+        original_cgroup: PathBuf::from("/sys/fs/cgroup"),
+        process: None,
+        phase: "vm_collected".into(),
+        ever_ready: false,
+        error: Some("writer acknowledgement interrupted".into()),
+        console_tail: String::new(),
+        supervisor_stderr_tail: String::new(),
+        supervisor_cgroup_events: Default::default(),
+    };
+    assert!(
+        CollectedNativeRestore::observe(&cfg, &journal).is_err(),
+        "original producer still present"
+    );
+    assert!(
+        store
+            .close_native_restore(&intent, &producer, None)
+            .is_err()
+    );
+    child.stop();
+    assert!(
+        CollectedNativeRestore::observe(&cfg, &journal).is_err(),
+        "original root still present"
+    );
+    root::Root::recorded(
+        &paths.root,
+        Some(&receipt),
+        intent.generation,
+        Some(&producer),
+    )
+    .unwrap()
+    .unwrap()
+    .remove_all()
+    .unwrap();
+    assert!(
+        store
+            .close_native_restore(&intent, &producer, None)
+            .is_err(),
+        "missing writer still has no native proof"
+    );
+    journal.phase = "collecting".into();
+    assert!(
+        CollectedNativeRestore::observe(&cfg, &journal).is_err(),
+        "intent is not a completed collection"
+    );
+    journal.phase = "vm_collected".into();
+    let proof = CollectedNativeRestore::observe(&cfg, &journal).unwrap();
+    let original = std::fs::read(f.cfg.root.join(record_name(f.cfg.capture))).unwrap();
+    let mut other = intent.clone();
+    other.restoration = Uuid::new_v4();
+    assert_eq!(
+        store
+            .close_native_restore(&other, &producer, Some(&proof))
+            .unwrap()["owned_restoration"],
+        false
+    );
+    let mut wrong_producer = producer.clone();
+    wrong_producer.start_ticks += 1;
+    assert!(
+        store
+            .close_native_restore(&intent, &wrong_producer, Some(&proof))
+            .is_err()
+    );
+    for field in [
+        "root_birth",
+        "pid_namespace",
+        "cgroup_namespace",
+        "group_path",
+        "producer",
+        "parent_birth",
+    ] {
+        let mut changed = serde_json::to_value(&proof).unwrap();
+        match field {
+            "root_birth" => {
+                changed["directory"]["receipt"]["birth_nanoseconds"] = serde_json::json!(
+                    changed["directory"]["receipt"]["birth_nanoseconds"]
+                        .as_u64()
+                        .unwrap()
+                        + 1
+                );
+            }
+            "pid_namespace" => {
+                changed["directory"]["receipt"]["pid_namespace_inode"] = serde_json::json!(1);
+            }
+            "cgroup_namespace" => {
+                changed["directory"]["receipt"]["cgroup_namespace"] = serde_json::json!([0, 1]);
+            }
+            "group_path" => {
+                changed["groups"][0][0] = serde_json::json!("/sys/fs/cgroup/foreign");
+            }
+            "producer" => {
+                changed["producer"]["start_ticks"] = serde_json::json!(wrong_producer.start_ticks);
+            }
+            "parent_birth" => {
+                changed["directory"]["parent_birth"][0] = serde_json::json!(1);
+            }
+            _ => unreachable!(),
+        }
+        let changed = serde_json::from_value(changed).unwrap();
+        assert!(
+            store
+                .close_native_restore(&intent, &producer, Some(&changed))
+                .is_err(),
+            "{field}"
+        );
+        assert_eq!(
+            std::fs::read(f.cfg.root.join(record_name(f.cfg.capture))).unwrap(),
+            original
+        );
+        assert_eq!(store.reserved_bytes().unwrap(), base + f.intent.disk_bytes);
+    }
+    std::fs::create_dir(&paths.root).unwrap();
+    std::fs::write(paths.root.join("sentinel"), b"replacement").unwrap();
+    assert!(
+        store
+            .close_native_restore(&intent, &producer, Some(&proof))
+            .is_err()
+    );
+    assert_eq!(
+        std::fs::read(paths.root.join("sentinel")).unwrap(),
+        b"replacement"
+    );
+    std::fs::remove_file(paths.root.join("sentinel")).unwrap();
+    std::fs::remove_dir(&paths.root).unwrap();
+    let closed = store
+        .close_native_restore(&intent, &producer, Some(&proof))
+        .unwrap();
+    assert_eq!(closed["restoration"]["outcome"], "unconfirmed");
+    assert!(closed["restoration"]["writer"].is_null());
+    assert!(closed["restoration"]["native_collection"].is_object());
+    assert_eq!(store.reserved_bytes().unwrap(), base);
+    assert!(matches!(
+        store.claim_restore(intent.clone()).unwrap(),
+        RestoreAdmission::Existing(_)
+    ));
+    assert!(store.claim_restore(other).is_err());
+    assert_eq!(
+        store.close_restore(f.cfg.capture).unwrap()["target_reserved_bytes"],
+        0
+    );
+    let mut no_proof: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(f.cfg.root.join(record_name(f.cfg.capture))).unwrap(),
+    )
+    .unwrap();
+    no_proof["restoration"]
+        .as_object_mut()
+        .unwrap()
+        .remove("native_collection");
+    let saved = std::fs::read(f.cfg.root.join(record_name(f.cfg.capture))).unwrap();
+    metadata::atomic_json(&f.cfg.root.join(record_name(f.cfg.capture)), &no_proof).unwrap();
+    assert!(
+        store.reserved_bytes().is_err(),
+        "closed no-writer launch must retain a collection proof"
+    );
+    metadata::atomic_json(
+        &f.cfg.root.join(record_name(f.cfg.capture)),
+        &serde_json::from_slice::<Record>(&saved).unwrap(),
+    )
+    .unwrap();
+    store.collect(f.cfg.capture).unwrap();
+    assert_eq!(store.reserved_bytes().unwrap(), 0);
+    let path = native.path().to_owned();
+    native.close().unwrap();
+    assert!(!path.exists());
+    f.close();
 }
 #[test]
 fn real_continuation_owner_sigkill_never_mints_a_second_target_and_releases_only_observed_absence()

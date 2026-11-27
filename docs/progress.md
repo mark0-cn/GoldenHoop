@@ -1,5 +1,19 @@
 # Progress
 
+The private [native manager restoration](native-managed-restoration.md) increment
+adds immutable target admission, supervisor-owned continuation leases and original
+collector receipts for a lost writer acknowledgement. Exact completed retries
+keep the original handle even after object GC; competing targets and ordinary
+boot conflict. No public MemorySnapshot capability is registered.
+
+Its complete Windows290/GNU-root404/musl21 plus4 static releases pass on the same344
+source inputs. The [implementation summary](evidence/m4-managed-restore-implementation-summary.json)
+records exact checks and collection receipts. The new actual child SIGKILL/root
+test uses synthetic native collector/cgroup acknowledgements; it is not a KVM cut.
+All successful local check tags and all5 failed tags are positively absent.
+The separate targeted native hardware workflow has not run yet. Prepared images,
+public snapshot/session bindings, templates and combined M4-M6 remain open.
+
 The strengthened [continuation gate46060867499](https://github.com/mark0-cn/GoldenHoop/actions/runs/46060867499)
 passes70 groups/384 source inputs at9a77320 with Complete collection. Its external
 sample observes the full268,435,456-byte readonly RAM backing while UID10000 VMM

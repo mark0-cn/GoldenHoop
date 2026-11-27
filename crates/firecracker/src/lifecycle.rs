@@ -4,8 +4,11 @@ pub(crate) mod cgroup;
 mod descriptor;
 mod driver;
 mod image;
+mod restore;
 pub use image::PreparedImagePolicy;
 pub use image::inherited_input;
+pub use restore::ManagedRestoreRequest;
+pub(crate) use restore::{CollectedNativeRestore, RestoreBinding};
 mod manager;
 pub(crate) mod metadata;
 pub(crate) use metadata::atomic_json;
@@ -190,6 +193,8 @@ pub(crate) struct VmJournal {
     pub profile_probe_context_sha256: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capture_hold: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restore: Option<RestoreBinding>,
     pub resources: ResourceLimits,
     pub supervisor: Option<ProcessIdentity>,
     #[serde(default)]
@@ -269,6 +274,9 @@ impl VmJournal {
         )?;
         cfg.paths(self.owner.generation)?;
         cfg.validate_journal_image(self)?;
+        if let Some(restore) = &self.restore {
+            restore.validate(cfg, self)?;
+        }
         Ok(())
     }
 }
@@ -469,6 +477,9 @@ pub enum DriverCall {
     CheckpointCollect {
         capture: Uuid,
     },
+    CheckpointRestore {
+        restore: Box<ManagedRestoreRequest>,
+    },
 }
 
 /// Operator/test CLI for the actual RuntimeDriver and AgentTransport traits.
@@ -510,6 +521,9 @@ pub async fn run_driver_call(config: PathBuf, request: PathBuf) -> Result<serde_
             }
             DriverCall::CheckpointInspect { capture } => driver.checkpoint_inspect(capture).await?,
             DriverCall::CheckpointCollect { capture } => driver.checkpoint_collect(capture).await?,
+            DriverCall::CheckpointRestore { restore } => {
+                serde_json::to_value(driver.checkpoint_restore(&restore).await?).unwrap()
+            }
         })
     };
     Ok(match operation.await {

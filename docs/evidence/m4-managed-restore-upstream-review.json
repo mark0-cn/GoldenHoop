@@ -1,0 +1,39 @@
+{
+  "result": "reviewed",
+  "scope": "Applicability analysis for private native restoration and conservative collection. Upstream does not supply GoldenHoop-specific source/target claims or receipt authority.",
+  "date": "2026-11-27T20:28:57.645926+00:00",
+  "retained_review": {
+    "path": "docs/evidence/m4-continuation-upstream-review.json",
+    "sha256": "80a367d6aae3ef7b6fe0cd4e0309441cd8c5078e0bc719e6d68134bcc2d48788"
+  },
+  "sources": [
+    {
+      "project": "Firecracker",
+      "commit": "eaf83bb718a559d324613d566eaf776b31a62340",
+      "url": "https://github.com/firecracker-microvm/firecracker/blob/eaf83bb718a559d324613d566eaf776b31a62340/docs/snapshotting/snapshot-support.md",
+      "observation": "Memory is MAP_PRIVATE with demand paging. Its backing must remain for the restored VMM lifetime. Snapshots carry state, RAM and separately managed drives; vsock connections reset. Host packaging and lifecycle management are outside the snapshot interface.",
+      "application": "A process launch/exit alone cannot release retained object references. The native supervisor owns the session and original collector observations close it only after physical absence."
+    },
+    {
+      "project": "youki",
+      "commit": "4b4af1efe9feafcc1ffcc4a9b709ae909719bf01",
+      "url": "https://github.com/youki-dev/youki/blob/4b4af1efe9feafcc1ffcc4a9b709ae909719bf01/crates/libcontainer/src/container/container.rs#L164-L188",
+      "observation": "refresh_status reobserves /proc; absent, zombie or dead process can yield Stopped independently of saved state.",
+      "application": "Infer state from fresh runtime evidence. GoldenHoop deliberately requires stronger reaped identity and exact directory/cgroup absence for completed collection; Stopped is not itself sufficient."
+    },
+    {
+      "project": "OpenSandbox",
+      "commit": "3d1b543f685b047cad8bec04c8bd8e49abec7d07",
+      "evidence": "See retained exact source review for provider-specific snapshot work, explicit Unsupported refusal and separate commit/sandbox state.",
+      "application": "Keep private native restoration, public capability registration and actual hardware acceptance separate. No rootfs snapshot or QEMU implementation is treated as Firecracker RAM restore proof."
+    }
+  ],
+  "initial_failures_retained": [
+    "m4-managed-restore-exit-regression-smoke.json",
+    "m4-managed-restore-native-collection-unit-initial.json",
+    "m4-managed-restore-native-collection-unit-corrected.json",
+    "m4-managed-restore-native-collection-unit-canonical.json",
+    "m4-managed-restore-native-collection-unit-private.json"
+  ],
+  "fault_scope": "Actual unit owner SIGKILL/root collection with synthetic native collector/cgroup receipts. Actual KVM lost-writer window remains unverified."
+}

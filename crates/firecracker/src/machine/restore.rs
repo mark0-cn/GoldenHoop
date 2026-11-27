@@ -45,7 +45,7 @@ pub struct RestoreProbeReport {
     pub content_verified_after_target_collection: bool,
     pub error: Option<String>,
 }
-fn runtime(input: &BootInput) -> Result<CheckpointRuntime> {
+pub(crate) fn runtime(input: &BootInput) -> Result<CheckpointRuntime> {
     Ok(CheckpointRuntime {
         firecracker_version: crate::api::SUPPORTED_VMM_VERSION.into(),
         firecracker_sha256: input.firecracker.sha256.clone(),
@@ -72,13 +72,27 @@ fn backing(path: &Path, expected: &crate::checkpoint::CheckpointContent) -> Resu
     Ok(())
 }
 impl Machine {
-    async fn restore_reserved(
+    pub(crate) async fn restore_reserved(
         &mut self,
         input: &BootInput,
         session: &mut RestoreSession,
     ) -> Result<(AgentClient, GuestAuthorityInfo, GuestBarrierInfo)> {
         let intent = session.intent().clone();
         let manifest = session.manifest().clone();
+        if let Some((_, record)) = &self.persistent
+            && (record.phase != "reserved"
+                || record
+                    .restore
+                    .as_ref()
+                    .is_none_or(|binding| binding.intent != intent)
+                || record.resources != manifest.resources
+                || record.selected_image.is_some())
+        {
+            return Err(invalid(
+                "persistent restore requires its original journal/session/resources",
+            )
+            .into());
+        }
         if self.generation != intent.generation
             || self.root != intent.destination.path()
             || runtime(input)? != manifest.runtime
@@ -123,6 +137,7 @@ impl Machine {
         if api.instance_info().await?.state != InstanceState::Paused {
             return Err(invalid("restored target pause unconfirmed").into());
         }
+        self.check_expiry()?;
         // The jailer deliberately chowns '/' to the VMM. Harden it only after
         // snapshot load creates its vsock listener and before any guest resumes.
         let jail = OpenOptions::new()
@@ -139,6 +154,7 @@ impl Machine {
         backing(&directory.join("state"), &manifest.state)?;
         backing(&directory.join("memory"), &manifest.memory)?;
         session.source_absent()?;
+        self.check_expiry()?;
         // Only PID1/control becomes schedulable: the captured workload cgroup
         // remains frozen until its new authority is positively acknowledged.
         api.resume().await?;
@@ -177,12 +193,15 @@ impl Machine {
         }
         self.process = Some(observed);
         session.source_absent()?;
+        self.check_expiry()?;
         let thawed = agent.thaw(transfer.barrier).await?;
         session.activated(&thawed)?;
         if !matches!(rpc(&agent,AgentRequest::Ping).await?,AgentResponse::Pong{version} if version==env!("CARGO_PKG_VERSION"))
         {
             return Err(invalid("restored agent readiness unconfirmed").into());
         }
+        self.check_expiry()?;
+        self.journal(input, "running")?;
         Ok((agent, info, thawed))
     }
     async fn reject_old_scope(

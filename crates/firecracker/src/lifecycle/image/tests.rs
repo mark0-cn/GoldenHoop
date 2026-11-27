@@ -124,6 +124,7 @@ fn recovery_binds_the_selected_manifest_and_owned_destination_without_an_image_j
         artifacts: cfg.selected_artifacts(generation, &info).unwrap(),
         selected_image: Some(info),
         capture_hold: None,
+        restore: None,
         profile_probe_context_sha256: None,
         resources: cfg.max_resources.clone(),
         supervisor: None,

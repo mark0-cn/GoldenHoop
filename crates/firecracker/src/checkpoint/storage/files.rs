@@ -158,6 +158,24 @@ impl Destination {
     }
 }
 impl SourceDirectory {
+    pub(super) fn matches_collected(
+        &self,
+        proof: &crate::lifecycle::root::CollectedDirectory,
+    ) -> Result<()> {
+        let p = &self.parent;
+        let i = &self.inode;
+        if !proof.matches(
+            &self.path,
+            self.generation,
+            (p.device, p.inode, p.birth_seconds, p.birth_nanoseconds),
+            (i.device, i.inode, i.birth_seconds, i.birth_nanoseconds),
+        ) {
+            return Err(
+                invalid("native collection differs from acknowledged restore directory").into(),
+            );
+        }
+        Ok(())
+    }
     pub(crate) fn observe(path: &Path, generation: Uuid) -> Result<Self> {
         let p = parent(path)?;
         let f = OpenOptions::new()

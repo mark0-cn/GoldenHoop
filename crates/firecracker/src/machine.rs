@@ -479,9 +479,16 @@ impl Machine {
         self.prepare_with_disk(input, None)
     }
     fn prepare_with_disk(&mut self, input: &BootInput, restored_disk: Option<File>) -> Result<()> {
-        if restored_disk.is_some() && (self.persistent.is_some() || self.rootfs_input.is_some()) {
+        let managed_restore = self
+            .persistent
+            .as_ref()
+            .is_some_and(|(_, record)| record.restore.is_some());
+        if restored_disk.is_some()
+            && (self.rootfs_input.is_some() || self.persistent.is_some() && !managed_restore)
+            || managed_restore && restored_disk.is_none()
+        {
             return Err(
-                invalid("restore disk requires its separate private allocation contract").into(),
+                invalid("restore disk requires its exact separate allocation contract").into(),
             );
         }
         self.check_expiry()?;
@@ -489,7 +496,7 @@ impl Machine {
             .persistent
             .as_ref()
             .is_some_and(|(_, record)| record.selected_image.is_some());
-        if selected != self.rootfs_input.is_some() {
+        if selected != self.rootfs_input.is_some() || managed_restore && selected {
             return Err(invalid("fresh selected disk requires exactly its inherited input").into());
         }
         if unsafe { libc::geteuid() } != 0 || !cfg!(target_arch = "x86_64") {

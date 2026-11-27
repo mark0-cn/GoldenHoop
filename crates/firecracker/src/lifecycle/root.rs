@@ -22,6 +22,8 @@ pub(crate) struct Receipt {
     nonce: Uuid,
     pid_namespace_device: u64,
     pid_namespace_inode: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cgroup_namespace: Option<(u64, u64)>,
     pub producer: ProcessIdentity,
 }
 
@@ -30,6 +32,114 @@ pub(crate) struct Root {
     parent: File,
     directory: File,
     receipt: Receipt,
+}
+
+/// A historical directory identity whose original producer and path are now
+/// positively absent in the same observer context. Construction stays here.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CollectedDirectory {
+    receipt: Receipt,
+    parent_birth: (u64, u32),
+}
+impl Receipt {
+    pub(crate) fn confirm_collected(
+        &self,
+        path: &Path,
+        generation: Uuid,
+        producer: &ProcessIdentity,
+    ) -> Result<CollectedDirectory> {
+        if self.format != 1
+            || self.nonce.is_nil()
+            || self.generation != generation
+            || self.path != path
+            || self.producer != *producer
+            || self.inode.device_inode().1 == 0
+            || self.cgroup_namespace.is_none()
+        {
+            return Err(invalid("collected root receipt ownership differs").into());
+        }
+        let parent = parent(path)?;
+        let proof = CollectedDirectory {
+            receipt: self.clone(),
+            parent_birth: birth(&parent.metadata()?)?,
+        };
+        proof.verify()?;
+        Ok(proof)
+    }
+}
+impl CollectedDirectory {
+    pub(crate) fn context_matches(&self, boot: &str, device: u64, inode: u64) -> bool {
+        self.receipt.producer.boot_id == boot
+            && self.receipt.pid_namespace_device == device
+            && self.receipt.pid_namespace_inode == inode
+            && inode != 0
+    }
+    pub(crate) fn binding_matches(
+        &self,
+        path: &Path,
+        generation: Uuid,
+        producer: &ProcessIdentity,
+    ) -> bool {
+        let r = &self.receipt;
+        r.format == 1
+            && !r.nonce.is_nil()
+            && r.generation == generation
+            && !generation.is_nil()
+            && r.path == path
+            && r.producer == *producer
+            && producer.uid == 0
+            && r.inode.device_inode().1 != 0
+            && r.parent.device_inode().1 != 0
+            && r.birth_nanoseconds < 1_000_000_000
+            && self.parent_birth.1 < 1_000_000_000
+            && r.pid_namespace_inode != 0
+            && r.cgroup_namespace.is_some_and(|(_, inode)| inode != 0)
+    }
+    pub(crate) fn verify(&self) -> Result<()> {
+        let expected = &self.receipt;
+        let namespace = File::open("/proc/self/ns/pid")?.metadata()?;
+        let cgroup = File::open("/proc/self/ns/cgroup")?.metadata()?;
+        let parent = parent(&expected.path)?;
+        if expected.producer.boot_id != boot_id()?
+            || namespace.dev() != expected.pid_namespace_device
+            || namespace.ino() != expected.pid_namespace_inode
+            || expected.cgroup_namespace != Some((cgroup.dev(), cgroup.ino()))
+            || !expected.parent.matches(&parent.metadata()?)
+            || birth(&parent.metadata()?)? != self.parent_birth
+            || !super::reaper::process_absent(&expected.producer)?
+            || !absent(&expected.path)?
+        {
+            return Err(
+                invalid("collected root producer/context/parent/path is unconfirmed").into(),
+            );
+        }
+        Ok(())
+    }
+    pub(crate) fn matches(
+        &self,
+        path: &Path,
+        generation: Uuid,
+        parent: (u64, u64, u64, u32),
+        inode: (u64, u64, u64, u32),
+    ) -> bool {
+        let r = &self.receipt;
+        let (parent_device, parent_inode) = r.parent.device_inode();
+        let (device, number) = r.inode.device_inode();
+        r.format == 1
+            && !r.nonce.is_nil()
+            && r.cgroup_namespace.is_some()
+            && r.path == path
+            && r.generation == generation
+            && parent
+                == (
+                    parent_device,
+                    parent_inode,
+                    self.parent_birth.0,
+                    self.parent_birth.1,
+                )
+            && inode == (device, number, r.birth_seconds, r.birth_nanoseconds)
+    }
 }
 
 fn birth(metadata: &std::fs::Metadata) -> Result<(u64, u32)> {
@@ -180,6 +290,10 @@ impl Root {
                 nonce: Uuid::new_v4(),
                 pid_namespace_device: namespace.dev(),
                 pid_namespace_inode: namespace.ino(),
+                cgroup_namespace: Some({
+                    let value = File::open("/proc/self/ns/cgroup")?.metadata()?;
+                    (value.dev(), value.ino())
+                }),
                 producer: process_identity(std::process::id())?,
             };
             if !receipt.inode.matches(&metadata) || !receipt.parent.matches(&parent.metadata()?) {
@@ -283,9 +397,14 @@ impl Root {
 
     pub(crate) fn verify(&self) -> Result<()> {
         let namespace = File::open("/proc/self/ns/pid")?.metadata()?;
+        let cgroup = File::open("/proc/self/ns/cgroup")?.metadata()?;
         if self.receipt.producer.boot_id != boot_id()?
             || namespace.dev() != self.receipt.pid_namespace_device
             || namespace.ino() != self.receipt.pid_namespace_inode
+            || self
+                .receipt
+                .cgroup_namespace
+                .is_some_and(|expected| expected != (cgroup.dev(), cgroup.ino()))
         {
             return Err(invalid("VM root boot/PID namespace differs").into());
         }

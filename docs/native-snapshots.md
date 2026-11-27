@@ -3,8 +3,12 @@
 This is the remaining M4 implementation contract. Private owned-Machine capture
 and storage are accepted at47ac2cc (actual60 groups/377 inputs/Complete).
 Native-manager capture64 and private fresh-VMM continuation pass the c7fbfce
-70-group/384-input gate with Complete collection. Its independent external
-full/live backing sampler is being strengthened and needs a fresh actual gate.
+70-group/384-input gate with Complete collection. The strengthened full/live
+backing observer also passes70/384/Complete at9a77320, run46060867499, with
+authenticated live VMM PID/start and full memory length.
+The [private native manager restoration](native-managed-restoration.md) increment
+adds durable target orchestration and typed collection reconciliation; its
+targeted actual hardware workflow remains separate and unaccepted.
 Public native snapshot/restore/template capabilities are not implemented or advertised.
 The complete M0-M6 objective in [roadmap.md](roadmap.md) is unchanged.
 
@@ -32,8 +36,8 @@ separate implementation and acceptance requirement.
 | Guest quiescence | Protocol2 accepted at376328c and protocol3 retained at6c32d1a; separate PID1/control from agent/workloads, fence admission and drain accepted effects | Original barrier/root52/365 and subsequent authority55/371 both pass with Complete collection |
 | Guest authority protocol | Protocol3 generation-bound native frames and frozen transition accepted at6c32d1a | Actual same-VMM55/371/Complete; not host restore/source-termination proof |
 | Independent content admission | Private pinned manifest and descriptor-based anonymous state/memory/disk copies; final335-source Windows290/Linux-root390 and musl21/static4 checks pass | Actual independent source deletion, exact bytes and read-only output; corrupt/truncated/untrusted inputs leave no outputs; guest provenance remains synthetic |
-| Private checkpoint | Owned Machine capture/local store accepted at47ac2cc; manager-owned capture added at9f260a6 and policy-denial correction at26d845e | Owned-Machine60/377/Complete accepted; manager runs39/380/Complete and41/380/Unknown both Failed; complete64-group gate remains required |
-| Private single-use memory restore | Private durable single-use claim and fresh jailed paused loader implemented; native persistent manager/supervisor orchestration remains required | Real retained memory/file state, new authority, old scope refusal and exact retry still require the fresh-VMM gate; private store/process tests alone are insufficient |
+| Private checkpoint | Owned Machine capture/local store accepted at47ac2cc; manager-owned capture retained in the accepted c7fbfce and9a77320 gates | All4 manager groups pass within70/384/Complete. Original39/380/Complete and41/380/Unknown failures remain preserved |
+| Private single-use memory restore | Private durable single-use claim and fresh jailed paused loader accepted; native persistent manager/supervisor increment has a separate targeted workflow | Private6 groups within70/384/Complete prove retained RAM execution, new authority, old-scope refusal and exact retry. New manager orchestration and writer-loss hardware cuts remain unverified |
 | Public integration | Persist operations, idempotency, quota and object references; add REST/CLI/Rust/Python clients and actual capability probe | Public success/failure/recovery and deletion on the supported real profile |
 | Rootfs/volume snapshots and templates | Distinguish fresh boot from memory continuation; bind volume identity and immutable template versions | Kind-specific consistency/isolation, independent instances and template update/deletion behavior |
 | Combined M4 Stage | Freeze the full implementation and execute retained plus new backend gates together | Source-verified reports, actual resource collection and requirement-by-requirement evidence |
@@ -47,8 +51,9 @@ its same-VMM55/371/Complete gate is accepted at6c32d1a. Initial identity still c
 from guest boot arguments; changing a host VMM ID alone cannot change it.
 The private [single-use continuation](native-continuation.md) implements a claim,
 same-observer source-termination fences and a fresh owned-Machine loader. Its
-actual fresh-target gate remains required. Native persistent manager/supervisor
-coordination and public restoration remain unimplemented. Old guests refuse
+actual fresh-target gate passes70/384/Complete. Native persistent manager/supervisor
+coordination is a separate implementation awaiting its targeted hardware gate;
+public restoration remains unimplemented. Old guests refuse
 requests requiring unsupported semantics.
 
 PID1 remains outside workload task groups. The implemented private barrier closes

@@ -69,6 +69,7 @@ def main():
     parser.add_argument('--guest-authority-contract', action='store_true')
     parser.add_argument('--checkpoint-contract', action='store_true')
     parser.add_argument('--managed-checkpoint-contract', action='store_true')
+    parser.add_argument('--managed-restore-contract', action='store_true')
     parser.add_argument('--continuation-contract', action='store_true')
     parser.add_argument('--prepared-image-placement', action='store_true')
     parser.add_argument('--images-binary', type=Path)
@@ -99,6 +100,8 @@ def main():
         parser.error('managed capture requires the retained private capture60 contract')
     if args.continuation_contract and not args.managed_checkpoint_contract:
         parser.error('private continuation requires the retained managed capture64 contract')
+    if args.managed_restore_contract and (args.driver_contract or args.checkpoint_contract or args.managed_checkpoint_contract or args.continuation_contract):
+        parser.error('targeted native restoration uses its own contract; full retained regression belongs to stage acceptance')
     assert re.fullmatch(r'[0-9a-f]{40}', args.source_commit)
     assert re.fullmatch(r'[0-9]+-[0-9]+', args.owner)
     root = Path(__file__).resolve().parent.parent
@@ -135,6 +138,8 @@ def main():
         sources += [root/'tests/firecracker_managed_checkpoint_contract.py',root/'.github/workflows/firecracker-managed-checkpoint.yml']
     if args.continuation_contract:
         sources += [root/'tests/firecracker_continuation_contract.py',root/'.github/workflows/firecracker-continuation.yml']
+    if args.managed_restore_contract:
+        sources += [root/'tests/firecracker_driver_contract.py',root/'tests/firecracker_manager_fixture.py',root/'tests/firecracker_managed_restore_contract.py',root/'.github/workflows/firecracker-managed-restore.yml']
     sources += sorted((root / 'images/microvm').glob('*.json'))
     report = {
         'suite': 'actual jailed Firecracker guest bootstrap',
@@ -279,12 +284,13 @@ def main():
             report['cases'] += ['metadata:'+case for case in metadata['cases']]
             assert metadata['result']=='passed' and guest_collected,metadata.get('error','metadata control collection unconfirmed')
             report['scope'] = 'actual native/public/manager baseline and inode-bound interrupted metadata publication; earlier allocation effects, snapshots/templates and full M4 remain unaccepted'
-        if args.driver_contract:
+        if args.driver_contract or args.managed_restore_contract:
             from firecracker_driver_contract import suite
             report['scope'] = 'actual native RuntimeDriver/AgentTransport lifecycle; public Worker/SDK integration and full M4 remain unaccepted'
             guest_collected = False
             driver = suite(binary, boot, fixture, guest_barrier=args.guest_barrier_contract,
-                           guest_authority=args.guest_authority_contract, managed_checkpoint=args.managed_checkpoint_contract)
+                           guest_authority=args.guest_authority_contract, managed_checkpoint=args.managed_checkpoint_contract or args.managed_restore_contract,
+                           managed_restore_only=args.managed_restore_contract)
             report['driver'] = driver
             guest_collected = driver['cleanup'] == 'complete'
             report['cases'] += ['driver:' + case for case in driver['cases']]
@@ -344,6 +350,8 @@ def main():
             report['scope']='actual manager-owned capture after submitting client disconnect, persisted source hold across manager SIGKILL/reconnect, independent VM operation and retained private capture60; no fresh target load, host restore claim, public snapshot integration or complete M4-M6 acceptance'
         if args.continuation_contract:
             report['scope']='actual private source-absent single-use fresh-VMM continuation, frozen authority transfer and explicit thaw with retained execution RAM/disk state plus retained managed capture64; no native-manager/public restore, target crash reconnect, templates or complete M4-M6 acceptance'
+        if args.managed_restore_contract:
+            report['scope']='targeted actual native manager/supervisor single-use restoration, original execution RAM continuation, actual manager and restored-supervisor SIGKILL recovery, exact quota and object collection. No missing-writer-cut hardware, public snapshot/session integration, prepared image restoration, full retained stage or M4-M6 acceptance.'
 
     except Exception as error:
         report['result'] = 'failed'
