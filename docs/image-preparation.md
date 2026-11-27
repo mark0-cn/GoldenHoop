@@ -69,10 +69,13 @@ values. Old aliases cannot modify the replacement executable.
 Each tool has a 180-second limit, followed by actual child wait and separate
 pipe drainage; launch, EOF or an unconfirmed kill cannot establish collection.
 The disk is synced, fully hashed, read back and made read-only. Extraction data
-is positively collected before a synced manifest is published with Linux
-`renameat2(RENAME_NOREPLACE)`, followed by parent-directory sync. Existing
-generations are never overwritten. The manifest binds source, assets, disk and
-tool content, format/version and creation time.
+is positively collected before publication. A fresh sibling directory is claimed
+without replacement; data names are linked and synced before the complete synced
+manifest is linked last. Every link refuses an existing name. Directory/parent
+sync, original staging removal and final single-link inode readback are required.
+Directory presence alone is never Ready. The manifest binds source, assets, disk
+and tool content, format/version and creation time. The shared-volume rationale
+and the original failed gates are recorded below.
 
 A 600-second overall fence and TERM/INT cancellation stop new work. Blocking
 hash/extraction operations check the shared fence while the Tokio signal loop
@@ -341,3 +344,59 @@ rechecks its immutable ID and verifies the generated image's inherited content
 layers before dispatching the pinned final source ID. All fresh local fixture
 resources and three owned build-image tags are absent. Production Rust inputs
 are unchanged from the 281/339-test full checks above.
+
+## Shared-volume publication
+
+The [upstream review](evidence/m4-image-builder-shared-publication-upstream-review.json)
+pins gVisor's shared-mount defaults and its Gofer RenameAt implementation:
+`RENAME_NOREPLACE` on a shared mount returns EINVAL. The original converter used
+that operation for directory publication. This establishes a necessary
+compatibility defect in the default production path. The exact syscall from the
+earlier failed conversions was not retained and is not reconstructed.
+
+[Run45930383149](evidence/m4-image-prepare-45930383149-archive.json) at 4004da9
+again retains a Failed/Complete primary report with all 316 source bindings,
+raw SHA256 `ab075b1d9aad30c488185eab88d0609d69580b277e35007103b64166759cccaf`.
+Its separate diagnostic report verifies two inputs but remains Unknown: the
+collector hit an unannotated assertion before retaining any logs. The original
+report and its uncertainty remain unchanged. The revised collector records
+root/claim metadata, a bounded file inventory and failure locations, and can
+retain bounded regular-file observations before stricter deletion guards.
+Root ownership/private mode, claimed source, file ownership and fenced compute
+are still required for deletion. Literal unexpanded filename placeholders are
+handled without changing path or file-type confinement.
+
+The converter now uses the no-clobber hard-link pattern from
+[tempfile 3.27.0](https://docs.rs/tempfile/3.27.0/src/tempfile/file/imp/unix.rs.html).
+It first validates and syncs the three root-owned single-link files. Atomic
+mkdir refuses an existing generation, including an empty directory. Data names
+are linked without overwrite and their directory/parent are synced before
+linking the complete manifest. Descriptor-bound inode/length/link observations
+must match. The committed directory is synced, staging must actually disappear,
+its parent is synced again and final link counts must be one. A partial target
+directory or an error after manifest linking cannot establish successful
+conversion; the parent still requires zero exit, exact manifest/storage readback
+and confirmed provider collection. Failed publication leaves its error and
+requires the existing fenced parent/volume collection. Interrupted publication
+is not silently adopted or replayed.
+
+Two actual filesystem groups cover successful content/inode retention and
+staging collection, existing-directory preservation and refusal of a source
+file with another link. Linux Docker executes their root branch; unprivileged
+checks verify refusal before target allocation. Fresh
+[Windows](evidence/m4-image-builder-manifest-publication-validation-windows-current.json)
+and [Linux](evidence/m4-image-builder-manifest-publication-validation-linux-current.json)
+format/strict workspace-all-target lint/full test checks pass 281/341 tests,
+each with 314 exact build inputs. The initial Linux check's unused import
+failure remains recorded; the corrected checks use the current frozen source.
+The [actual local runc-development gate](evidence/m4-image-builder-manifest-publication-actual-runc.json)
+passes nine groups with 317 bindings and Complete collection, raw SHA256
+`55c62604f37d2fb409f1e82b9198df83c788e4d27e21f1d41f2ec6e30f8112f8`.
+All its fresh containers/volumes/images/temp context are absent.
+The [Linux collector contract](evidence/m4-runsc-trace-collector-local-current.json)
+passes five groups with two exact input bindings and Complete fixture collection.
+Its inputs are explicitly synthetic: bounded tails/digests, literal placeholders,
+foreign source refusal, unfenced-writer retention and readable diagnostics with
+refused nonprivate-directory collection. It establishes collector behavior,
+not actual runsc conversion. New real runsc and produced-disk KVM gates remain
+required.

@@ -2,13 +2,14 @@ use crate::{
     BuilderInventory, BuilderLimits, BuilderRuntime, Content, HostPermit, PrepareReport,
     PrepareRequest, PreparedImage, archive, invalid,
 };
+mod publication;
 use cap_std::{
     ambient_authority,
     fs::{Dir, OpenOptions as CapOptions},
 };
+use publication::publish;
 use sha2::{Digest, Sha256};
 use std::{
-    ffi::CString,
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
     os::{
@@ -539,27 +540,6 @@ async fn tool(
     Ok(())
 }
 
-fn publish(source: &Path, destination: &Path) -> io::Result<()> {
-    let source = CString::new(source.as_os_str().as_encoded_bytes())
-        .map_err(|_| invalid("invalid staging path"))?;
-    let destination = CString::new(destination.as_os_str().as_encoded_bytes())
-        .map_err(|_| invalid("invalid image path"))?;
-    if unsafe {
-        libc::syscall(
-            libc::SYS_renameat2,
-            libc::AT_FDCWD,
-            source.as_ptr(),
-            libc::AT_FDCWD,
-            destination.as_ptr(),
-            libc::RENAME_NOREPLACE,
-        )
-    } != 0
-    {
-        return Err(io::Error::last_os_error());
-    }
-    File::open("/output")?.sync_all()
-}
-
 pub async fn prepare(request: PrepareRequest, cancel: Arc<AtomicBool>) -> PrepareReport {
     prepare_inner(request, cancel, None).await
 }
@@ -720,7 +700,9 @@ async fn prepare_inner(
         if cancel.load(Ordering::Acquire) {
             return Err(invalid("image preparation interrupted before publication"));
         }
-        publish(&stage, &ready)?;
+        publish(&stage, &ready).map_err(|error| {
+            io::Error::new(error.kind(), format!("publish prepared image: {error}"))
+        })?;
         report.staging_absent = !stage.try_exists()?;
         report.manifest = Some(manifest);
         Ok::<_, io::Error>(())

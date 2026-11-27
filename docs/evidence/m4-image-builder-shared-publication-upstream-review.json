@@ -1,0 +1,73 @@
+{
+  "suite": "shared gofer publication upstream contract review",
+  "base_commit": "4004da9ef32a259126e62639e0d27bb0b2c3d17c",
+  "result": "reviewed",
+  "scope": "source-established incompatibility and local protocol correction; not real runsc acceptance",
+  "source_files_sha256": {
+    "crates/image-builder/src/linux.rs": "d5741db8353f56647ab7cf7c9e5068f3448d5751a5b622b5e902a37aebd65584",
+    "crates/image-builder/src/linux/publication.rs": "d31ba2ac193ac835a7f56591015615ba5f3ecad3e0e1bdb12624d8f73e25ec81",
+    "tests/runsc_trace_contract.py": "ce44700a2221fa51c327c3567036fe0d98717dc9704dbb258446a316bfa10413",
+    ".github/workflows/image-prepare.yml": "2109aba618b47e44858793baec9f636408eae0cff405be1ecc11ff95499599ef"
+  },
+  "upstream": [
+    {
+      "project": "gvisor/gvisor",
+      "revision": "81f68cb7d4661a9313d891a1758a765abe8eb27e",
+      "path": "pkg/sentry/fsimpl/gofer/filesystem.go",
+      "git_blob_sha": "89f69b91a6ae64b45a801e65cad42eb00c59df33",
+      "sha256": "68377af7debaf7ace7dfee930555179d7d967582cfeda423483d51fa31836351",
+      "url": "https://github.com/gvisor/gvisor/blob/81f68cb7d4661a9313d891a1758a765abe8eb27e/pkg/sentry/fsimpl/gofer/filesystem.go"
+    },
+    {
+      "project": "gvisor/gvisor",
+      "revision": "81f68cb7d4661a9313d891a1758a765abe8eb27e",
+      "path": "g3doc/user_guide/filesystem.md",
+      "git_blob_sha": "ba9a8faf2f7f289dfda1770f713f1eb04307831c",
+      "sha256": "41c782162d5a4997cfc497ccd975c5893bfe91289564f05025c647c603b4c50d",
+      "url": "https://github.com/gvisor/gvisor/blob/81f68cb7d4661a9313d891a1758a765abe8eb27e/g3doc/user_guide/filesystem.md"
+    },
+    {
+      "project": "tempfile",
+      "version": "3.27.0",
+      "path": "src/file/imp/unix.rs",
+      "sha256": "cc39f94cb6cb87b36cf7603a75429d64ecc4ad1a2076a765e5aba2b11771d0f7",
+      "url": "https://docs.rs/tempfile/3.27.0/src/tempfile/file/imp/unix.rs.html"
+    }
+  ],
+  "observed_runs": [
+    {
+      "id": 45927939744,
+      "primary_result": "failed",
+      "primary_cleanup": "complete",
+      "error": "bare EINVAL after authorization",
+      "raw_sha256": "11b520c2bc6b8abe35b381a59d157b45074f560865873756234618cadd91da19"
+    },
+    {
+      "id": 45930383149,
+      "primary_result": "failed",
+      "primary_cleanup": "complete",
+      "primary_raw_sha256": "ab075b1d9aad30c488185eab88d0609d69580b277e35007103b64166759cccaf",
+      "trace_result": "diagnostic",
+      "trace_cleanup": "unknown",
+      "trace_raw_sha256": "ec24e03e0acf5f779606474cd3fa2d9a5afaf87ac6fbe8d3d97bb792f7ba9478",
+      "trace_error": "collector rejected before retaining logs; exact refusal not captured"
+    }
+  ],
+  "findings": [
+    "gVisor defaults external bind mounts to shared interoperability.",
+    "Pinned gofer RenameAt explicitly returns EINVAL for RENAME_NOREPLACE in shared mode. The former converter publish routine always issued that operation. This establishes a necessary incompatibility; no old failed syscall trace is invented.",
+    "tempfile persist without overwrite uses hard-link creation when no-replace rename is unavailable, preserving collision refusal. Its ignored unlink failure is not adopted."
+  ],
+  "applied_protocol": [
+    "Validate and sync all three root-owned single-link read-only files before claiming a fresh sibling directory with mkdir.",
+    "Hard-link data names without overwrite; sync data directory and parent before linking the complete manifest last. Verify descriptor-bound inode identities and link counts.",
+    "Sync committed directory and parent, require original staging removal and parent sync, then require final single links. Partial directory presence never establishes Ready.",
+    "Parent still requires zero converter exit, exact manifest/storage readbacks and observed provider/process/cgroup/volume collection. Failed or ambiguous publication remains failed.",
+    "Read bounded diagnostics before granting deletion authority; retain exact inventory, root/claim metadata and failure site when collection refuses."
+  ],
+  "required_next": [
+    "Current full Windows/Linux checks and actual local conversion.",
+    "A new actual default-runsc gate with retained syscall observations.",
+    "Produced-disk KVM gate and all remaining M4-M6 acceptance."
+  ]
+}
