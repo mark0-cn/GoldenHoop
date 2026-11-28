@@ -1,5 +1,24 @@
 # Progress
 
+The next M4 candidate implements an independent private guest ext4 freeze/thaw
+barrier, exact source-generation/root-descriptor receipts, permanent thaw intent,
+cross-kind exclusion and original-operation recovery after lost replies. It uses
+Linux UAPI ioctl encoding plus the portable libc statvfs ABI. A failed freeze or
+thaw preserves Unknown/fenced state; dropping an RPC never reopens workloads.
+See the [implementation and targeted KVM contract](guest-rootfs-barrier.md).
+
+[Focused GNU Linux](evidence/m4-rootfs-capture-linux-final.json) and
+[static musl](evidence/m4-rootfs-capture-musl-final.json) each pass strict
+native/init all-target clippy and27 tests, including real Unix-socket transport
+contracts. [Full Windows checks](evidence/m4-rootfs-capture-windows-final.json)
+pass format, strict workspace/all-target clippy,331 Rust tests and36 SDK tests.
+All three checks bind the same396 current runtime inputs. The exact GNU/musl
+check images and their containers are [absent](evidence/m4-rootfs-capture-check-images-collection.json),
+including the [superseded GNU image](evidence/m4-rootfs-capture-initial-image-collection.json).
+These checks are not KVM freeze or cold-boot evidence. The targeted actual
+KVM/runsc gate remains pending. The initial ABI compile failure and superseded
+20-test GNU follow-up are retained separately.
+
 [Actual runsc46124741317](https://github.com/mark0-cn/GoldenHoop/actions/runs/46124741317)
 accepts the private read-only rootfs inspector at8a776b9: all18 groups pass with377
 byte-verified inputs and Complete collection. The separate trusted transport

@@ -67,6 +67,7 @@ def main():
     parser.add_argument('--cgroup-test-manifest', type=Path)
     parser.add_argument('--root-recovery-contract', action='store_true')
     parser.add_argument('--guest-barrier-contract', action='store_true')
+    parser.add_argument('--rootfs-barrier-contract', action='store_true')
     parser.add_argument('--guest-authority-contract', action='store_true')
     parser.add_argument('--checkpoint-contract', action='store_true')
     parser.add_argument('--managed-checkpoint-contract', action='store_true')
@@ -96,6 +97,9 @@ def main():
         parser.error('prepared placement requires the retained root47 contract and actual host/builder components')
     if args.guest_barrier_contract and (not args.root_recovery_contract or not args.driver_contract):
         parser.error('guest barrier requires the retained root47 and actual native driver contract')
+    if args.rootfs_barrier_contract and (not args.driver_contract or not args.builder_image or not args.builder_owner
+                                       or args.guest_barrier_contract or args.public_contract or args.checkpoint_contract):
+        parser.error('rootfs barrier requires its targeted driver and actual isolated inspector; retained full regression belongs to stage acceptance')
     if args.guest_authority_contract and not args.guest_barrier_contract:
         parser.error('guest authority requires the retained actual guest-barrier and root47 contract')
     if args.checkpoint_contract and not args.guest_authority_contract:
@@ -138,6 +142,12 @@ def main():
         sources += [root/'tests/firecracker_image_placement_contract.py',root/'.github/workflows/firecracker-image-placement.yml',root/'images/host/Dockerfile']
     if args.guest_barrier_contract:
         sources += [root/'tests/firecracker_barrier_contract.py',root/'.github/workflows/firecracker-guest-barrier.yml']
+    if args.rootfs_barrier_contract:
+        sources += [root/'tests/firecracker_rootfs_barrier_contract.py', root/'tests/firecracker_barrier_contract.py',
+                    root/'tests/rootfs_inspection_contract.py', root/'tests/rootfs_host_fixture.py', root/'tests/image_builder_contract.py',
+                    root/'tests/fixtures/rootfs-preflight.Dockerfile', root/'.github/workflows/firecracker-rootfs-barrier.yml',
+                    root/'.github/workflows/firecracker-guest-barrier.yml', root/'images/host/Dockerfile']
+        sources += sorted(p for p in (root/'crates').rglob('*') if p.is_file() and '__pycache__' not in p.parts)
     if args.guest_authority_contract:
         sources += [root/'tests/firecracker_authority_contract.py',root/'.github/workflows/firecracker-guest-authority.yml']
     if args.checkpoint_contract:
@@ -301,7 +311,9 @@ def main():
             driver = suite(binary, boot, fixture, guest_barrier=args.guest_barrier_contract,
                            guest_authority=args.guest_authority_contract, managed_checkpoint=args.managed_checkpoint_contract or args.managed_restore_contract or args.managed_restore_cut_contract,
                            managed_restore_only=args.managed_restore_contract or args.managed_restore_cut_contract,
-                           managed_restore_cut=args.managed_restore_cut_contract)
+                           managed_restore_cut=args.managed_restore_cut_contract,
+                           rootfs_barrier=args.rootfs_barrier_contract, inspector_image=args.builder_image,
+                           inspector_owner=args.builder_owner, source_commit=args.source_commit)
             report['driver'] = driver
             guest_collected = driver['cleanup'] == 'complete'
             report['cases'] += ['driver:' + case for case in driver['cases']]
@@ -337,6 +349,8 @@ def main():
 
         if args.guest_barrier_contract:
             report['scope']='actual private guest admission/freeze/sync/thaw barrier plus retained root47; snapshots/restore/templates and complete M4-M6 remain unaccepted'
+        if args.rootfs_barrier_contract:
+            report['scope']='actual private ext4 freeze/thaw, independent fixture copy, source continuation and runsc disk inspection; production rootfs capture/storage/cold boot, public operations, templates and complete M4-M6 remain unverified'
         if args.guest_authority_contract:
             report['scope']='actual generation-bound guest RPC and authority-transfer protocol on the same physical VMM plus retained barrier/root52; no memory capture, source termination, restore claim, new VMM or full M4-M6 acceptance'
 

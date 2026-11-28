@@ -1,6 +1,12 @@
 name: Firecracker private guest quiescence barrier
 on:
   workflow_dispatch:
+    inputs:
+      component:
+        description: Private guest barrier to validate
+        type: choice
+        default: memory
+        options: [memory, rootfs]
 permissions:
   contents: read
 env:
@@ -12,6 +18,7 @@ env:
   M4_CGROUP_BUILD: .goldenhoop-cgroup-test-${{ github.run_id }}-${{ github.run_attempt }}.json
 jobs:
   guest-barrier:
+    if: inputs.component != 'rootfs'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -68,3 +75,6 @@ jobs:
           name: firecracker-guest-barrier
           path: evidence/*.json
           if-no-files-found: error
+  rootfs:
+    if: inputs.component == 'rootfs'
+    uses: ./.github/workflows/firecracker-rootfs-barrier.yml

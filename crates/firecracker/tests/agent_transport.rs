@@ -193,6 +193,22 @@ fn request() -> AgentRequest {
     }
 }
 
+#[tokio::test]
+async fn nil_rootfs_barriers_are_refused_before_any_vmm_or_guest_connection() {
+    let fixture = Fixture::new(InstanceState::Running, Behavior::Success);
+    let client = fixture.client();
+    for error in [
+        client.rootfs_quiesce(Uuid::nil()).await.unwrap_err(),
+        client.rootfs_status(Uuid::nil()).await.unwrap_err(),
+        client.rootfs_thaw(Uuid::nil()).await.unwrap_err(),
+    ] {
+        assert_eq!(error.dispatch, DispatchState::NotSent);
+        assert_eq!(error.error.code, ErrorCode::InvalidRequest);
+    }
+    assert_eq!(fixture.connections.load(Ordering::SeqCst), 0);
+    fixture.finish().await;
+}
+
 fn assert_scoped_request(observed: &[u8], peer: PeerIdentity) {
     assert!(observed.ends_with(b"\n"));
     let actual: serde_json::Value = serde_json::from_slice(observed).unwrap();

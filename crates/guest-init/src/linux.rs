@@ -364,6 +364,18 @@ async fn proxy(
         .is_some()
     {
         let control: GuestControlRequest = serde_json::from_slice(&request)?;
+        if matches!(
+            control,
+            GuestControlRequest::RootfsQuiesce { .. }
+                | GuestControlRequest::RootfsStatus { .. }
+                | GuestControlRequest::RootfsThaw { .. }
+        ) {
+            let info = barrier.rootfs_request(control).await?;
+            let mut reply = serde_json::to_vec(&info)?;
+            reply.push(b'\n');
+            host.get_mut().write_all(&reply).await?;
+            return host.get_mut().shutdown().await;
+        }
         if let GuestControlRequest::TransferAuthority { transfer } = control {
             let info = barrier.transfer(transfer).await?;
             let mut reply = serde_json::to_vec(&info)?;

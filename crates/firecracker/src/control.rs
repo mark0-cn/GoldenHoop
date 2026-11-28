@@ -2,6 +2,8 @@
 //! host-CID2 endpoint; they are not public workload agent methods.
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+mod rootfs;
+pub use rootfs::{GuestFilesystemState, GuestRootFilesystem, GuestRootfsBarrierInfo};
 
 pub const GUEST_CONTROL_VERSION: u16 = 3;
 
@@ -13,6 +15,9 @@ pub enum GuestControlRequest {
     BarrierStatus { generation: Uuid, barrier: Uuid },
     Thaw { generation: Uuid, barrier: Uuid },
     TransferAuthority { transfer: GuestAuthorityTransfer },
+    RootfsQuiesce { generation: Uuid, barrier: Uuid },
+    RootfsStatus { generation: Uuid, barrier: Uuid },
+    RootfsThaw { generation: Uuid, barrier: Uuid },
 }
 
 /// Native RPCs are scoped at the guest admission boundary. Raw workload-agent

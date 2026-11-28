@@ -17,6 +17,7 @@ use tokio::sync::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use uuid::Uuid;
 
 const LIMIT: Duration = Duration::from_secs(10);
+mod rootfs;
 
 pub(super) struct Admission {
     open: AtomicBool,
@@ -90,6 +91,7 @@ impl Admission {
 #[derive(Default)]
 struct State {
     active: Option<GuestBarrierInfo>,
+    rootfs: Option<rootfs::Active>,
     // A resumed operation cannot become a fresh capture with a stale identifier.
     // Bounded by refusal rather than forgetting earlier acknowledgements.
     seen: HashSet<Uuid>,
@@ -176,6 +178,11 @@ impl Barrier {
         transfer: GuestAuthorityTransfer,
     ) -> io::Result<GuestAuthorityInfo> {
         let mut state = self.state.lock().await;
+        if state.rootfs.as_ref().is_some_and(rootfs::Active::blocks) {
+            return Err(invalid(
+                "authority transfer is fenced by the active rootfs barrier",
+            ));
+        }
         let generation = self.generation().await;
         if let Some(info) = state.active.as_mut() {
             self.observe(info)?;
@@ -270,11 +277,20 @@ impl Barrier {
                 generation,
                 barrier,
             } => (generation, barrier),
-            GuestControlRequest::Info | GuestControlRequest::TransferAuthority { .. } => {
+            GuestControlRequest::Info
+            | GuestControlRequest::TransferAuthority { .. }
+            | GuestControlRequest::RootfsQuiesce { .. }
+            | GuestControlRequest::RootfsStatus { .. }
+            | GuestControlRequest::RootfsThaw { .. } => {
                 return Err(invalid("not a guest barrier request"));
             }
         };
         let mut state = self.state.lock().await;
+        if state.rootfs.as_ref().is_some_and(rootfs::Active::blocks) {
+            return Err(invalid(
+                "memory barrier is fenced by the active rootfs barrier",
+            ));
+        }
         if generation.is_nil() || barrier.is_nil() || self.generation().await != Some(generation) {
             return Err(invalid("guest barrier generation or operation differs"));
         }
@@ -368,6 +384,13 @@ impl Barrier {
             self.admission.open.store(true, Ordering::SeqCst);
         }
         Ok(info.clone())
+    }
+
+    pub(super) async fn rootfs_request(
+        &self,
+        request: GuestControlRequest,
+    ) -> io::Result<goldenhoop_firecracker::control::GuestRootfsBarrierInfo> {
+        rootfs::request(self, request).await
     }
 }
 

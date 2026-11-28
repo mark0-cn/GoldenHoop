@@ -11,7 +11,8 @@ use crate::{
     api::{ApiClient, authenticated_socket},
     control::{
         GUEST_CONTROL_VERSION, GuestAuthorityInfo, GuestAuthorityTransfer, GuestBarrierInfo,
-        GuestControlInfo, GuestControlRequest, GuestRpcRequest,
+        GuestBarrierPhase, GuestControlInfo, GuestControlRequest, GuestRootfsBarrierInfo,
+        GuestRpcRequest,
     },
     models::InstanceState,
     vsock::{MAX_AGENT_FRAME, parse_connect_ack, read_frame},
@@ -169,6 +170,83 @@ impl AgentClient {
                     message,
                 )
             })?;
+        Ok(info)
+    }
+
+    /// Explicit filesystem freeze for disk-only capture. This does not create
+    /// snapshot objects or grant cold-boot authority.
+    pub async fn rootfs_quiesce(
+        &self,
+        barrier: uuid::Uuid,
+    ) -> Result<GuestRootfsBarrierInfo, CallError> {
+        self.rootfs_exchange(
+            GuestControlRequest::RootfsQuiesce {
+                generation: self.api.peer_identity().instance,
+                barrier,
+            },
+            barrier,
+            Some(GuestBarrierPhase::Quiesced),
+        )
+        .await
+    }
+    pub async fn rootfs_status(
+        &self,
+        barrier: uuid::Uuid,
+    ) -> Result<GuestRootfsBarrierInfo, CallError> {
+        self.rootfs_exchange(
+            GuestControlRequest::RootfsStatus {
+                generation: self.api.peer_identity().instance,
+                barrier,
+            },
+            barrier,
+            None,
+        )
+        .await
+    }
+    pub async fn rootfs_thaw(
+        &self,
+        barrier: uuid::Uuid,
+    ) -> Result<GuestRootfsBarrierInfo, CallError> {
+        self.rootfs_exchange(
+            GuestControlRequest::RootfsThaw {
+                generation: self.api.peer_identity().instance,
+                barrier,
+            },
+            barrier,
+            Some(GuestBarrierPhase::Resumed),
+        )
+        .await
+    }
+    async fn rootfs_exchange(
+        &self,
+        request: GuestControlRequest,
+        barrier: uuid::Uuid,
+        expected: Option<GuestBarrierPhase>,
+    ) -> Result<GuestRootfsBarrierInfo, CallError> {
+        if barrier.is_nil() {
+            return Err(CallError::new(
+                DispatchState::NotSent,
+                ErrorCode::InvalidRequest,
+                "nil rootfs barrier",
+            ));
+        }
+        self.control_info().await?;
+        let info: GuestRootfsBarrierInfo = self.exchange(&request).await?;
+        info.validate(self.api.peer_identity().instance, barrier)
+            .map_err(|message| {
+                CallError::new(
+                    DispatchState::Uncertain,
+                    ErrorCode::BackendUnavailable,
+                    message,
+                )
+            })?;
+        if expected.is_some_and(|phase| info.phase != phase) {
+            return Err(CallError::new(
+                DispatchState::Uncertain,
+                ErrorCode::BackendUnavailable,
+                "rootfs barrier has no confirmed requested phase",
+            ));
+        }
         Ok(info)
     }
 
