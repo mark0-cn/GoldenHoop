@@ -7,6 +7,11 @@ mod archive;
 pub mod linux;
 mod permit;
 pub use permit::{BuilderInventory, BuilderLimits, BuilderRuntime, HostPermit};
+mod rootfs;
+pub use rootfs::{
+    InspectedFile, RootfsGuestConfig, RootfsInspection, RootfsInspectionInventory,
+    RootfsInspectionReport, RootfsInspectionRequest,
+};
 
 use serde::{Deserialize, Serialize};
 use std::io;

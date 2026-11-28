@@ -1,5 +1,29 @@
 # Progress
 
+The next M4 increment adds a private Rust read-only ext4 inspector with separate
+disk request/result/inventory and operation-specific authorization. It requires
+clean/full-length content, read-only fsck, protected physical parents, exact
+agent/init metadata/content and trusted expected guest configuration. It checks
+input bytes again and accepts only confirmed tool/staging collection. See the
+[component contract and upstream evidence](rootfs-inspection.md).
+
+[Windows checks](evidence/m4-rootfs-inspection-windows-final.json) pass format,
+strict workspace/all-target clippy,329 Rust tests and36 SDK tests.
+[Focused Linux checks](evidence/m4-rootfs-inspection-linux-corrected.json) pass
+strict image-builder clippy and15 tests. Both and the actual static
+[builder image](evidence/m4-rootfs-inspection-builder.json) freeze the same394
+inputs. The first Linux lint failure is retained separately. The initial Windows
+run passed its checks but overlaps that Linux correction, so it is superseded
+by the byte-frozen final report.
+
+The first actual component fixture passed clean-disk/digest/config checks but
+failed to mutate a read-only copied disk. debugfs exited0 without changing it;
+the [failed report](evidence/m4-rootfs-inspection-runc-initial.json) preserves the
+observation and Complete owned resource collection. The corrected fixture grants
+only its own copy write permission and requires an observed disk digest change
+before testing rejection. Actual component/production-runsc acceptance is pending.
+No rootfs snapshot/template capability is advertised by this increment.
+
 [Actual public memory KVM46116996541](https://github.com/mark0-cn/GoldenHoop/actions/runs/46116996541)
 passes all14 groups, including eight public groups, atbfd6992 with399 verified
 source inputs and Complete collection. The capability probe recovers an observed

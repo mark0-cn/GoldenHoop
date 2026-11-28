@@ -1,6 +1,8 @@
 # Rootfs snapshots and immutable templates: implementation contract
 
-This is the next M4 implementation contract, not implemented support. Rootfs and
+This is the next M4 implementation contract, not implemented public support.
+The separate private [read-only inspector](rootfs-inspection.md) implements its
+disk-validation boundary; capture, restoration and templates remain pending. Rootfs and
 volume snapshots, templates, combined M4 acceptance and the complete M5-M6 work
 in [roadmap.md](roadmap.md) remain required. Existing memory continuation keeps its
 single-use source-termination and retained-execution rules.

@@ -81,13 +81,20 @@ pub struct HostPermit {
 impl HostPermit {
     pub fn validate_for(&self, request: &PrepareRequest) -> io::Result<()> {
         request.validate()?;
+        self.validate_binding(request.generation, &request.fingerprint()?)
+    }
+    pub fn validate_rootfs(&self, request: &crate::RootfsInspectionRequest) -> io::Result<()> {
+        request.validate()?;
+        self.validate_binding(request.generation, &request.fingerprint()?)
+    }
+    fn validate_binding(&self, generation: Uuid, fingerprint: &str) -> io::Result<()> {
         self.limits.validate()?;
         if self.format != 1
             || self.installation_id.is_nil()
             || self.job_id.is_nil()
             || self.nonce.is_nil()
-            || self.generation != request.generation
-            || self.request_sha256 != request.fingerprint()?
+            || self.generation != generation
+            || self.request_sha256 != fingerprint
             || !self
                 .builder_image
                 .strip_prefix("sha256:")

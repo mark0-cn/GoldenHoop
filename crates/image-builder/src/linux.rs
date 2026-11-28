@@ -3,6 +3,7 @@ use crate::{
     PrepareRequest, PreparedImage, archive, invalid,
 };
 mod publication;
+pub mod rootfs;
 use cap_std::{
     ambient_authority,
     fs::{Dir, OpenOptions as CapOptions},
@@ -474,6 +475,17 @@ async fn tool(
     cancel: Arc<AtomicBool>,
     collected: &mut bool,
 ) -> io::Result<()> {
+    tool_output(program, args, cancel, collected)
+        .await
+        .map(|_| ())
+}
+
+async fn tool_output(
+    program: &str,
+    args: &[std::ffi::OsString],
+    cancel: Arc<AtomicBool>,
+    collected: &mut bool,
+) -> io::Result<(usize, Vec<u8>)> {
     let mut child = Command::new(program)
         .args(args)
         .env_clear()
@@ -537,7 +549,7 @@ async fn tool(
             String::from_utf8_lossy(&err.1)
         )));
     }
-    Ok(())
+    Ok(out)
 }
 
 pub async fn prepare(request: PrepareRequest, cancel: Arc<AtomicBool>) -> PrepareReport {

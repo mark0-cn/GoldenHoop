@@ -1,0 +1,70 @@
+name: Isolated rootfs inspection
+on:
+  workflow_dispatch:
+  workflow_call:
+permissions:
+  contents: read
+env:
+  GH_BUILDER_OWNER: rootfs-inspection-${{ github.run_id }}-${{ github.run_attempt }}
+  GH_BUILDER_IMAGE: goldenhoop-rootfs-inspector:${{ github.run_id }}-${{ github.run_attempt }}
+jobs:
+  runsc:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install the production isolation runtime on this disposable runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          scratch=$(mktemp -d)
+          trap 'rm -rf "$scratch"' EXIT
+          base="https://storage.googleapis.com/gvisor/releases/release/latest/$(uname -m)"
+          cd "$scratch"
+          curl --fail --location --retry 3 "$base/gvisor.tar.zstd" -o gvisor.tar.zstd
+          curl --fail --location --retry 3 "$base/gvisor.tar.zstd.sha512" -o gvisor.tar.zstd.sha512
+          sha512sum -c gvisor.tar.zstd.sha512
+          sudo tar --zstd -xf gvisor.tar.zstd -C /usr/local/bin
+          sudo /usr/local/bin/runsc install
+          sudo systemctl reload docker
+          runsc --version
+          echo "GH_TEST_OWNER=$(python -c 'import uuid; print(uuid.uuid4().hex)')" >> "$GITHUB_ENV"
+      - name: Build the source-frozen static Rust inspector and pinned guest assets
+        run: docker build --build-arg VALIDATE_WORKSPACE=0 --target image-builder --label dev.goldenhoop.task=m4-image-builder-fixture --label dev.goldenhoop.owner="$GH_BUILDER_OWNER" --tag "$GH_BUILDER_IMAGE" --file images/agent/Dockerfile .
+      - name: Inspect actual ext4 under runsc with physical host limit observations
+        run: python -B tests/rootfs_inspection_contract.py --source-commit "$GITHUB_SHA" --owner "$GH_TEST_OWNER" --image "$GH_BUILDER_IMAGE" --image-owner "$GH_BUILDER_OWNER" --remove-image --output evidence/rootfs-inspection-runsc.json
+      - name: Collect exact fixture resources and confirm absence
+        if: always()
+        shell: python
+        run: |
+          import json, os, subprocess
+          def docker(*args):
+              return subprocess.check_output(['docker', *args]).decode().strip()
+          owner = os.environ.get('GH_TEST_OWNER')
+          if owner:
+              for cid in docker('ps', '-aq', '--filter', 'label=dev.goldenhoop.owner='+owner).splitlines():
+                  value=json.loads(docker('inspect',cid))[0]
+                  assert value['Config']['Labels']['dev.goldenhoop.task']=='m4-image-builder-contract'
+                  assert value['Config']['Labels']['dev.goldenhoop.owner']==owner
+                  docker('rm','--force',cid)
+              assert not docker('ps','-aq','--filter','label=dev.goldenhoop.owner='+owner)
+              for volume in docker('volume','ls','--quiet','--filter','label=dev.goldenhoop.owner='+owner).splitlines():
+                  value=json.loads(docker('volume','inspect',volume))[0]
+                  assert value['Labels']['dev.goldenhoop.task']=='m4-image-builder-contract' and value['Labels']['dev.goldenhoop.owner']==owner
+                  docker('volume','rm',volume)
+              assert not docker('volume','ls','--quiet','--filter','label=dev.goldenhoop.owner='+owner)
+          image=os.environ['GH_BUILDER_IMAGE']
+          if docker('image','ls','--quiet','--filter','reference='+image):
+              value=json.loads(docker('image','inspect',image))[0]
+              assert value['Config']['Labels']['dev.goldenhoop.owner']==os.environ['GH_BUILDER_OWNER']
+              docker('image','rm',image)
+          assert not docker('image','ls','--quiet','--filter','reference='+image)
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rootfs-inspection-runsc
+          path: evidence/*.json
+          if-no-files-found: error

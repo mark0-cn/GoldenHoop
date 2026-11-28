@@ -63,7 +63,8 @@ COPY --from=build /goldenhoop-init /opt/goldenhoop/init
 COPY --from=build /goldenhoop-image-builder /usr/local/bin/goldenhoop-image-builder
 RUN chmod 0555 /opt/goldenhoop/agent /opt/goldenhoop/init /usr/local/bin/goldenhoop-image-builder \
     && /usr/local/bin/goldenhoop-image-builder inventory > /opt/goldenhoop/inventory.json \
-    && chmod 0444 /opt/goldenhoop/inventory.json
+    && /usr/local/bin/goldenhoop-image-builder rootfs-inventory > /opt/goldenhoop/rootfs-inventory.json \
+    && chmod 0444 /opt/goldenhoop/inventory.json /opt/goldenhoop/rootfs-inventory.json
 ENV LANG=C.UTF-8
 ENTRYPOINT ["/usr/local/bin/goldenhoop-image-builder"]
 CMD ["prepare"]

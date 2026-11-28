@@ -10,10 +10,22 @@ struct Args {
 enum Action {
     /// Read baked guest/tool content hashes; establishes no runtime capability.
     Inventory,
+    /// Read baked assets and the tools used by read-only rootfs inspection.
+    RootfsInventory,
     /// Convert /input/source.tar using /input/prepare.json in an isolated builder.
     Prepare,
     /// Wait for a trusted host decision on private stdin before conversion.
     AwaitPrepare,
+    /// Inspect /input/rootfs.ext4 using /input/inspect-rootfs.json.
+    InspectRootfs,
+    /// Wait for a trusted host decision before read-only rootfs inspection.
+    AwaitInspectRootfs,
+}
+
+#[cfg(target_os = "linux")]
+enum Request {
+    Prepare(goldenhoop_image_builder::PrepareRequest),
+    Rootfs(goldenhoop_image_builder::RootfsInspectionRequest),
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -25,17 +37,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             "{}",
             serde_json::to_string(&goldenhoop_image_builder::linux::inventory()?)?
         ),
-        Action::Prepare | Action::AwaitPrepare => {
+        Action::RootfsInventory => println!(
+            "{}",
+            serde_json::to_string(&goldenhoop_image_builder::linux::rootfs::inventory()?)?
+        ),
+        Action::Prepare
+        | Action::AwaitPrepare
+        | Action::InspectRootfs
+        | Action::AwaitInspectRootfs => {
             use std::sync::{
                 Arc,
                 atomic::{AtomicBool, Ordering},
             };
-            let authorized = matches!(args.command, Action::AwaitPrepare);
+            let authorized = matches!(
+                args.command,
+                Action::AwaitPrepare | Action::AwaitInspectRootfs
+            );
             goldenhoop_image_builder::linux::verify_isolation()?;
             if !authorized {
                 goldenhoop_image_builder::linux::verify_context()?;
             }
-            let request = goldenhoop_image_builder::linux::read_request()?;
+            let request = match args.command {
+                Action::InspectRootfs | Action::AwaitInspectRootfs => {
+                    Request::Rootfs(goldenhoop_image_builder::linux::rootfs::read_request()?)
+                }
+                _ => Request::Prepare(goldenhoop_image_builder::linux::read_request()?),
+            };
             let flag = Arc::new(AtomicBool::new(false));
             let mut term =
                 tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
@@ -49,18 +76,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 signalled.store(true, Ordering::Release);
                 notified.notify_one();
             });
-            let report = if authorized {
-                let permit = tokio::select! {
+            let permit = if authorized {
+                Some(tokio::select! {
                     _ = interrupted.notified() => return Err("image preparation interrupted before authorization".into()),
                     result = tokio::time::timeout(std::time::Duration::from_secs(30), goldenhoop_image_builder::linux::read_host_permit()) => result.map_err(|_| "host preparation decision timed out")??,
-                };
-                goldenhoop_image_builder::linux::prepare_authorized(request, permit, flag).await
+                })
             } else {
-                goldenhoop_image_builder::linux::prepare(request, flag).await
+                None
+            };
+            let (passed, output) = match (request, permit) {
+                (Request::Prepare(request), permit) => {
+                    let report = if let Some(permit) = permit {
+                        goldenhoop_image_builder::linux::prepare_authorized(request, permit, flag)
+                            .await
+                    } else {
+                        goldenhoop_image_builder::linux::prepare(request, flag).await
+                    };
+                    (report.passed, serde_json::to_string(&report)?)
+                }
+                (Request::Rootfs(request), permit) => {
+                    let report = if let Some(permit) = permit {
+                        goldenhoop_image_builder::linux::rootfs::inspect_authorized(
+                            request, permit, flag,
+                        )
+                        .await
+                    } else {
+                        goldenhoop_image_builder::linux::rootfs::inspect(request, flag).await
+                    };
+                    (report.passed, serde_json::to_string(&report)?)
+                }
             };
             signals.abort();
-            println!("{}", serde_json::to_string(&report)?);
-            if !report.passed {
+            println!("{output}");
+            if !passed {
                 std::process::exit(2);
             }
         }

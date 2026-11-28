@@ -1,6 +1,12 @@
 name: Isolated Rust image preparation
 on:
   workflow_dispatch:
+    inputs:
+      component:
+        description: Isolated component to validate
+        type: choice
+        default: prepare
+        options: [prepare, rootfs]
 permissions:
   contents: read
 env:
@@ -10,6 +16,7 @@ env:
   GH_TRACE_ROOT: /var/lib/gh-runsc-${{ github.run_id }}-${{ github.run_attempt }}
 jobs:
   runsc:
+    if: inputs.component != 'rootfs'
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
@@ -65,3 +72,6 @@ jobs:
           name: image-prepare-runsc
           path: evidence/*.json
           if-no-files-found: error
+  rootfs:
+    if: inputs.component == 'rootfs'
+    uses: ./.github/workflows/rootfs-inspection.yml
