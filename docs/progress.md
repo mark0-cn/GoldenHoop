@@ -30,6 +30,10 @@ Python passes are aggregate counts across jobs. The
 the final local checks, full CI, upstream review and exact image/container
 collection. The active rootfs working copy continues into capture/coordinator
 integration, retaining its useful workspace compilation cache.
+The accepted disk-content increment is [fast-forwarded](evidence/m4-rootfs-store-promotion.json)
+to main at8ebcb09 after all401 inputs matched local and published source. Exact
+test images and containers are absent; the working copy remains active for the
+authorized rootfs coordinator/cold-boot work.
 Synthetic guest/inspector receipts in these file/process tests are not actual
 KVM/runsc evidence. Native manager capture/inspection orchestration, new cold
 boots, public rootfs operations, volumes/templates, remaining memory coverage
