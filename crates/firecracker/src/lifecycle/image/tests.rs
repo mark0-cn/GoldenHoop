@@ -55,6 +55,7 @@ fn fixture() -> (DriverConfig, ReadyImageInfo) {
             staging_bytes: 64 * MIB,
             allow_runc_development: false,
         }),
+        rootfs: None,
         max_resources: ResourceLimits {
             cpu_millis: 1000,
             memory_bytes: 256 * MIB,
@@ -124,6 +125,7 @@ fn recovery_binds_the_selected_manifest_and_owned_destination_without_an_image_j
         artifacts: cfg.selected_artifacts(generation, &info).unwrap(),
         selected_image: Some(info),
         capture_hold: None,
+        rootfs_hold: None,
         restore: None,
         profile_probe_context_sha256: None,
         resources: cfg.max_resources.clone(),

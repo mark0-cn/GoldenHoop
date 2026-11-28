@@ -95,7 +95,7 @@ async fn reply(agent: &AgentClient, request: AgentRequest) -> Result<AgentRespon
 }
 
 impl Machine {
-    fn capture_api(&self, input: &BootInput) -> Result<ApiClient> {
+    pub(super) fn capture_api(&self, input: &BootInput) -> Result<ApiClient> {
         let process = self
             .process
             .as_ref()

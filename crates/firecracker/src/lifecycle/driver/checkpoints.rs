@@ -333,6 +333,7 @@ mod tests {
             image: format!("sha256:{}", "a".repeat(64)),
             prepared_images: None,
             checkpoints: None,
+            rootfs: None,
             max_resources: ResourceLimits {
                 cpu_millis: 1000,
                 memory_bytes: 256 * MIB,

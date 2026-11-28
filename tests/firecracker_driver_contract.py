@@ -17,7 +17,7 @@ from firecracker_manager_fixture import Manager
 
 
 def suite(binary, boot, fixture, guest_barrier=False, guest_authority=False, managed_checkpoint=False, managed_restore_only=False, managed_restore_cut=False,
-          rootfs_barrier=False, inspector_image=None, inspector_owner=None, source_commit=None):
+          rootfs_barrier=False, inspector_image=None, inspector_owner=None, source_commit=None, rootfs_producer=False):
     installation = str(uuid.uuid4())
     root = fixture / 'd'  # Native AF_UNIX endpoints must fit Linux's path bound.
     cfg = {'installation_id': installation, 'data_root': str(root), 'artifacts': boot,
@@ -29,6 +29,9 @@ def suite(binary, boot, fixture, guest_barrier=False, guest_authority=False, man
            'max_ttl_seconds': 300}
     if managed_checkpoint:
         cfg['checkpoints'] = {'max_bytes': 4 * 1024**3, 'max_checkpoints': 2}
+    if rootfs_producer:
+        from firecracker_rootfs_producer_contract import policy
+        cfg['rootfs'] = policy(inspector_image, inspector_owner, boot['rootfs']['size'])
     config = fixture / 'driver.json'
     config.write_text(json.dumps(cfg)); config.chmod(0o600)
     request_file = fixture / 'driver-request.json'
@@ -135,7 +138,7 @@ def suite(binary, boot, fixture, guest_barrier=False, guest_authority=False, man
         assert set(observed['capabilities']) == {'commands', 'files', 'pause', 'network_isolation'}
         report['cases'].append('actual_trait_probe_requires_command_file_pause_resume_and_collection')
 
-        a_request = request(ttl=300 if rootfs_barrier else 240)
+        a_request = request(ttl=300 if rootfs_barrier or rootfs_producer else 240)
         a = call(a_request); handles[a['sandbox_id']] = a
         a_record = record(a['sandbox_id'])
         manager.assert_parent(a_record)
@@ -181,6 +184,10 @@ def suite(binary, boot, fixture, guest_barrier=False, guest_authority=False, man
         if rootfs_barrier:
             from firecracker_rootfs_barrier_contract import exercise
             exercise(a, a_record, runtime, call, rpc, command, report,
+                     inspector_image, inspector_owner, source_commit, fixture)
+        if rootfs_producer:
+            from firecracker_rootfs_producer_contract import exercise
+            exercise(a, a_record, runtime, cfg, manager, call, rpc, record, report,
                      inspector_image, inspector_owner, source_commit, fixture)
 
         forged = dict(a, backend_ref=f'fc1:{installation}:{uuid.uuid4()}')

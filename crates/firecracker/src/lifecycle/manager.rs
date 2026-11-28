@@ -19,7 +19,7 @@ use tokio::{
 pub(super) const MANAGER_MEMORY: u64 = 768 * MIB;
 pub(super) fn memory_budget(cfg: &DriverConfig) -> u64 {
     MANAGER_MEMORY
-        + if cfg.checkpoints.is_some() {
+        + if cfg.checkpoints.is_some() || cfg.rootfs.is_some() {
             128 * MIB
         } else {
             0
@@ -151,6 +151,36 @@ pub struct FirecrackerDriver {
     profile: Arc<RwLock<RuntimeProfile>>,
 }
 impl FirecrackerDriver {
+    pub async fn rootfs_capture(
+        &self,
+        handle: &RuntimeHandle,
+        capture: Uuid,
+    ) -> std::result::Result<serde_json::Value, ApiError> {
+        self.call(DriverCall::RootfsCapture {
+            handle: handle.clone(),
+            capture,
+        })
+        .await
+    }
+    pub async fn rootfs_read(
+        &self,
+        handle: &RuntimeHandle,
+        capture: Uuid,
+        collect: bool,
+    ) -> std::result::Result<serde_json::Value, ApiError> {
+        self.call(if collect {
+            DriverCall::RootfsCollect {
+                handle: handle.clone(),
+                capture,
+            }
+        } else {
+            DriverCall::RootfsInspect {
+                handle: handle.clone(),
+                capture,
+            }
+        })
+        .await
+    }
     pub fn connect(cfg: DriverConfig) -> Result<Self> {
         cfg.validate()?;
         if unsafe { libc::geteuid() } != 0 {
@@ -580,6 +610,15 @@ async fn dispatch(
             serde_json::to_value(engine.rpc_reply(&handle, &request).await?)
         }
         DriverCall::Reap => serde_json::to_value(engine.reap_expired().await?),
+        DriverCall::RootfsCapture { handle, capture } => {
+            Ok(engine.rootfs_capture(&handle, capture).await?)
+        }
+        DriverCall::RootfsInspect { handle, capture } => {
+            Ok(engine.rootfs_read(&handle, capture, false).await?)
+        }
+        DriverCall::RootfsCollect { handle, capture } => {
+            Ok(engine.rootfs_read(&handle, capture, true).await?)
+        }
         DriverCall::CheckpointCapture { handle, capture } => {
             Ok(engine.checkpoint_capture(&handle, capture).await?)
         }
@@ -958,6 +997,7 @@ mod tests {
             image: format!("sha256:{}", "a".repeat(64)),
             checkpoints: None,
             prepared_images: None,
+            rootfs: None,
             max_resources: ResourceLimits {
                 cpu_millis: 1000,
                 memory_bytes: 256 * MIB,

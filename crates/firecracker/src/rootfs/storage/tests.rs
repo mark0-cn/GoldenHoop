@@ -102,7 +102,12 @@ impl Fixture {
     }
     fn session(&self, store: &RootfsStore) -> RootfsCaptureSession {
         let mut session = store
-            .reserve(self.manifest.intent.clone(), self.vmm.id())
+            .reserve(
+                self.manifest.intent.clone(),
+                self.vmm.id(),
+                &File::open(&self.source).unwrap(),
+                0,
+            )
             .unwrap();
         session.begin().unwrap();
         session
@@ -232,7 +237,12 @@ fn disk_is_sparse_independent_persistent_and_ready_only_after_recovery_and_inspe
     assert_eq!(store.reserved_bytes().unwrap(), 0);
     assert!(
         store
-            .reserve(fixture.manifest.intent.clone(), fixture.vmm.id())
+            .reserve(
+                fixture.manifest.intent.clone(),
+                fixture.vmm.id(),
+                &File::open(&fixture.source).unwrap(),
+                0
+            )
             .is_err()
     );
     assert!(
@@ -272,7 +282,16 @@ fn failed_or_dropped_capture_never_releases_live_producer_or_source_reservations
     assert_eq!(store.reserved_bytes().unwrap(), 64 * MIB);
     let mut other = fixture.manifest.intent.clone();
     other.source.capture = Uuid::new_v4();
-    assert!(store.reserve(other, fixture.vmm.id()).is_err());
+    assert!(
+        store
+            .reserve(
+                other,
+                fixture.vmm.id(),
+                &File::open(&fixture.source).unwrap(),
+                0
+            )
+            .is_err()
+    );
     let mut session = store.resume(&fixture.manifest.intent).unwrap();
     let mut foreign = fixture.resumed();
     foreign.generation = Uuid::new_v4();
@@ -476,7 +495,12 @@ fn crash_child_entry() {
     )
     .unwrap();
     let mut session = store
-        .reserve(intent, value["source_pid"].as_u64().unwrap() as u32)
+        .reserve(
+            intent,
+            value["source_pid"].as_u64().unwrap() as u32,
+            &File::open(path.join("original.disk")).unwrap(),
+            0,
+        )
         .unwrap();
     session.begin().unwrap();
     let cut = value["cut_point"]
@@ -500,6 +524,80 @@ fn crash_child_entry() {
     panic!("requested capture cut point was not reached");
 }
 #[test]
+fn original_vmm_control_intents_close_capture_before_resume_and_cannot_be_replayed() {
+    if !root() {
+        return;
+    }
+    let fixture = Fixture::new();
+    let store = fixture.store();
+    let mut session = fixture.session(&store);
+    assert!(session.pause_observed().is_err());
+    assert!(session.resume_started().is_err());
+    session.pause_dispatched().unwrap();
+    assert!(session.pause_dispatched().is_err());
+    session.pause_observed().unwrap();
+    assert!(session.resume_started().is_err());
+    session
+        .fail("fixture closes capture before recovery")
+        .unwrap();
+    session.resume_started().unwrap();
+    assert!(session.resume_started().is_err());
+    assert!(
+        session.vm_control().pause_dispatched
+            && session.vm_control().pause_observed
+            && session.vm_control().resume_started
+    );
+    session.confirm_source_resumed(fixture.resumed()).unwrap();
+    drop(session);
+    store
+        .collect(fixture.manifest.intent.source.capture)
+        .unwrap();
+    fixture.close();
+}
+#[test]
+fn reserved_source_inode_cannot_be_replaced_and_settled_io_still_requires_source_recovery_or_death()
+{
+    if !root() {
+        return;
+    }
+    let mut fixture = Fixture::new();
+    let store = fixture.store();
+    let mut session = fixture.session(&store);
+    let foreign = fixture.path.join("same-size-foreign.disk");
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&foreign)
+        .unwrap();
+    file.set_len(64 * MIB).unwrap();
+    assert!(
+        session
+            .capture(file, 0, fixture.manifest.barrier.clone())
+            .is_err()
+    );
+    assert!(session.record.frozen.is_none() && session.manifest().is_none());
+    let reference = session
+        .capture(
+            File::open(&fixture.source).unwrap(),
+            0,
+            fixture.manifest.barrier.clone(),
+        )
+        .unwrap();
+    session.settle().unwrap();
+    drop(session);
+    assert!(store.collect(reference.capture).is_err());
+    let original = lifecycle::process_identity(fixture.vmm.id()).unwrap();
+    fixture.vmm.kill().unwrap();
+    fixture.vmm.wait().unwrap();
+    assert!(lifecycle::reaper::process_absent(&original).unwrap());
+    store.collect(reference.capture).unwrap();
+    assert_eq!(store.reserved_bytes().unwrap(), 0);
+    drop(store);
+    fixture.close();
+}
+#[test]
 fn transposed_capture_records_refuse_inspection_and_collection_before_effects() {
     if !root() {
         return;
@@ -519,8 +617,26 @@ fn transposed_capture_records_refuse_inspection_and_collection_before_effects() 
     second.source.capture = Uuid::new_v4();
     second.barrier = Uuid::new_v4();
     second.disk_id = Uuid::new_v4();
-    drop(store.reserve(first.clone(), fixture.vmm.id()).unwrap());
-    drop(store.reserve(second.clone(), fixture.vmm.id()).unwrap());
+    drop(
+        store
+            .reserve(
+                first.clone(),
+                fixture.vmm.id(),
+                &File::open(&fixture.source).unwrap(),
+                0,
+            )
+            .unwrap(),
+    );
+    drop(
+        store
+            .reserve(
+                second.clone(),
+                fixture.vmm.id(),
+                &File::open(&fixture.source).unwrap(),
+                0,
+            )
+            .unwrap(),
+    );
     let a = fixture
         .path
         .join("store")

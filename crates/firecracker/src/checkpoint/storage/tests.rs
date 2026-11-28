@@ -675,6 +675,7 @@ fn real_native_collection_closes_lost_writer_ack_only_with_original_collected_re
         image: format!("sha256:{}", artifact.sha256),
         prepared_images: None,
         checkpoints: Some(f.cfg.policy.clone()),
+        rootfs: None,
         max_resources: f.manifest.resources.clone(),
         capacity: HostCapacity::default(),
         max_ttl_seconds: 300,
@@ -721,6 +722,7 @@ fn real_native_collection_closes_lost_writer_ack_only_with_original_collected_re
         selected_image: None,
         profile_probe_context_sha256: None,
         capture_hold: None,
+        rootfs_hold: None,
         restore: Some(lifecycle::RestoreBinding {
             intent: intent.clone(),
             expected_source: None,

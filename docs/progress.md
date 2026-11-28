@@ -1,5 +1,26 @@
 # Progress
 
+The next M4 candidate connects actual Rust manager-owned original-generation
+rootfs capture and source recovery to the persistent disk store. It uses a
+separate durable source hold, pins the original disk identity before effects,
+and keeps source recovery distinct from producer I/O settlement. Unused guest
+operations can close without an unowned thaw, and earlier uncertain agent effects
+cannot reopen admission. See the [capture contract](rootfs-capture.md).
+[Final focused Linux checks](evidence/m4-rootfs-producer-linux-vmm.json) pass
+strict native/init all-target clippy and32 tests, including original VMM-control
+intent, source inode substitution and dead-source collection. Source pause and
+resume intent/observations are durable; ambiguous controls retain the original
+source hold and are not silently replayed. The
+[Windows checks](evidence/m4-rootfs-producer-windows-vmm.json) pass format, strict
+workspace/all-target clippy,333 Rust tests and36 SDK tests. Both bind the same403
+current runtime inputs. Earlier30/31-test runs and initial compilation/lint
+failures remain separate. Exact check images/containers are
+[collected](evidence/m4-rootfs-producer-final-image-collection.json), including
+superseded images. Full CI and targeted actual KVM/runsc acceptance remain
+pending. Native rootfs public
+capabilities, product isolated-inspector transport, cold boot, volumes/templates
+and complete M4-M6 remain unaccepted.
+
 The private M4 disk-content/store increment adds a separate Rust rootfs manifest, independent sparse
 disk production and persistent content store. Capture identity, boot/protected
 assets, source image, inspector inventory, logical quota and original

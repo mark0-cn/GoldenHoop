@@ -1,0 +1,75 @@
+name: Firecracker private Rust rootfs capture and source recovery
+on:
+  workflow_dispatch:
+  workflow_call:
+permissions:
+  contents: read
+env:
+  CARGO_BUILD_JOBS: 2
+  CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS: 'true'
+  CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS: 'true'
+  M4_IMAGE: goldenhoop-rootfs-producer-guest:${{ github.run_id }}-${{ github.run_attempt }}
+  M4_OWNER: ${{ github.run_id }}-${{ github.run_attempt }}
+  M4_INSPECTOR: goldenhoop-rootfs-producer-inspector:${{ github.run_id }}-${{ github.run_attempt }}
+jobs:
+  rootfs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install the actual isolated disk inspector runtime
+        run: |
+          set -euo pipefail
+          scratch=$(mktemp -d)
+          trap 'rm -rf "$scratch"' EXIT
+          base="https://storage.googleapis.com/gvisor/releases/release/latest/$(uname -m)"
+          cd "$scratch"
+          curl --fail --location --retry 3 "$base/gvisor.tar.zstd" -o gvisor.tar.zstd
+          curl --fail --location --retry 3 "$base/gvisor.tar.zstd.sha512" -o gvisor.tar.zstd.sha512
+          sha512sum -c gvisor.tar.zstd.sha512
+          sudo tar --zstd -xf gvisor.tar.zstd -C /usr/local/bin
+          sudo /usr/local/bin/runsc install
+          sudo systemctl reload docker
+          runsc --version
+      - name: Build the checked native driver, supervisor and manager
+        run: cargo build --locked --release -p goldenhoop-firecracker
+      - name: Build identical pinned guest assets for KVM and isolated inspection
+        run: |
+          docker build --build-arg VALIDATE_WORKSPACE=0 --target microvm-rootfs --label dev.goldenhoop.task=m4-guest --label dev.goldenhoop.run="$M4_OWNER" --tag "$M4_IMAGE" --file images/agent/Dockerfile .
+          docker build --build-arg VALIDATE_WORKSPACE=0 --target image-builder --label dev.goldenhoop.task=m4-image-builder-fixture --label dev.goldenhoop.owner="$M4_OWNER" --tag "$M4_INSPECTOR" --file images/agent/Dockerfile .
+      - name: Require actual Rust capture, producer SIGKILL recovery and isolated disk validation
+        run: sudo -n "$pythonLocation/bin/python3" -B tests/firecracker_guest_contract.py --driver-contract --rootfs-producer-contract --source-commit "$GITHUB_SHA" --binary "$PWD/target/release/goldenhoop-firecracker" --image "$M4_IMAGE" --owner "$M4_OWNER" --builder-image "$M4_INSPECTOR" --builder-owner "$M4_OWNER" --output "$PWD/evidence/firecracker-rootfs-producer.json"
+      - name: Collect the exact owned images and confirm absence
+        if: always()
+        shell: python
+        run: |
+          import json, os, subprocess
+          owner=os.environ['M4_OWNER']
+          candidates=subprocess.check_output(['docker','ps','-aq','--no-trunc','--filter','label=dev.goldenhoop.owner='+owner,'--filter','label=dev.goldenhoop.task=m4-rootfs-policy-fixture']).decode().splitlines()
+          for cid in candidates:
+              value=json.loads(subprocess.check_output(['docker','inspect',cid]))[0]
+              assert value['Config']['Labels']['dev.goldenhoop.owner']==owner and value['Config']['Labels']['dev.goldenhoop.task']=='m4-rootfs-policy-fixture'
+              assert value['State']['Status']=='created'
+              subprocess.run(['docker','rm',cid],check=True)
+          assert not subprocess.check_output(['docker','ps','-aq','--filter','label=dev.goldenhoop.owner='+owner,'--filter','label=dev.goldenhoop.task=m4-rootfs-policy-fixture']).strip()
+          for image, label in [(os.environ['M4_IMAGE'],'dev.goldenhoop.run'),(os.environ['M4_INSPECTOR'],'dev.goldenhoop.owner')]:
+              def listed():
+                  return subprocess.check_output(['docker','image','ls','--quiet','--filter','reference='+image]).strip()
+              if listed():
+                  value=json.loads(subprocess.check_output(['docker','image','inspect',image]))[0]
+                  assert value['Config']['Labels'][label]==os.environ['M4_OWNER']
+                  subprocess.run(['docker','image','rm',image],check=True)
+              assert not listed()
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: firecracker-rootfs-producer
+          path: evidence/*.json
+          if-no-files-found: error

@@ -74,6 +74,8 @@ pub struct DriverConfig {
     pub prepared_images: Option<PreparedImagePolicy>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checkpoints: Option<crate::checkpoint::CheckpointStorePolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rootfs: Option<crate::machine::RootfsCapturePolicy>,
     pub max_resources: ResourceLimits,
     #[serde(default)]
     pub capacity: HostCapacity,
@@ -113,6 +115,9 @@ impl DriverConfig {
         }
         self.paths(Uuid::new_v4())?;
         if let Some(policy) = &self.checkpoints {
+            policy.validate()?;
+        }
+        if let Some(policy) = &self.rootfs {
             policy.validate()?;
         }
         if let Some(policy) = &self.prepared_images {
@@ -195,6 +200,8 @@ pub(crate) struct VmJournal {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capture_hold: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rootfs_hold: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub restore: Option<RestoreBinding>,
     pub resources: ResourceLimits,
     pub supervisor: Option<ProcessIdentity>,
@@ -236,6 +243,9 @@ impl VmJournal {
             || self
                 .capture_hold
                 .is_some_and(|id| id.is_nil() || cfg.checkpoints.is_none())
+            || self.rootfs_hold.is_some_and(|id| {
+                id.is_nil() || cfg.rootfs.is_none() || self.capture_hold.is_some()
+            })
             || self
                 .profile_probe_context_sha256
                 .as_ref()
@@ -427,6 +437,8 @@ pub(crate) enum SupervisorOperation {
     Resume,
     Stop,
     CaptureHold { capture: Uuid },
+    RootfsHold { capture: Uuid },
+    RootfsRelease { capture: Uuid },
 }
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -468,6 +480,18 @@ pub enum DriverCall {
         request: AgentRequest,
     },
     Reap,
+    RootfsCapture {
+        handle: goldenhoop_runtime::RuntimeHandle,
+        capture: Uuid,
+    },
+    RootfsInspect {
+        handle: goldenhoop_runtime::RuntimeHandle,
+        capture: Uuid,
+    },
+    RootfsCollect {
+        handle: goldenhoop_runtime::RuntimeHandle,
+        capture: Uuid,
+    },
     CheckpointCapture {
         handle: goldenhoop_runtime::RuntimeHandle,
         capture: Uuid,
@@ -536,6 +560,15 @@ pub async fn run_driver_call(config: PathBuf, request: PathBuf) -> Result<serde_
                 serde_json::to_value(driver.rpc_reply(&handle, &request).await?).unwrap()
             }
             DriverCall::Reap => serde_json::to_value(driver.reap_expired().await?).unwrap(),
+            DriverCall::RootfsCapture { handle, capture } => {
+                driver.rootfs_capture(&handle, capture).await?
+            }
+            DriverCall::RootfsInspect { handle, capture } => {
+                driver.rootfs_read(&handle, capture, false).await?
+            }
+            DriverCall::RootfsCollect { handle, capture } => {
+                driver.rootfs_read(&handle, capture, true).await?
+            }
             DriverCall::CheckpointCapture { handle, capture } => {
                 driver.checkpoint_capture(&handle, capture).await?
             }

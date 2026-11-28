@@ -25,6 +25,7 @@ fn fixture() -> (DriverConfig, MemoryCaptureRequest, CheckpointManifest) {
             max_bytes: 512 * MIB,
             max_checkpoints: 2,
         }),
+        rootfs: None,
         max_resources: manifest.resources.clone(),
         capacity: HostCapacity {
             cpu_millis: 4000,

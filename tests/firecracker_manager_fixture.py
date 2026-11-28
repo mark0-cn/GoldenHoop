@@ -40,7 +40,7 @@ class Manager:
         suffix = uuid.UUID(self.cfg['installation_id']).hex + '-' + uuid.UUID(self.owner['epoch']).hex
         assert self.owner['cgroup'] == '/sys/fs/cgroup/ghm-' + suffix
         group = Path(self.owner['cgroup'])
-        expected_memory = (768 + (128 if self.cfg.get('checkpoints') else 0)) * 1024**2
+        expected_memory = (768 + (128 if self.cfg.get('checkpoints') or self.cfg.get('rootfs') else 0)) * 1024**2
         assert (group / 'memory.max').read_text().strip() == str(expected_memory)
         assert (group / 'pids.max').read_text().strip() == '32'
         for path, field in [(self.root/'manager.sock','socket_identity'), (group,'cgroup_identity')]:

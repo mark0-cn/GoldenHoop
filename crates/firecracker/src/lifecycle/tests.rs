@@ -90,6 +90,7 @@ fn oversized_unix_endpoints_are_rejected_before_directory_creation() {
         image: format!("sha256:{}", "a".repeat(64)),
         checkpoints: None,
         prepared_images: None,
+        rootfs: None,
         max_resources: ResourceLimits {
             cpu_millis: 1000,
             memory_bytes: 256 * MIB,

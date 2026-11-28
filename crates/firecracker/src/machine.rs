@@ -25,7 +25,9 @@ use uuid::Uuid;
 mod cgroup_tests;
 mod checkpoint;
 mod restore;
+mod rootfs;
 pub use restore::{RestoreProbeConfig, RestoreProbeReport, validate_restore};
+pub use rootfs::RootfsCapturePolicy;
 #[cfg(test)]
 mod root_tests;
 pub use checkpoint::CheckpointCaptureReport;
@@ -409,11 +411,36 @@ impl Machine {
     }
 
     pub(crate) fn hold_capture(&mut self, capture: Uuid) -> Result<()> {
-        if capture.is_nil() || self.record().capture_hold.is_some_and(|id| id != capture) {
+        if capture.is_nil()
+            || self.record().rootfs_hold.is_some()
+            || self.record().capture_hold.is_some_and(|id| id != capture)
+        {
             return Err(invalid("native capture hold differs from the original intent").into());
         }
         let (_, record) = self.persistent.as_mut().expect("persistent machine");
         record.capture_hold = Some(capture);
+        let phase = record.phase.clone();
+        self.set_phase(&phase)
+    }
+
+    pub(crate) fn hold_rootfs(&mut self, capture: Uuid) -> Result<()> {
+        if capture.is_nil()
+            || self.record().capture_hold.is_some()
+            || self.record().rootfs_hold.is_some_and(|id| id != capture)
+        {
+            return Err(invalid("rootfs hold differs from the original source operation").into());
+        }
+        let (_, record) = self.persistent.as_mut().expect("persistent machine");
+        record.rootfs_hold = Some(capture);
+        let phase = record.phase.clone();
+        self.set_phase(&phase)
+    }
+    pub(crate) fn release_rootfs(&mut self, capture: Uuid) -> Result<()> {
+        if self.record().capture_hold.is_some() || self.record().rootfs_hold != Some(capture) {
+            return Err(invalid("rootfs release differs from the original source hold").into());
+        }
+        let (_, record) = self.persistent.as_mut().expect("persistent machine");
+        record.rootfs_hold = None;
         let phase = record.phase.clone();
         self.set_phase(&phase)
     }

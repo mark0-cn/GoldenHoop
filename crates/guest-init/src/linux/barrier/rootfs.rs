@@ -92,6 +92,21 @@ pub(super) struct Active {
     root: Option<Root>,
 }
 impl Active {
+    fn unused_thaw(state: &State, generation: Uuid, id: Uuid) -> io::Result<Self> {
+        if state.rootfs.as_ref().is_some_and(Active::blocks)
+            || state.seen.contains(&id)
+            || state.seen.len() >= 128
+        {
+            return Err(invalid(
+                "unused rootfs close is active, spent, foreign or exhausted",
+            ));
+        }
+        let mut active = Self::new(generation, id);
+        active.info.thaw_started = true;
+        active.info.phase = GuestBarrierPhase::Resumed;
+        active.info.validate(generation, id).map_err(invalid)?;
+        Ok(active)
+    }
     fn new(generation: Uuid, barrier: Uuid) -> Self {
         Self {
             info: GuestRootfsBarrierInfo {
@@ -264,6 +279,28 @@ pub(super) async fn request(
         active.observe(barrier)?;
         return Ok(active.info.clone());
     }
+    let exact = state
+        .rootfs
+        .as_ref()
+        .is_some_and(|active| active.info.generation == generation && active.info.barrier == id);
+    if operation == Operation::Thaw && !exact {
+        let active = Active::unused_thaw(&state, generation, id)?;
+        barrier.membership()?;
+        if frozen()?
+            || !barrier.admission.open.load(Ordering::SeqCst)
+            || barrier.admission.uncertain.load(Ordering::SeqCst)
+        {
+            return Err(invalid(
+                "unused rootfs close cannot claim an unconfirmed workload state",
+            ));
+        }
+        // Close a never-dispatched operation permanently, without filesystem
+        // or workload thaw. A delayed original quiesce is now spent as well.
+        let reply = active.info.clone();
+        state.seen.insert(id);
+        state.rootfs = Some(active);
+        return Ok(reply);
+    }
     let active = state
         .rootfs
         .as_mut()
@@ -276,6 +313,11 @@ pub(super) async fn request(
     barrier.admission.close();
     let thaw_needed = active.begin_thaw()?;
     active.observe(barrier)?;
+    if barrier.admission.uncertain.load(Ordering::SeqCst) {
+        return Err(invalid(
+            "rootfs recovery cannot reopen an earlier unconfirmed agent effect",
+        ));
+    }
     // Lost replies/cancelled futures preserve the original owner. A completed
     // filesystem thaw can be retried at the later workload-thaw boundary.
     let outcome = async {
@@ -317,6 +359,21 @@ pub(super) async fn request(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn unused_rootfs_close_spends_original_id_without_adopting_foreign_freeze() {
+        let generation = Uuid::new_v4();
+        let id = Uuid::new_v4();
+        let mut state = State::default();
+        let closed = Active::unused_thaw(&state, generation, id).unwrap();
+        assert!(!closed.blocks() && closed.info.thaw_started && closed.root.is_none());
+        assert_eq!(closed.info.filesystem, GuestFilesystemState::NotDispatched);
+        assert!(closed.prepare_capture().is_err());
+        state.seen.insert(id);
+        state.rootfs = Some(closed);
+        assert!(Active::unused_thaw(&state, generation, id).is_err());
+        state.rootfs = Some(Active::new(generation, Uuid::new_v4()));
+        assert!(Active::unused_thaw(&state, generation, Uuid::new_v4()).is_err());
+    }
     #[test]
     fn synthetic_rootfs_ledger_never_replays_uncertain_freezes_or_reopens_after_thaw() {
         let mut active = Active::new(Uuid::new_v4(), Uuid::new_v4());

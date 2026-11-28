@@ -657,6 +657,7 @@ mod tests {
                 max_bytes: 3 * 1024 * MIB,
                 max_checkpoints: 2,
             }),
+            rootfs: None,
             max_resources: ResourceLimits {
                 cpu_millis: 1000,
                 memory_bytes: 256 * MIB,

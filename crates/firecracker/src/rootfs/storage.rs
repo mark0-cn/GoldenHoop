@@ -88,7 +88,7 @@ pub struct RootfsStorePolicy {
     pub max_captures: u32,
 }
 impl RootfsStorePolicy {
-    fn validate(&self) -> Result<()> {
+    pub(crate) fn validate(&self) -> Result<()> {
         if self.max_bytes == 0
             || self.max_bytes > 1024 * 1024 * MIB
             || !(1..=128).contains(&self.max_captures)
@@ -110,6 +110,13 @@ enum Phase {
     Collecting,
     Collected,
 }
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RootfsVmControl {
+    pub pause_dispatched: bool,
+    pub pause_observed: bool,
+    pub resume_started: bool,
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Record {
@@ -117,6 +124,8 @@ struct Record {
     store: Uuid,
     intent: RootfsCaptureIntent,
     source_writer: Actor,
+    source_disk: SourceDisk,
+    vm_control: RootfsVmControl,
     producer: Actor,
     producer_settled: bool,
     mutex: Identity,
@@ -189,10 +198,16 @@ impl Record {
         self.intent.validate().map_err(invalid)?;
         self.producer.validate()?;
         self.source_writer.validate()?;
-        if self.format != 1
+        if self.format != 2
             || self.store != root.store()
             || self.intent.source.installation != root.installation()
             || self.source_writer.process.executable_sha256 != self.intent.boot.firecracker_sha256
+            || self.source_disk.bytes != self.intent.disk_bytes
+            || self.source_disk.uid != self.source_writer.process.uid
+            || self.vm_control.pause_observed && !self.vm_control.pause_dispatched
+            || self.vm_control.resume_started
+                && (!self.vm_control.pause_observed
+                    || matches!(self.phase, Phase::Reserved | Phase::Capturing))
             || self
                 .error
                 .as_ref()
@@ -301,6 +316,8 @@ impl RootfsStore {
         &self,
         intent: RootfsCaptureIntent,
         source_vmm_pid: u32,
+        source_disk: &File,
+        source_uid: u32,
     ) -> Result<RootfsCaptureSession> {
         intent.validate().map_err(invalid)?;
         if intent.source.installation != self.root.installation() {
@@ -335,12 +352,23 @@ impl RootfsStore {
         if source_writer.process.executable_sha256 != intent.boot.firecracker_sha256 {
             return Err(invalid("rootfs source VMM executable differs").into());
         }
+        source_stamp(source_disk, source_uid, intent.disk_bytes)?;
+        if source_writer.process.uid != source_uid {
+            return Err(invalid("rootfs source disk differs from the original VMM UID").into());
+        }
+        let source_disk = SourceDisk {
+            identity: Identity::of(source_disk)?,
+            uid: source_uid,
+            bytes: intent.disk_bytes,
+        };
         let (mutex, identity) = self.root.job(&intent, None, true)?;
         let record = Record {
-            format: 1,
+            format: 2,
             store: self.root.store(),
             intent,
             source_writer,
+            source_disk,
+            vm_control: RootfsVmControl::default(),
             producer: Actor::current()?,
             producer_settled: false,
             mutex: identity,
@@ -421,6 +449,19 @@ impl RootfsStore {
             "producer_settled":record.producer_settled,"reference":record.manifest.as_ref().map(RootfsManifest::reference).transpose().map_err(invalid)?,"error":record.error}),
         )
     }
+    pub fn intent(&self, id: Uuid) -> Result<Option<RootfsCaptureIntent>> {
+        self.root.current()?;
+        self.root.recover_capture(id)?;
+        if !self.root.exists(&record_name(id))? {
+            return Ok(None);
+        }
+        Ok(Some(self.root.record(id)?.intent))
+    }
+    pub fn source_recovered(&self, id: Uuid) -> Result<bool> {
+        self.root.current()?;
+        self.root.recover_capture(id)?;
+        Ok(self.root.record(id)?.resumed.is_some())
+    }
     pub fn reserved_bytes(&self) -> Result<u64> {
         self.root.current()?;
         let _quota = self.root.quota(false)?;
@@ -495,6 +536,14 @@ impl RootfsStore {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SourceDisk {
+    identity: Identity,
+    uid: u32,
+    bytes: u64,
+}
+
 #[derive(PartialEq, Eq)]
 struct SourceStamp {
     device: u64,
@@ -524,6 +573,70 @@ fn source_stamp(file: &File, uid: u32, size: u64) -> Result<SourceStamp> {
     })
 }
 impl RootfsCaptureSession {
+    pub fn intent(&self) -> &RootfsCaptureIntent {
+        &self.record.intent
+    }
+    pub fn manifest(&self) -> Option<&RootfsManifest> {
+        self.record.manifest.as_ref()
+    }
+    pub fn source_resumed(&self) -> bool {
+        self.record.resumed.is_some()
+    }
+    pub fn source_receipt(&self) -> Option<&GuestRootfsBarrierInfo> {
+        self.record.resumed.as_ref()
+    }
+    pub fn vm_control(&self) -> &RootfsVmControl {
+        &self.record.vm_control
+    }
+    pub fn pause_dispatched(&mut self) -> Result<()> {
+        if self.record.phase != Phase::Capturing
+            || self.record.vm_control.pause_dispatched
+            || self.record.vm_control.resume_started
+        {
+            return Err(invalid("rootfs VMM pause is not a fresh original dispatch").into());
+        }
+        let mut next = self.record.clone();
+        next.vm_control.pause_dispatched = true;
+        self.save(next)
+    }
+    pub fn pause_observed(&mut self) -> Result<()> {
+        if !self.record.vm_control.pause_dispatched || self.record.vm_control.resume_started {
+            return Err(invalid("rootfs original VMM pause cannot be acknowledged").into());
+        }
+        let mut next = self.record.clone();
+        next.vm_control.pause_observed = true;
+        self.save(next)
+    }
+    pub fn resume_started(&mut self) -> Result<()> {
+        if !matches!(self.record.phase, Phase::Captured | Phase::Failed)
+            || !self.record.vm_control.pause_observed
+            || self.record.vm_control.resume_started
+        {
+            return Err(invalid("rootfs VMM resume is not a fresh closed-capture dispatch").into());
+        }
+        let mut next = self.record.clone();
+        next.vm_control.resume_started = true;
+        self.save(next)
+    }
+    pub fn settle(&mut self) -> Result<()> {
+        if !matches!(self.record.phase, Phase::Captured | Phase::Failed) {
+            return Err(invalid("rootfs independent I/O is not at a settled boundary").into());
+        }
+        let mut next = self.record.clone();
+        next.producer_settled = true;
+        self.save(next)
+    }
+    pub fn validate_source(&self, file: &File, uid: u32) -> Result<()> {
+        source_stamp(file, uid, self.record.intent.disk_bytes)?;
+        if uid != self.record.source_disk.uid
+            || Identity::of(file)? != self.record.source_disk.identity
+        {
+            return Err(
+                invalid("rootfs source descriptor is not the originally reserved disk").into(),
+            );
+        }
+        Ok(())
+    }
     fn save(&mut self, next: Record) -> Result<()> {
         self.root.current()?;
         if self.record.producer != Actor::current()?
@@ -593,6 +706,7 @@ impl RootfsCaptureSession {
             return Err(invalid("rootfs source freeze acknowledgement differs").into());
         }
         self.record.source_writer.present()?;
+        self.validate_source(&source, source_uid)?;
         let mut next = self.record.clone();
         next.frozen = Some(frozen.clone());
         self.save(next)?;

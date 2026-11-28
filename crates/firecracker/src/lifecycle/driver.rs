@@ -16,6 +16,7 @@ mod checkpoints;
 mod memory_probe;
 mod restore_closure;
 mod restores;
+mod rootfs;
 
 struct Inner {
     cfg: DriverConfig,
@@ -235,6 +236,9 @@ impl NativeEngine {
             crate::checkpoint::storage::CheckpointStore::open_or_initialize(
                 &cfg.checkpoint_config(Uuid::new_v4())?,
             )?;
+        }
+        if cfg.rootfs.is_some() {
+            cfg.rootfs_store()?;
         }
         // Verify the actual helper before granting it root lifecycle authority.
         if digest(trusted_file(&cfg.supervisor.path)?)?
@@ -959,6 +963,7 @@ impl NativeEngine {
             },
             selected_image: input.as_ref().map(|input| input.info.clone()),
             capture_hold: None,
+            rootfs_hold: None,
             restore,
             profile_probe_context_sha256: None,
             resources: request.resources.clone(),
@@ -1276,6 +1281,7 @@ impl NativeEngine {
             || record.phase != "running"
             || !record.ever_ready
             || record.capture_hold.is_some()
+            || record.rootfs_hold.is_some()
         {
             return Err(ApiError::new(
                 ErrorCode::InvalidState,
@@ -1558,7 +1564,7 @@ impl RuntimeDriver for NativeEngine {
         let lock = self.vm_lock(handle.sandbox_id).await;
         let _guard = lock.lock().await;
         let record = self.for_handle(handle).map_err(unavailable)?;
-        if record.capture_hold.is_some() {
+        if record.capture_hold.is_some() || record.rootfs_hold.is_some() {
             return Err(ApiError::new(
                 ErrorCode::InvalidState,
                 "captured source cannot resume",
@@ -1657,6 +1663,7 @@ mod recovery_tests {
                 sha256,
                 size,
             },
+            rootfs: None,
             max_resources: resources.clone(),
             capacity: HostCapacity::default(),
             max_ttl_seconds: 300,
@@ -1699,6 +1706,7 @@ mod recovery_tests {
             artifacts: cfg.artifacts.clone(),
             selected_image: None,
             capture_hold: None,
+            rootfs_hold: None,
             restore: None,
             profile_probe_context_sha256: None,
             resources,

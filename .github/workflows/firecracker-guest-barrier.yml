@@ -6,7 +6,7 @@ on:
         description: Private guest barrier to validate
         type: choice
         default: memory
-        options: [memory, rootfs]
+        options: [memory, rootfs, producer]
 permissions:
   contents: read
 env:
@@ -18,7 +18,7 @@ env:
   M4_CGROUP_BUILD: .goldenhoop-cgroup-test-${{ github.run_id }}-${{ github.run_attempt }}.json
 jobs:
   guest-barrier:
-    if: inputs.component != 'rootfs'
+    if: inputs.component == 'memory'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -78,3 +78,6 @@ jobs:
   rootfs:
     if: inputs.component == 'rootfs'
     uses: ./.github/workflows/firecracker-rootfs-barrier.yml
+  producer:
+    if: inputs.component == 'producer'
+    uses: ./.github/workflows/firecracker-rootfs-producer.yml

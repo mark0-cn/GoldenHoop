@@ -126,7 +126,111 @@ async fn write_reply(stream: &mut BufReader<UnixStream>, reply: &SupervisorReply
     stream.get_mut().shutdown().await?;
     Ok(())
 }
-async fn call(machine: &mut Machine, stream: UnixStream, checkpoints: bool) -> Result<bool> {
+fn reject_rootfs_policy(
+    memory: Option<Uuid>,
+    hold: Option<Uuid>,
+    enabled: bool,
+    operation: SupervisorOperation,
+) -> Option<ApiError> {
+    let message = match operation {
+        SupervisorOperation::Pause
+        | SupervisorOperation::Resume
+        | SupervisorOperation::CaptureHold { .. }
+            if hold.is_some() =>
+        {
+            Some("source is fenced by its original rootfs operation")
+        }
+        SupervisorOperation::RootfsHold { capture }
+        | SupervisorOperation::RootfsRelease { capture }
+            if !enabled || capture.is_nil() =>
+        {
+            Some("rootfs capture is disabled or its operation ID is nil")
+        }
+        SupervisorOperation::RootfsHold { capture }
+            if memory.is_some() || hold.is_some_and(|old| old != capture) =>
+        {
+            Some("source is fenced by another capture kind or operation")
+        }
+        SupervisorOperation::RootfsRelease { capture }
+            if memory.is_some() || hold != Some(capture) =>
+        {
+            Some("rootfs release is not the original source operation")
+        }
+        _ => None,
+    };
+    message.map(|s| ApiError::new(ErrorCode::InvalidState, s))
+}
+#[cfg(test)]
+#[test]
+fn rootfs_source_hold_is_exclusive_and_never_changes_memory_resume_policy() {
+    let id = Uuid::new_v4();
+    let foreign = Uuid::new_v4();
+    for operation in [
+        SupervisorOperation::Pause,
+        SupervisorOperation::Resume,
+        SupervisorOperation::CaptureHold { capture: id },
+        SupervisorOperation::RootfsHold { capture: foreign },
+        SupervisorOperation::RootfsRelease { capture: foreign },
+    ] {
+        assert!(reject_rootfs_policy(None, Some(id), true, operation).is_some());
+    }
+    assert!(
+        reject_rootfs_policy(
+            Some(id),
+            None,
+            true,
+            SupervisorOperation::RootfsHold { capture: id }
+        )
+        .is_some()
+    );
+    assert!(
+        reject_rootfs_policy(
+            None,
+            Some(id),
+            true,
+            SupervisorOperation::RootfsHold { capture: id }
+        )
+        .is_none()
+    );
+    assert!(
+        reject_rootfs_policy(
+            None,
+            Some(id),
+            true,
+            SupervisorOperation::RootfsRelease { capture: id }
+        )
+        .is_none()
+    );
+    assert!(
+        reject_rootfs_policy(
+            None,
+            None,
+            false,
+            SupervisorOperation::RootfsHold { capture: id }
+        )
+        .is_some()
+    );
+    assert!(reject_policy(Some(id), true, SupervisorOperation::Resume).is_some());
+    assert!(reject_policy(None, true, SupervisorOperation::Resume).is_none());
+}
+fn verify_rootfs_release(machine: &Machine, cfg: &DriverConfig, capture: Uuid) -> Result<()> {
+    let store = cfg.rootfs_store()?;
+    let intent = store
+        .intent(capture)?
+        .ok_or_else(|| invalid("rootfs release has no original capture intent"))?;
+    let owner = &machine.record().owner;
+    let source = &intent.source;
+    if source.installation != owner.installation_id
+        || source.sandbox != owner.sandbox_id
+        || source.source_generation != owner.generation
+        || source.request_sha256 != owner.request_sha256
+        || !store.source_recovered(capture)?
+    {
+        return Err(invalid("rootfs release has no acknowledged original source recovery").into());
+    }
+    Ok(())
+}
+async fn call(machine: &mut Machine, stream: UnixStream, cfg: &DriverConfig) -> Result<bool> {
     let peer = stream.peer_cred()?;
     if peer.uid() != 0 {
         return Err(invalid("native supervisor client is not root").into());
@@ -158,11 +262,29 @@ async fn call(machine: &mut Machine, stream: UnixStream, checkpoints: bool) -> R
     }
     // Rejected intent has not dispatched a runtime effect. Do not poison the
     // source journal or make its independent expiry loop collect a healthy VM.
-    if let Some(error) = reject_policy(
+    let mut rejected = reject_policy(
         machine.record().capture_hold,
-        checkpoints,
+        cfg.checkpoints.is_some(),
         request.operation,
-    ) {
+    )
+    .or_else(|| {
+        reject_rootfs_policy(
+            machine.record().capture_hold,
+            machine.record().rootfs_hold,
+            cfg.rootfs.is_some(),
+            request.operation,
+        )
+    });
+    if rejected.is_none()
+        && let SupervisorOperation::RootfsRelease { capture } = request.operation
+        && let Err(error) = verify_rootfs_release(machine, cfg, capture)
+    {
+        rejected = Some(ApiError::new(
+            ErrorCode::BackendUnavailable,
+            error.to_string(),
+        ));
+    }
+    if let Some(error) = rejected {
         write_reply(
             &mut stream,
             &SupervisorReply {
@@ -190,6 +312,8 @@ async fn call(machine: &mut Machine, stream: UnixStream, checkpoints: bool) -> R
             SupervisorOperation::CaptureHold { capture } => {
                 machine.hold_capture(capture)?;
             }
+            SupervisorOperation::RootfsHold { capture } => machine.hold_rootfs(capture)?,
+            SupervisorOperation::RootfsRelease { capture } => machine.release_rootfs(capture)?,
             SupervisorOperation::Stop => unreachable!(),
         }
         let state = match api.instance_info().await?.state {
@@ -338,7 +462,7 @@ pub async fn run_supervisor_with_input(
                         let (stream,_)=stream?;
                         let deadline=machine.record().clone();
                         tokio::select! {
-                            result=call(&mut machine,stream,cfg.checkpoints.is_some())=>{if matches!(result,Ok(true)) {return Ok(());}},
+                            result=call(&mut machine,stream,&cfg)=>{if matches!(result,Ok(true)) {return Ok(());}},
                             _=async {loop {if deadline.expired().unwrap_or(true){break;}tokio::time::sleep(Duration::from_millis(50)).await;}}=>break,
                         }
                     }
@@ -423,6 +547,7 @@ mod tests {
                 max_bytes: 2 * 1024 * MIB,
                 max_checkpoints: 1,
             }),
+            rootfs: None,
             max_resources: resources.clone(),
             capacity: HostCapacity::default(),
             max_ttl_seconds: 300,
@@ -444,6 +569,7 @@ mod tests {
             selected_image: None,
             profile_probe_context_sha256: None,
             capture_hold: Some(hold),
+            rootfs_hold: None,
             restore: None,
             resources,
             supervisor: None,
@@ -501,7 +627,7 @@ mod tests {
                 let bytes = read_frame(&mut reader, 65536).await.unwrap();
                 serde_json::from_slice::<SupervisorReply>(&bytes).unwrap()
             };
-            let (stopped, reply) = tokio::join!(call(&mut machine, server, true), receive);
+            let (stopped, reply) = tokio::join!(call(&mut machine, server, &cfg), receive);
             assert!(!stopped.unwrap());
             assert_eq!(reply.generation, machine.generation);
             assert_eq!(reply.error.unwrap().code, expected);
@@ -531,7 +657,7 @@ mod tests {
             let b = read_frame(&mut r, 65536).await.unwrap();
             serde_json::from_slice::<SupervisorReply>(&b).unwrap()
         };
-        let (_, reply) = tokio::join!(call(&mut machine, server, true), receive);
+        let (_, reply) = tokio::join!(call(&mut machine, server, &cfg), receive);
         assert!(reply.error.is_some());
         assert_eq!(machine.record().phase, "unknown");
         assert!(machine.record().error.is_some());
@@ -549,7 +675,7 @@ mod tests {
             let b = read_frame(&mut r, 65536).await.unwrap();
             serde_json::from_slice::<SupervisorReply>(&b).unwrap()
         };
-        let (stopped, reply) = tokio::join!(call(&mut machine, server, true), receive);
+        let (stopped, reply) = tokio::join!(call(&mut machine, server, &cfg), receive);
         assert!(!stopped.unwrap());
         assert!(reply.error.is_some());
         assert_eq!(machine.record().phase, "unknown");
