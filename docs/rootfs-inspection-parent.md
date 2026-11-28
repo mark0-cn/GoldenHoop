@@ -1,7 +1,11 @@
 # Private durable Rust inspector parent
 
-This is an implementation candidate. Actual runsc/producer-death acceptance is
-pending. Rootfs cold boot, public snapshot operations, volumes/templates and
+This private increment is accepted on sourced82fa05 by
+[actual KVM/runsc46147252006](evidence/m4-rootfs-inspector-parent-46147252006-archive.json)
+and [full CI46147216515](evidence/m4-rootfs-inspector-parent-ci-46147216515.json).
+The actual producer death occurs after authorization and before an acknowledged
+result, so its output is discarded on recovery. Death after an acknowledged
+result still requires actual fault coverage. Rootfs cold boot, public snapshot operations, volumes/templates and
 complete M4-M6 remain required by [roadmap.md](roadmap.md).
 
 The optional `rootfs.inspector_image` pins an immutable daemon image ID. Missing
@@ -28,7 +32,12 @@ there is no weaker runtime fallback. The seeder is never executed.
 
 Actual image/configuration, capabilities, mounts, networking, resource limits,
 stdin and immutable object identity are checked before the one private newline
-permit. HostGuard observes the actual PID/pidfd and effective host cgroup limits;
+permit. Docker's omitted false mount ReadOnly and null empty Cmd are normalized
+to their documented/default meanings. Required read-only input/rootfs, runsc,
+immutable image/volume identities and forbidden host options remain enforced;
+configuration rejection records differing field names. See the
+[upstream review and actual never-started fixture](evidence/m4-rootfs-inspector-parent-upstream-docker-defaults.json).
+HostGuard observes the actual PID/pidfd and effective host cgroup limits;
 guest virtual cgroups are not evidence. The tool has a fixed1GiB/one-CPU/64-task
 budget and one concurrent parent per manager. Deployment admission must account
 for that additional bounded worker and its independent temporary disk copy.
@@ -55,13 +64,16 @@ cut, original immutable IDs/receipt/result, same-source continuation, provider
 and host collection, and disk quota. The additional independent counter check
 still uses a test fixture; it does not supply production parent execution.
 Failure paths reconcile original operations and positively inspect the owned
-provider resource set. Full retained backend regression stays at M4 acceptance.
+provider resource set. A native VM collection proof cannot settle failed provider
+collection: the gate retains Unknown and the owned fixture plus actual remaining
+Docker configurations until rootfs disk/container/volume collection is confirmed.
+Full retained backend regression stays at M4 acceptance.
 
 Native identity tests hash their actual executable, including its debug data.
 Full type/variable DWARF grew the test binary to231MB and exhausted a15-second
 fixture cut before acknowledged capture, including in a serial retry. The
 workspace test profile now retains file/line backtrace information, assertions
 and overflow checks. The actual cut diagnostic measures68.5MB and7.643-second
-readiness, and the focused16-test run again uses two threads with unchanged
+readiness, and the current focused19-test run uses two threads with unchanged
 timeouts/assertions. [The source review and measurements](evidence/m4-rootfs-inspector-parent-upstream-test-profile.json)
 retain the failed attempts separately from final-source checks.

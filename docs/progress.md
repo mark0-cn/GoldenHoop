@@ -1,7 +1,22 @@
 # Progress
 
-The next private M4 candidate adds a durable Rust isolated-inspector parent and
-`rootfs_validate`. Its original operation is persisted in the captured disk's
+The private M4 durable Rust isolated-inspector parent and `rootfs_validate` are
+accepted on frozen sourced82fa05. [Actual KVM/runsc46147252006](evidence/m4-rootfs-inspector-parent-46147252006-archive.json)
+passes27 groups and verifies404 source inputs. The primary disk reaches Ready
+only after exact original host/container/volume collection. Actual SIGKILL stops
+the original manager at authorization_dispatched before an acknowledged result;
+recovery collects the same objects, discards unacknowledged output and keeps the
+disk Captured without replay. The original source counter advances45 to1428.
+All owned native/provider resources, source/captured disks, quota and fixtures
+are positively collected. [Full CI46147216515](evidence/m4-rootfs-inspector-parent-ci-46147216515.json)
+passes both jobs on the same source, with405 byte-verified inputs and835 Rust/72
+SDK passes across jobs. The [acceptance summary](evidence/m4-rootfs-inspector-parent-acceptance-summary.json)
+retains prior failures and scoped cleanup evidence. This run does not cut the
+producer after an acknowledged result; that branch still requires actual fault
+coverage. Fresh cold boots/public rootfs/templates/volumes and complete M4-M6
+remain pending.
+
+The original operation is persisted in the captured disk's
 record under the existing exclusive object lock, with immutable provider/host,
 request, producer, container and host-process identities. The parent uses a
 never-started input seeder and actual runsc, and requires positive original
@@ -70,7 +85,7 @@ three Docker boundary regressions. Both bind the same405 runtime inputs. The
 exact local check image is positively
 [collected](evidence/m4-rootfs-inspector-parent-defaults-image-collection.json).
 No new public capability, cold boot, template or complete M4-M6
-support is registered by this draft.
+support is registered by this private increment.
 
 The private M4 Rust manager-owned rootfs capture/source-recovery increment is
 accepted on frozen source9f181dc. [Actual KVM/runsc run46138925571](https://github.com/mark0-cn/GoldenHoop/actions/runs/46138925571)
