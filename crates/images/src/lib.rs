@@ -9,6 +9,8 @@ pub mod host;
 #[cfg(target_os = "linux")]
 pub mod prepare;
 mod reference;
+#[cfg(target_os = "linux")]
+pub mod rootfs;
 pub use reference::{PreparedImageReference, ReadyImageInfo};
 #[cfg(target_os = "linux")]
 mod transfer;

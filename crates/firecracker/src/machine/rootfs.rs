@@ -18,12 +18,24 @@ pub struct RootfsCapturePolicy {
     pub inventory: RootfsInspectionInventory,
     pub guest: RootfsGuestConfig,
     pub guest_config: RootfsArtifact,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inspector_image: Option<String>,
 }
 impl RootfsCapturePolicy {
     pub fn validate(&self) -> Result<()> {
         self.store.validate()?;
         self.inventory.validate()?;
         self.guest.validate()?;
+        if self.inspector_image.as_deref().is_some_and(|v| {
+            !v.strip_prefix("sha256:").is_some_and(|id| {
+                id.len() == 64
+                    && id
+                        .bytes()
+                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            })
+        }) {
+            return Err(invalid("rootfs inspector requires an immutable daemon image ID").into());
+        }
         if self.guest.control_port != 52
             || self.guest_config.size_bytes == 0
             || self.guest_config.size_bytes > 4096

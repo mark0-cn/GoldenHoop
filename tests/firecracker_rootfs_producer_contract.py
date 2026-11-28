@@ -20,7 +20,7 @@ from firecracker_rootfs_barrier_contract import CapturedDiskInspection
 from image_builder_contract import docker, digest
 
 
-def policy(image, owner, disk_bytes):
+def policy(image, owner, disk_bytes, inspector_parent=False):
     actual = json.loads(docker('image', 'inspect', image))[0]
     assert actual['Config']['Labels']['dev.goldenhoop.owner'] == owner
     assert actual['Config']['Labels']['dev.goldenhoop.task'] == 'm4-image-builder-fixture'
@@ -43,12 +43,15 @@ def policy(image, owner, disk_bytes):
         assert cid not in docker('ps', '-aq', '--no-trunc').decode().splitlines()
     # Pin trusted build input, never a self-selected value read from the disk.
     config = (Path(__file__).resolve().parents[1]/'images/microvm/guest.json').read_bytes()
-    return dict(store=dict(max_bytes=3*disk_bytes, max_captures=3), inventory=inventory,
-                guest=json.loads(config), guest_config=dict(sha256=hashlib.sha256(config).hexdigest(), size_bytes=len(config)))
+    result = dict(store=dict(max_bytes=3*disk_bytes, max_captures=3), inventory=inventory,
+                  guest=json.loads(config), guest_config=dict(sha256=hashlib.sha256(config).hexdigest(), size_bytes=len(config)))
+    if inspector_parent:
+        result['inspector_image'] = actual['Id']
+    return result
 
 
 def exercise(handle, initial, runtime, cfg, manager, call, rpc, record, report,
-             inspector_image, inspector_owner, source_commit, fixture):
+             inspector_image, inspector_owner, source_commit, fixture, inspector_parent=False):
     root = Path(cfg['data_root'])/'rootfs'
     generation = initial['owner']['generation']
     seen = report['observations']['rootfs_producer'] = dict(generation=generation)
@@ -165,6 +168,9 @@ def exercise(handle, initial, runtime, cfg, manager, call, rpc, record, report,
     report['cases'].append('actual_Rust_capture_freezes_pauses_publishes_independent_disk_and_explicitly_recovers_original_source')
     report['cases'].append('rootfs_exact_retry_does_not_refreeze_or_replace_the_original_published_content')
 
+    if inspector_parent:
+        from firecracker_rootfs_inspector_parent_contract import exercise as parent_exercise
+        parent_exercise(handle, capture, cfg, manager, call, rpc, record, report)
     inspector = CapturedDiskInspection(inspector_image, inspector_owner, source_commit, fixture/'rootfs-producer-inspection.json', counter)
     inspector.sources.append(Path(__file__).resolve())
     project = Path(__file__).resolve().parents[1]

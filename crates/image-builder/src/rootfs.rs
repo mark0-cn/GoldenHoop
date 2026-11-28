@@ -170,7 +170,7 @@ impl RootfsInspection {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RootfsInspectionReport {
     pub passed: bool,

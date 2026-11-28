@@ -136,6 +136,8 @@ struct Record {
     disk: Option<DiskReceipt>,
     inspection: Option<RootfsInspection>,
     inventory: Option<RootfsInspectionInventory>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    inspection_job: Option<goldenhoop_images::rootfs::InspectionState>,
     error: Option<String>,
 }
 fn content(value: &RootfsArtifact) -> Content {
@@ -249,6 +251,12 @@ impl Record {
             (None, None, _) => {}
             _ => return Err(invalid("rootfs inspection acknowledgement differs").into()),
         }
+        if let Some(job) = &self.inspection_job {
+            self.validate_inspection_job(job)?;
+            if self.phase == Phase::Ready {
+                job.ready_result()?;
+            }
+        }
         if matches!(
             self.phase,
             Phase::Publishing | Phase::Captured | Phase::Ready
@@ -262,6 +270,32 @@ impl Record {
             || self.phase == Phase::Collected && !self.producer_settled
         {
             return Err(invalid("rootfs phase acknowledgements differ").into());
+        }
+        Ok(())
+    }
+    fn validate_inspection_job(
+        &self,
+        job: &goldenhoop_images::rootfs::InspectionState,
+    ) -> Result<()> {
+        job.validate(&job.intent, &job.engine_id, job.host_boot_id)?;
+        let manifest = self
+            .manifest
+            .as_ref()
+            .ok_or_else(|| invalid("rootfs inspector has no original captured manifest"))?;
+        let parent = &job.intent;
+        let boot = &manifest.intent.boot;
+        if parent.installation_id != self.intent.source.installation
+            || parent.capture_id != self.intent.source.capture
+            || parent.request.generation != self.intent.inspection_generation
+            || parent.request.disk != content(&manifest.disk)
+            || parent.request.agent != content(&boot.agent)
+            || parent.request.init != content(&boot.init)
+            || parent.guest_config != content(&boot.guest_config)
+            || parent.request.guest.control_port != boot.control_port
+            || inspector_fingerprint(&parent.inventory)? != self.intent.inspector_inventory_sha256
+            || self.resumed.is_none()
+        {
+            return Err(invalid("rootfs inspector differs from the original captured disk, source recovery or protected boot assets").into());
         }
         Ok(())
     }
@@ -379,6 +413,7 @@ impl RootfsStore {
             disk: None,
             inspection: None,
             inventory: None,
+            inspection_job: None,
             error: None,
         };
         record.validate(&self.root)?;
@@ -446,7 +481,8 @@ impl RootfsStore {
         Ok(
             serde_json::json!({"capture":id,"phase":record.phase,"reserved_bytes":record.reserved_bytes(),
             "source_resumed":record.resumed.is_some(),"inspection_verified":record.inspection.is_some(),
-            "producer_settled":record.producer_settled,"reference":record.manifest.as_ref().map(RootfsManifest::reference).transpose().map_err(invalid)?,"error":record.error}),
+            "producer_settled":record.producer_settled,"reference":record.manifest.as_ref().map(RootfsManifest::reference).transpose().map_err(invalid)?,"error":record.error,
+            "inspector":record.inspection_job.as_ref().map(|job|serde_json::json!({"phase":job.phase,"pending":job.pending,"result_observed":job.result.is_some(),"error":job.error}))}),
         )
     }
     pub fn intent(&self, id: Uuid) -> Result<Option<RootfsCaptureIntent>> {
@@ -512,6 +548,12 @@ impl RootfsStore {
         let (_mutex, _) = self.root.job(&before.intent, Some(&before.mutex), true)?;
         let mut record = self.root.record(id)?;
         record.validate(&self.root)?;
+        if record.inspection_job.as_ref().is_some_and(|job| {
+            job.phase != goldenhoop_images::rootfs::InspectionPhase::Collected
+                || job.pending.is_some()
+        }) {
+            return Err(invalid("rootfs inspector resource collection remains unconfirmed").into());
+        }
         if !record.producer_settled {
             record.producer.absent()?;
         }
@@ -818,6 +860,74 @@ impl RootfsCaptureSession {
                 .as_ref()
                 .ok_or_else(|| invalid("rootfs captured disk absent"))?,
         )
+    }
+    pub fn inspection_job(&self) -> Option<&goldenhoop_images::rootfs::InspectionState> {
+        self.record.inspection_job.as_ref()
+    }
+    pub fn inspection_intent(
+        &self,
+        image: String,
+        inventory: RootfsInspectionInventory,
+        guest: RootfsGuestConfig,
+    ) -> Result<goldenhoop_images::rootfs::InspectionIntent> {
+        let manifest = self
+            .record
+            .manifest
+            .as_ref()
+            .ok_or_else(|| invalid("captured rootfs manifest absent"))?;
+        let boot = &manifest.intent.boot;
+        let intent = goldenhoop_images::rootfs::InspectionIntent {
+            installation_id: self.record.intent.source.installation,
+            capture_id: self.record.intent.source.capture,
+            image,
+            inventory,
+            guest_config: content(&boot.guest_config),
+            request: RootfsInspectionRequest {
+                generation: self.record.intent.inspection_generation,
+                disk: content(&manifest.disk),
+                agent: content(&boot.agent),
+                init: content(&boot.init),
+                guest,
+            },
+        };
+        intent.validate()?;
+        if inspector_fingerprint(&intent.inventory)?
+            != self.record.intent.inspector_inventory_sha256
+            || self.record.resumed.is_none()
+        {
+            return Err(
+                invalid("rootfs inspector original inventory or source recovery differs").into(),
+            );
+        }
+        Ok(intent)
+    }
+    pub fn save_inspection_job(
+        &mut self,
+        state: &goldenhoop_images::rootfs::InspectionState,
+    ) -> Result<()> {
+        if self.record.phase != Phase::Captured {
+            return Err(
+                invalid("rootfs inspection is not at the original captured boundary").into(),
+            );
+        }
+        self.record.validate_inspection_job(state)?;
+        if let Some(earlier) = &self.record.inspection_job {
+            state.same_operation(earlier)?;
+        }
+        let mut next = self.record.clone();
+        next.inspection_job = Some(state.clone());
+        self.save(next)
+    }
+    pub fn confirm_parent_inspection(&mut self) -> Result<()> {
+        let state = self
+            .record
+            .inspection_job
+            .as_ref()
+            .ok_or_else(|| invalid("rootfs inspector original journal absent"))?;
+        self.record.validate_inspection_job(state)?;
+        let report = state.ready_result()?.clone();
+        let inventory = state.intent.inventory.clone();
+        self.confirm_inspection_report(report, inventory)
     }
     pub fn confirm_inspection_report(
         &mut self,

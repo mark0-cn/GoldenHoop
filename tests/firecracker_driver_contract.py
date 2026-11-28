@@ -17,7 +17,7 @@ from firecracker_manager_fixture import Manager
 
 
 def suite(binary, boot, fixture, guest_barrier=False, guest_authority=False, managed_checkpoint=False, managed_restore_only=False, managed_restore_cut=False,
-          rootfs_barrier=False, inspector_image=None, inspector_owner=None, source_commit=None, rootfs_producer=False):
+          rootfs_barrier=False, inspector_image=None, inspector_owner=None, source_commit=None, rootfs_producer=False, rootfs_inspector_parent=False):
     installation = str(uuid.uuid4())
     root = fixture / 'd'  # Native AF_UNIX endpoints must fit Linux's path bound.
     cfg = {'installation_id': installation, 'data_root': str(root), 'artifacts': boot,
@@ -31,7 +31,7 @@ def suite(binary, boot, fixture, guest_barrier=False, guest_authority=False, man
         cfg['checkpoints'] = {'max_bytes': 4 * 1024**3, 'max_checkpoints': 2}
     if rootfs_producer:
         from firecracker_rootfs_producer_contract import policy
-        cfg['rootfs'] = policy(inspector_image, inspector_owner, boot['rootfs']['size'])
+        cfg['rootfs'] = policy(inspector_image, inspector_owner, boot['rootfs']['size'], inspector_parent=rootfs_inspector_parent)
     config = fixture / 'driver.json'
     config.write_text(json.dumps(cfg)); config.chmod(0o600)
     request_file = fixture / 'driver-request.json'
@@ -188,7 +188,7 @@ def suite(binary, boot, fixture, guest_barrier=False, guest_authority=False, man
         if rootfs_producer:
             from firecracker_rootfs_producer_contract import exercise
             exercise(a, a_record, runtime, cfg, manager, call, rpc, record, report,
-                     inspector_image, inspector_owner, source_commit, fixture)
+                     inspector_image, inspector_owner, source_commit, fixture, inspector_parent=rootfs_inspector_parent)
 
         forged = dict(a, backend_ref=f'fc1:{installation}:{uuid.uuid4()}')
         call({'operation': 'remove', 'handle': forged}, expect=False)
@@ -320,6 +320,12 @@ def suite(binary, boot, fixture, guest_barrier=False, guest_authority=False, man
                         assert not os.path.lexists(root/'checkpoints'/f'capture-{capture}-{role}.bin')
                 except Exception as error:
                     cleanup_errors.append(str(error))
+        if rootfs_inspector_parent:
+            try:
+                from firecracker_rootfs_inspector_parent_contract import collect_owned
+                report['observations']['rootfs_final_collection'] = collect_owned(cfg, manager, call, record)
+            except Exception as error:
+                cleanup_errors.append('rootfs inspector collection: '+str(error))
         manager_drained = False
         try:
             stop_error = manager.close()

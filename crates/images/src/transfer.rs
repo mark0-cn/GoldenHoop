@@ -198,6 +198,86 @@ pub(crate) async fn input(
     Ok(())
 }
 
+/// Stream a descriptor-bound immutable copy in a fixed envelope. This handles
+/// trusted tar headers only; no ext4 bytes are parsed by the host parent.
+pub(crate) async fn rootfs_input(
+    mut output: impl AsyncWrite + Unpin,
+    mut disk: std::fs::File,
+    request: &goldenhoop_image_builder::RootfsInspectionRequest,
+) -> io::Result<()> {
+    use sha2::{Digest, Sha256};
+    use std::{
+        io::{Seek, SeekFrom},
+        os::unix::fs::MetadataExt,
+    };
+    request.validate()?;
+    let before = disk.metadata()?;
+    if !before.is_file()
+        || before.uid() != 0
+        || before.mode() & 0o7777 != 0o400
+        || before.nlink() != 1
+        || before.len() != request.disk.size_bytes
+    {
+        return Err(invalid());
+    }
+    disk.seek(SeekFrom::Start(0))?;
+    let bytes = serde_json::to_vec(request)?;
+    if bytes.len() > 65536 {
+        return Err(invalid());
+    }
+    output
+        .write_all(&input_header("inspect-rootfs.json", bytes.len() as u64)?)
+        .await?;
+    output.write_all(&bytes).await?;
+    padding(&mut output, bytes.len() as u64).await?;
+    output
+        .write_all(&input_header("rootfs.ext4", before.len())?)
+        .await?;
+    let mut disk = tokio::fs::File::from_std(disk);
+    let mut remaining = before.len();
+    let mut hash = Sha256::new();
+    let mut buffer = vec![0u8; 65536];
+    while remaining > 0 {
+        let maximum = remaining.min(buffer.len() as u64) as usize;
+        let count = disk.read(&mut buffer[..maximum]).await?;
+        if count == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "rootfs input shortened",
+            ));
+        }
+        hash.update(&buffer[..count]);
+        output.write_all(&buffer[..count]).await?;
+        remaining -= count as u64;
+    }
+    let after = disk.metadata().await?;
+    if disk.read(&mut buffer[..1]).await? != 0
+        || format!("{:x}", hash.finalize()) != request.disk.sha256
+        || after.dev() != before.dev()
+        || after.ino() != before.ino()
+        || after.len() != before.len()
+        || after.uid() != before.uid()
+        || after.mode() != before.mode()
+        || after.nlink() != 1
+        || (
+            after.mtime(),
+            after.mtime_nsec(),
+            after.ctime(),
+            after.ctime_nsec(),
+        ) != (
+            before.mtime(),
+            before.mtime_nsec(),
+            before.ctime(),
+            before.ctime_nsec(),
+        )
+    {
+        return Err(invalid());
+    }
+    padding(&mut output, before.len()).await?;
+    output.write_all(&[0u8; 1024]).await?;
+    output.shutdown().await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

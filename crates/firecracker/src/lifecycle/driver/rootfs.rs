@@ -35,6 +35,139 @@ fn bound(intent: &RootfsCaptureIntent, record: &VmJournal) -> Result<()> {
     Ok(())
 }
 impl NativeEngine {
+    pub(in crate::lifecycle) async fn rootfs_validate(
+        &self,
+        handle: &RuntimeHandle,
+        capture: Uuid,
+    ) -> std::result::Result<serde_json::Value, ApiError> {
+        let result: Result<serde_json::Value> = async {
+            use goldenhoop_images::rootfs::{InspectionPhase, driver::RootfsInspector};
+            if capture.is_nil() {
+                return Err(
+                    ApiError::new(ErrorCode::InvalidRequest, "rootfs capture ID is nil").into(),
+                );
+            }
+            let policy = self
+                .inner
+                .cfg
+                .rootfs
+                .as_ref()
+                .ok_or_else(|| {
+                    ApiError::new(
+                        ErrorCode::UnsupportedCapability,
+                        "native rootfs inspection is disabled",
+                    )
+                })?
+                .clone();
+            let image = policy.inspector_image.clone().ok_or_else(|| {
+                ApiError::new(
+                    ErrorCode::UnsupportedCapability,
+                    "native rootfs inspector image is not pinned",
+                )
+            })?;
+            let store = self.inner.cfg.rootfs_store()?;
+            let original = self.for_handle(handle)?;
+            let intent = store
+                .intent(capture)?
+                .ok_or_else(|| ApiError::new(ErrorCode::NotFound, "rootfs capture not found"))?;
+            bound(&intent, &original)?;
+            let accepted = store.inspect(capture)?;
+            if matches!(accepted["phase"].as_str(), Some("ready" | "collected")) {
+                return Ok(accepted);
+            }
+            if accepted["phase"] != "captured"
+                || accepted["source_resumed"] != true
+                || original.rootfs_hold.is_some() && original.phase != "collected"
+            {
+                return Err(ApiError::new(
+                    ErrorCode::InvalidState,
+                    "rootfs original capture or source release is not acknowledged",
+                )
+                .into());
+            }
+            let permit = match self.inner.capture_slot.clone().try_acquire_owned() {
+                Ok(permit) => permit,
+                Err(_) if !accepted["inspector"].is_null() => return Ok(accepted),
+                Err(_) => {
+                    return Err(ApiError::new(
+                        ErrorCode::QuotaExceeded,
+                        "native bounded disk worker is reserved",
+                    )
+                    .into());
+                }
+            };
+            let mut session = store.resume(&intent)?;
+            let expected =
+                session.inspection_intent(image, policy.inventory.clone(), policy.guest.clone())?;
+            let previous = session.inspection_job().cloned();
+            if let Some(previous) = &previous
+                && previous.intent.fingerprint()? != expected.fingerprint()?
+            {
+                return Err(ApiError::new(
+                    ErrorCode::Conflict,
+                    "original rootfs inspector policy differs",
+                )
+                .into());
+            }
+            let task = tokio::task::spawn_blocking(move || {
+                let _permit = permit;
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()?;
+                runtime.block_on(async {
+                    let parent = match RootfsInspector::connect().await {
+                        Ok(parent) => parent,
+                        Err(error) => {
+                            session.settle()?;
+                            return Err(error.into());
+                        }
+                    };
+                    let recovered = previous.is_some();
+                    let mut state = match previous {
+                        Some(state) => state,
+                        None => parent.reserve(expected)?,
+                    };
+                    let disk = if recovered {
+                        None
+                    } else {
+                        Some(session.inspection_input()?)
+                    };
+                    let outcome = {
+                        let mut save = |value: &goldenhoop_images::rootfs::InspectionState| {
+                            session
+                                .save_inspection_job(value)
+                                .map_err(|error| std::io::Error::other(error.to_string()))
+                        };
+                        if let Some(disk) = disk {
+                            parent.run(&mut state, disk, &mut save).await
+                        } else {
+                            parent.reconcile(&mut state, &mut save).await
+                        }
+                    };
+                    if state.phase == InspectionPhase::Collected {
+                        session.settle()?;
+                        if state.ready_result().is_ok() {
+                            session.confirm_parent_inspection()?;
+                        }
+                    }
+                    outcome.map_err(|error| error.into())
+                })
+            });
+            self.inner
+                .capture_tasks
+                .lock()
+                .map_err(|_| invalid("capture task registry poisoned"))?
+                .push(task);
+            Ok(accepted)
+        }
+        .await;
+        result.map_err(|error| {
+            error
+                .downcast_ref::<ApiError>()
+                .cloned()
+                .unwrap_or_else(|| unavailable(error))
+        })
+    }
     pub(in crate::lifecycle) async fn rootfs_capture(
         &self,
         handle: &RuntimeHandle,

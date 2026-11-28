@@ -74,6 +74,7 @@ def main():
     parser.add_argument('--managed-restore-contract', action='store_true')
     parser.add_argument('--managed-restore-cut-contract', action='store_true')
     parser.add_argument('--rootfs-producer-contract', action='store_true')
+    parser.add_argument('--rootfs-inspector-parent-contract', action='store_true')
     parser.add_argument('--continuation-contract', action='store_true')
     parser.add_argument('--prepared-image-placement', action='store_true')
     parser.add_argument('--images-binary', type=Path)
@@ -82,6 +83,8 @@ def main():
     parser.add_argument('--control', type=Path)
     parser.add_argument('--cli', type=Path)
     args = parser.parse_args()
+    if args.rootfs_inspector_parent_contract and not args.rootfs_producer_contract:
+        parser.error('Rust inspector parent requires the original Rust producer contract')
     if args.public_contract and (not (args.driver_contract or args.memory_public_contract) or not args.control or not args.cli):
         parser.error('public contract requires a driver or memory-public contract, --control and --cli')
     if args.memory_public_contract and (not args.public_contract or args.driver_contract or args.manager_recovery_contract):
@@ -151,6 +154,8 @@ def main():
         sources += sorted(p for p in (root/'crates').rglob('*') if p.is_file() and '__pycache__' not in p.parts)
         if args.rootfs_producer_contract:
             sources += [root/'tests/firecracker_rootfs_producer_contract.py',root/'.github/workflows/firecracker-rootfs-producer.yml']
+        if args.rootfs_inspector_parent_contract:
+            sources += [root/'tests/firecracker_rootfs_inspector_parent_contract.py',root/'.github/workflows/firecracker-rootfs-inspector-parent.yml']
     if args.guest_authority_contract:
         sources += [root/'tests/firecracker_authority_contract.py',root/'.github/workflows/firecracker-guest-authority.yml']
     if args.checkpoint_contract:
@@ -316,7 +321,8 @@ def main():
                            managed_restore_only=args.managed_restore_contract or args.managed_restore_cut_contract,
                            managed_restore_cut=args.managed_restore_cut_contract,
                            rootfs_barrier=args.rootfs_barrier_contract, rootfs_producer=args.rootfs_producer_contract, inspector_image=args.builder_image,
-                           inspector_owner=args.builder_owner, source_commit=args.source_commit)
+                           inspector_owner=args.builder_owner, source_commit=args.source_commit,
+                           rootfs_inspector_parent=args.rootfs_inspector_parent_contract)
             report['driver'] = driver
             guest_collected = driver['cleanup'] == 'complete'
             report['cases'] += ['driver:' + case for case in driver['cases']]
@@ -356,6 +362,8 @@ def main():
             report['scope']='actual private ext4 freeze/thaw, independent fixture copy, source continuation and runsc disk inspection; production rootfs capture/storage/cold boot, public operations, templates and complete M4-M6 remain unverified'
         if args.rootfs_producer_contract:
             report['scope']='actual Rust manager-owned original-generation rootfs capture/source recovery, original-producer SIGKILL and independently stored disk checked inside runsc by a test parent; product isolated-inspector transport, cold boot, public operations, templates and complete M4-M6 remain unverified'
+        if args.rootfs_inspector_parent_contract:
+            report['scope']='actual Rust original-generation capture and durable runsc inspector parent, original inspector-producer SIGKILL, exact same-provider/host collection before Ready and original source continuation. Independent counter inspection remains an additional test fixture; cold boot, public operations, templates and complete M4-M6 remain unverified'
         if args.guest_authority_contract:
             report['scope']='actual generation-bound guest RPC and authority-transfer protocol on the same physical VMM plus retained barrier/root52; no memory capture, source termination, restore claim, new VMM or full M4-M6 acceptance'
 

@@ -488,6 +488,10 @@ pub enum DriverCall {
         handle: goldenhoop_runtime::RuntimeHandle,
         capture: Uuid,
     },
+    RootfsValidate {
+        handle: goldenhoop_runtime::RuntimeHandle,
+        capture: Uuid,
+    },
     RootfsCollect {
         handle: goldenhoop_runtime::RuntimeHandle,
         capture: Uuid,
@@ -565,6 +569,9 @@ pub async fn run_driver_call(config: PathBuf, request: PathBuf) -> Result<serde_
             }
             DriverCall::RootfsInspect { handle, capture } => {
                 driver.rootfs_read(&handle, capture, false).await?
+            }
+            DriverCall::RootfsValidate { handle, capture } => {
+                driver.rootfs_validate(&handle, capture).await?
             }
             DriverCall::RootfsCollect { handle, capture } => {
                 driver.rootfs_read(&handle, capture, true).await?

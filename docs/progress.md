@@ -1,5 +1,42 @@
 # Progress
 
+The next private M4 candidate adds a durable Rust isolated-inspector parent and
+`rootfs_validate`. Its original operation is persisted in the captured disk's
+record under the existing exclusive object lock, with immutable provider/host,
+request, producer, container and host-process identities. The parent uses a
+never-started input seeder and actual runsc, and requires positive original
+process/cgroup/container/volume collection before Ready. Pending inspection
+fences disk GC; recovery does not replay authorization or adopt unacknowledged
+output. See the [parent contract](rootfs-inspection-parent.md).
+The [initial integrated Linux check](evidence/m4-rootfs-inspector-parent-linux-store-initial.json)
+passed native/images strict all-target clippy and15 existing rootfs tests; that
+source precedes the new inspector-journal regression and gate wiring. Both
+initial check images are positively
+[collected](evidence/m4-rootfs-inspector-parent-store-initial-image-collection.json).
+The [final Windows checks](evidence/m4-rootfs-inspector-parent-windows-lines.json)
+pass format, strict workspace/all-target clippy,333 Rust and36 SDK tests. The
+[final Linux checks](evidence/m4-rootfs-inspector-parent-linux-lines.json) pass
+native/images strict all-target clippy and all16 rootfs tests with two threads.
+Both bind the same405 current runtime inputs. The new local file/process test
+fences GC for an unfinished parent and refuses foreign provider/disk/container
+identities or a self-reported result without an original host receipt. Its
+inspector state is synthetic; actual runsc remains a separate gate.
+The earlier [parallel](evidence/m4-rootfs-inspector-parent-linux-bound.json) and
+[serial](evidence/m4-rootfs-inspector-parent-linux-serial.json) runs retain their
+15-second SIGKILL fixture deadline failures. Serialization alone did not resolve
+the last failure. [Instrumentation](evidence/m4-rootfs-inspector-parent-capture-deadline-diagnostic.json)
+measured a231021352-byte test binary and7.95 seconds before capture even began.
+The [Cargo profile review and comparison](evidence/m4-rootfs-inspector-parent-upstream-test-profile.json)
+uses line tables while retaining debug assertions and overflow checks. The
+[actual same-cut diagnostic](evidence/m4-rootfs-inspector-parent-capture-lines-diagnostic.json)
+then reaches acknowledged capture in7.643 seconds with a68524984-byte binary;
+the original15-second deadline and all fault assertions remain unchanged.
+Final and diagnostic check images are
+[collected](evidence/m4-rootfs-inspector-parent-lines-image-collection.json).
+Full CI and actual producer-death/runsc acceptance remain pending.
+No new public capability, cold boot, template or complete M4-M6
+support is registered by this draft.
+
 The private M4 Rust manager-owned rootfs capture/source-recovery increment is
 accepted on frozen source9f181dc. [Actual KVM/runsc run46138925571](https://github.com/mark0-cn/GoldenHoop/actions/runs/46138925571)
 passes23 groups, including all8 new rootfs groups. The original manager is

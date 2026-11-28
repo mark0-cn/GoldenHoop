@@ -151,6 +151,17 @@ pub struct FirecrackerDriver {
     profile: Arc<RwLock<RuntimeProfile>>,
 }
 impl FirecrackerDriver {
+    pub async fn rootfs_validate(
+        &self,
+        handle: &RuntimeHandle,
+        capture: Uuid,
+    ) -> std::result::Result<serde_json::Value, ApiError> {
+        self.call(DriverCall::RootfsValidate {
+            handle: handle.clone(),
+            capture,
+        })
+        .await
+    }
     pub async fn rootfs_capture(
         &self,
         handle: &RuntimeHandle,
@@ -615,6 +626,9 @@ async fn dispatch(
         }
         DriverCall::RootfsInspect { handle, capture } => {
             Ok(engine.rootfs_read(&handle, capture, false).await?)
+        }
+        DriverCall::RootfsValidate { handle, capture } => {
+            Ok(engine.rootfs_validate(&handle, capture).await?)
         }
         DriverCall::RootfsCollect { handle, capture } => {
             Ok(engine.rootfs_read(&handle, capture, true).await?)

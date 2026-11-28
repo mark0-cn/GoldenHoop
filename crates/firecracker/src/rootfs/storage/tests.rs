@@ -169,6 +169,81 @@ fn root() -> bool {
 }
 
 #[test]
+fn original_inspector_journal_fences_gc_and_foreign_provider_or_self_report_cannot_publish_ready() {
+    if !root() {
+        return;
+    }
+    use goldenhoop_images::rootfs::{InspectionPhase, InspectionState};
+    let fixture = Fixture::new();
+    let store = fixture.store();
+    let id = fixture.manifest.intent.source.capture;
+    let mut session = fixture.session(&store);
+    session
+        .capture(
+            File::open(&fixture.source).unwrap(),
+            0,
+            fixture.manifest.barrier.clone(),
+        )
+        .unwrap();
+    session.confirm_source_resumed(fixture.resumed()).unwrap();
+    session.settle().unwrap();
+    let intent = session
+        .inspection_intent(
+            format!("sha256:{}", "d".repeat(64)),
+            fixture.inventory.clone(),
+            RootfsGuestConfig::default(),
+        )
+        .unwrap();
+    // Synthetic parent state only; no Docker/host inspection is claimed.
+    let mut state =
+        InspectionState::reserve(intent, "fixture-engine".into(), Uuid::new_v4()).unwrap();
+    state.seeder_id = Some("b".repeat(64));
+    session.save_inspection_job(&state).unwrap();
+    let mut foreign = state.clone();
+    foreign.seeder_id = Some("c".repeat(64));
+    assert!(session.save_inspection_job(&foreign).is_err());
+    let mut foreign = state.clone();
+    foreign.engine_id = "foreign-engine".into();
+    assert!(session.save_inspection_job(&foreign).is_err());
+    let mut foreign = state.clone();
+    foreign.intent.request.disk.sha256 = "a".repeat(64);
+    assert!(session.save_inspection_job(&foreign).is_err());
+    let mut unobserved = state.clone();
+    unobserved.phase = InspectionPhase::Collected;
+    unobserved.result = Some(fixture.report(session.manifest().unwrap()));
+    assert!(session.save_inspection_job(&unobserved).is_err());
+    assert!(session.confirm_parent_inspection().is_err());
+    session.settle().unwrap();
+    drop(session);
+    assert!(store.collect(id).is_err());
+    assert_eq!(store.reserved_bytes().unwrap(), 64 * MIB);
+    assert!(
+        fixture
+            .path
+            .join("store")
+            .join(format!("capture-{id}.disk"))
+            .is_file()
+    );
+    let mut session = store.resume(&fixture.manifest.intent).unwrap();
+    // No provider resources were ever created in this local state fixture.
+    state.phase = InspectionPhase::Collected;
+    state.error = Some("fixture inspection ended without an accepted tool result".into());
+    session.save_inspection_job(&state).unwrap();
+    session.settle().unwrap();
+    drop(session);
+    store.collect(id).unwrap();
+    assert_eq!(store.reserved_bytes().unwrap(), 0);
+    assert!(
+        !fixture
+            .path
+            .join("store")
+            .join(format!("capture-{id}.disk"))
+            .exists()
+    );
+    fixture.close();
+}
+
+#[test]
 fn disk_is_sparse_independent_persistent_and_ready_only_after_recovery_and_inspection() {
     if !root() {
         return;
@@ -481,6 +556,15 @@ fn crash_child_entry() {
         return;
     };
     let path = PathBuf::from(path);
+    let began = Instant::now();
+    let progress = |phase: &str| {
+        std::fs::write(
+            path.join("child.progress"),
+            format!("{phase} elapsed={:?}", began.elapsed()),
+        )
+        .unwrap();
+    };
+    progress("started");
     let value: serde_json::Value =
         serde_json::from_slice(&std::fs::read(path.join("child.json")).unwrap()).unwrap();
     let intent: RootfsCaptureIntent = serde_json::from_value(value["intent"].clone()).unwrap();
@@ -494,6 +578,7 @@ fn crash_child_entry() {
         },
     )
     .unwrap();
+    progress("store_opened");
     let mut session = store
         .reserve(
             intent,
@@ -502,7 +587,9 @@ fn crash_child_entry() {
             0,
         )
         .unwrap();
+    progress("reserved");
     session.begin().unwrap();
+    progress("begun");
     let cut = value["cut_point"]
         .as_str()
         .unwrap_or("captured_record_persisted");
@@ -512,6 +599,7 @@ fn crash_child_entry() {
             0,
             frozen,
             |phase| {
+                progress(phase);
                 if phase == cut {
                     std::fs::write(path.join("child.ready"), phase).unwrap();
                     loop {
@@ -688,7 +776,8 @@ fn crash_at_publication(cut_point: &str, missing_disk: bool) {
             .spawn()
             .unwrap(),
     );
-    let deadline = Instant::now() + Duration::from_secs(15);
+    let started = Instant::now();
+    let deadline = started + Duration::from_secs(15);
     while !fixture.path.join("child.ready").exists() {
         if let Some(status) = child.try_wait().unwrap() {
             panic!("rootfs fixture producer exited before capture: {status}");
@@ -696,10 +785,24 @@ fn crash_at_publication(cut_point: &str, missing_disk: bool) {
         if Instant::now() >= deadline {
             let _ = child.kill();
             let _ = child.wait();
-            panic!("rootfs fixture producer missed its bounded capture deadline");
+            let progress = std::fs::read_to_string(fixture.path.join("child.progress"))
+                .unwrap_or_else(|_| "no child progress".into());
+            let executable_bytes = std::fs::metadata(std::env::current_exe().unwrap())
+                .unwrap()
+                .len();
+            panic!(
+                "rootfs fixture producer missed its bounded capture deadline: {progress}; test executable bytes={executable_bytes}"
+            );
         }
         std::thread::sleep(Duration::from_millis(20));
     }
+    println!(
+        "ROOTFS_CAPTURE_METRIC={}",
+        serde_json::json!({"cut":cut_point,
+        "readiness_ms":started.elapsed().as_millis(),
+        "test_executable_bytes":std::fs::metadata(std::env::current_exe().unwrap()).unwrap().len(),
+        "last_progress":std::fs::read_to_string(fixture.path.join("child.progress")).unwrap()})
+    );
     let store = fixture.store();
     let id = fixture.manifest.intent.source.capture;
     assert!(store.resume(&fixture.manifest.intent).is_err());
