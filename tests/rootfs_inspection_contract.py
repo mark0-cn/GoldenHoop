@@ -24,6 +24,7 @@ class RootfsContract(Contract):
             self.label = ['--label', 'dev.goldenhoop.task=m4-image-builder-contract',
                           '--label', 'dev.goldenhoop.owner='+self.owner]
         self.report['owner'] = self.owner
+        self.report['selected_cases'] = args.case
         self.sources += [Path(__file__).resolve(), Path(host.__file__).resolve()]
         root = Path(__file__).resolve().parents[1]
         self.source_hashes = {p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in self.sources}
@@ -217,12 +218,16 @@ class RootfsContract(Contract):
             'workspace_owner': ['set_inode_field /workspace uid 0'],
             'agent_symlink': ['rm /usr/local/bin/goldenhoop-agent', 'symlink /usr/local/bin/goldenhoop-agent /workspace/agent-alias'],
             'agent_content': ['zap_block -f /usr/local/bin/goldenhoop-agent -p 0 0'],
-            'guest_unknown': ['rm /etc/goldenhoop/guest.json', 'write /opt/goldenhoop/rootfs-inventory.json /etc/goldenhoop/guest.json'],
+            'guest_unknown': ['rm /etc/goldenhoop/guest.json', 'write /opt/goldenhoop/rootfs-inventory.json /etc/goldenhoop/guest.json', 'set_inode_field /etc/goldenhoop/guest.json mode 0100644'],
             'dirty': ['set_super_value state 0'],
             'pending_recovery': ['feature needs_recovery'],
-            'inconsistent_counts': ['set_super_value free_inodes_count 1'],
+            'inconsistent_links': ['set_inode_field /usr/bin/sentinel links_count 2'],
         }
+        selected = set(args for args in (self.args.case or ['digest', 'guest_mismatch', *changes, 'truncated', 'corrupt_superblock', 'TERM']))
+        assert selected.issubset({'digest', 'guest_mismatch', *changes, 'truncated', 'corrupt_superblock', 'TERM'}), selected
         for kind in ['digest', 'guest_mismatch', *changes, 'truncated', 'corrupt_superblock']:
+            if kind not in selected:
+                continue
             volume = copy_disk()
             for command in changes.get(kind, []):
                 debug(volume, command)
@@ -239,10 +244,17 @@ class RootfsContract(Contract):
             if kind == 'truncated': changed['disk']['size_bytes'] = request['disk']['size_bytes']
             refused = self.inspect(volume, changed)
             assert not refused['passed'] and refused['inspection'] is None, (kind, refused)
+            if kind == 'guest_unknown':
+                assert 'unknown field' in refused['error'], refused
+            if kind == 'inconsistent_links':
+                assert 'image tool failed' in refused['error'], refused
             assert self.disk_content(volume) == before, kind
             self.report['observations'][kind+'_refusal'] = refused['error']
             self.report['cases'].append(kind+'_refused_input_unchanged_output_absent')
             print(json.dumps({'case': kind, 'refused': True}), flush=True)
+        if 'TERM' not in selected:
+            self.report['result'] = 'passed'
+            return
         large = dict(prepared, generation=str(uuid.uuid4()), disk_bytes=4*1024**3)
         original_large = self.volume()
         cid, converted = self.prepare(archive, large, original_large)
@@ -267,6 +279,7 @@ if __name__ == '__main__':
     parser.add_argument('--allow-runc-development', action='store_true')
     parser.add_argument('--source-commit')
     parser.add_argument('--owner', help='explicit unique UUID for workflow cleanup')
+    parser.add_argument('--case', action='append', help='run only named negative controls; the full gate omits this option')
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--remove-image', action='store_true')
     args = parser.parse_args()

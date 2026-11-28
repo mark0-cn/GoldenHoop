@@ -21,7 +21,22 @@ failed to mutate a read-only copied disk. debugfs exited0 without changing it;
 the [failed report](evidence/m4-rootfs-inspection-runc-initial.json) preserves the
 observation and Complete owned resource collection. The corrected fixture grants
 only its own copy write permission and requires an observed disk digest change
-before testing rejection. Actual component/production-runsc acceptance is pending.
+before testing rejection. A second [failed fixture report](evidence/m4-rootfs-inspection-runc-corrected.json)
+passes14 groups but a superblock-counter edit does not establish the intended
+inconsistency. The final fixture uses an actual mismatched inode link count and
+requires fsck failure. Unknown guest fields must reach the JSON parser rather
+than fail on fixture file permissions. The [focused local runc follow-up](evidence/m4-rootfs-inspection-runc-focused.json)
+passes seven groups, including both corrected controls, truncated/corrupt disks
+and actual TERM during4GiB inspection. Inputs remain unchanged and owned tools,
+staging, containers, volumes and temporary files are collected. The exact
+[check image](evidence/m4-rootfs-inspection-check-image-collection.json) and
+[builder image](evidence/m4-rootfs-inspection-builder-image-collection.json) are absent.
+This is explicitly development evidence, not production-runsc acceptance.
+
+Candidateeac0525 starts full Windows/Ubuntu CI46122257413. Its first runsc gate
+46122291578 is explicitly cancelled while superseding the fixture; its exact
+resource-collection step succeeds, as recorded in the [cancellation receipt](evidence/m4-rootfs-inspection-runsc-candidate-cancelled.json).
+The final full production-runsc component gate remains pending.
 No rootfs snapshot/template capability is advertised by this increment.
 
 [Actual public memory KVM46116996541](https://github.com/mark0-cn/GoldenHoop/actions/runs/46116996541)
