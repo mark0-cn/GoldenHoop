@@ -1,5 +1,12 @@
 # Progress
 
+The [copy-fault main promotion](evidence/m4-rootfs-copy-fault-promotion.json)
+fast-forwards0d1c6a8 after actual acceptance and unchanged-runtime CI binding.
+The completed cold-boot [worktree is collected](evidence/m4-rootfs-copy-fault-worktree-collection.json):
+all3770 tracked files are preserved in main; the directory and Git registration
+are absent. All owned local test images/containers/volumes are absent. The
+active public-rootfs worktree and useful caches remain.
+
 The private M4 rootfs copy-fault follow-up is accepted on source e7a274f.
 [Actual KVM/runsc46154766048](evidence/m4-rootfs-copy-fault-46154766048-archive.json)
 passes33 groups with410 byte-verified inputs. At196608 of1073741824 target bytes,
