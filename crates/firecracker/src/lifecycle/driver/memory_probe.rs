@@ -25,6 +25,8 @@ struct MemoryProbe {
     collected: bool,
     #[serde(default)]
     error: Option<String>,
+    #[serde(default)]
+    collection_errors: Vec<String>,
 }
 
 impl MemoryProbe {
@@ -55,6 +57,8 @@ impl MemoryProbe {
             || self.request.ttl_seconds > cfg.max_ttl_seconds
             || self.error.as_ref().is_some_and(|error| error.len() > 512)
             || self.checked && self.error.is_some()
+            || self.collection_errors.len() > 8
+            || self.collection_errors.iter().any(|error| error.len() > 512)
         {
             return Err(invalid("native memory probe intent differs").into());
         }
@@ -120,6 +124,43 @@ impl MemoryProbe {
     }
 }
 impl NativeEngine {
+    async fn collect_probe_source(
+        &self,
+        probe: &mut MemoryProbe,
+        handle: &RuntimeHandle,
+    ) -> Result<()> {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(40);
+        loop {
+            let lock = self.vm_lock(handle.sandbox_id).await;
+            let guard = lock.lock().await;
+            // Authenticate this exact original owner on every attempt. An
+            // uncertain stop reply never authorizes another generation.
+            let record = self.for_handle(handle)?;
+            let result = self.remove_owned(&record).await;
+            if result.is_ok() {
+                let current = self.for_handle(handle)?;
+                if current.phase == "collected" && self.physical_absence(&current)? {
+                    return Ok(());
+                }
+            }
+            let error = result.err().unwrap_or_else(|| {
+                invalid("probe source collection has no positive absence observation").into()
+            });
+            drop(guard);
+            if probe.collection_errors.len() == 8 {
+                probe.collection_errors.remove(0);
+            }
+            probe
+                .collection_errors
+                .push(error.to_string().chars().take(128).collect());
+            probe.save(&self.inner.cfg)?;
+            if tokio::time::Instant::now() >= deadline {
+                return Err(error);
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
     fn memory_probes(&self) -> Result<Vec<MemoryProbe>> {
         let cfg = &self.inner.cfg;
         let directory = cfg.data_root.join("memory-probes");
@@ -189,7 +230,7 @@ impl NativeEngine {
                 probe.source_handle = Some(handle.clone());
                 probe.save(cfg)?;
             }
-            self.remove(&handle).await?;
+            self.collect_probe_source(probe, &handle).await?;
             let current = self.for_handle(&handle)?;
             if current.phase != "collected" || !self.physical_absence(&current)? {
                 return Err(invalid("memory probe source is not positively collected").into());
@@ -293,6 +334,7 @@ impl NativeEngine {
             checked: false,
             collected: false,
             error: None,
+            collection_errors: Vec::new(),
         };
         probe.validate(cfg, probe.id)?;
         metadata::initial_json(&probe.path(cfg), &probe)?;
@@ -460,7 +502,7 @@ impl NativeEngine {
         }
         probe.reference = Some(serde_json::from_value(status["reference"].clone())?);
         probe.save(cfg)?;
-        self.remove(&source).await?;
+        self.collect_probe_source(probe, &source).await?;
         let record = self.for_handle(&source)?;
         if record.phase != "collected" || !self.physical_absence(&record)? {
             return Err(invalid("memory probe source still exists before transfer").into());
@@ -605,6 +647,7 @@ mod tests {
             checked: false,
             collected: false,
             error: None,
+            collection_errors: Vec::new(),
         };
         let lease = metadata::claim_installation(&cfg.data_root, cfg.installation_id).unwrap();
         let engine = NativeEngine::connect(cfg.clone(), lease).unwrap();

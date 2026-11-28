@@ -12,6 +12,10 @@ Size the byte budget for both captured files and restored target backing, and
 the count budget for concurrent captures. A setting alone does not grant support:
 the worker must complete its real startup probe. Operators can inspect the private
 probe receipt's bounded `error` field when memory support remains absent.
+The private `collection_errors` history retains the last eight bounded source
+collection errors. An uncertain stop response is reconciled against the same
+original owner within a 40-second retry window; it never authorizes a replacement
+VM, a repeated workload start, or success without positive physical absence.
 
 The manager publishes a private probe intent before allocating anything. It
 starts one original guest command that generates a random token in guest RAM,
