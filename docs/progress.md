@@ -33,7 +33,20 @@ then reaches acknowledged capture in7.643 seconds with a68524984-byte binary;
 the original15-second deadline and all fault assertions remain unchanged.
 Final and diagnostic check images are
 [collected](evidence/m4-rootfs-inspector-parent-lines-image-collection.json).
-Full CI and actual producer-death/runsc acceptance remain pending.
+[CI46143689607](evidence/m4-rootfs-inspector-parent-ci-46143689607.json) passes
+both Windows/Ubuntu jobs, including static musl checks, on42ee741. All405 inputs
+match both final local reports;832 Rust and72 SDK passes are aggregate counts.
+The [first actual run46143754573](evidence/m4-rootfs-inspector-parent-46143754573-actual.json)
+stopped at the source-recovery fixture before inspector execution. Its poll
+awaited guest recovery and settled disk I/O but omitted the separately published
+supervisor hold-release acknowledgement. The fixture now waits for all three
+while continuously asserting the original source owner/process/supervisor.
+Inspector completion likewise waits for final Ready after I/O settlement when
+a result was acknowledged. [Failed-run collection](evidence/m4-rootfs-inspector-parent-46143754573-archive.json)
+is Complete, including source disks, native processes/cgroups and provider resources.
+This harness-only correction leaves all405 compiled runtime inputs unchanged;
+the source-verified full CI remains applicable. Corrected actual runsc acceptance
+is pending.
 No new public capability, cold boot, template or complete M4-M6
 support is registered by this draft.
 

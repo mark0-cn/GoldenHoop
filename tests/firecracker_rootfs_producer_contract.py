@@ -118,12 +118,16 @@ def exercise(handle, initial, runtime, cfg, manager, call, rpc, record, report,
     deadline = time.monotonic()+45
     while True:
         status = call(dict(operation='rootfs_inspect', handle=handle, capture=interrupted))
-        if status['source_resumed'] and status['producer_settled']: break
+        after = record(handle['sandbox_id'])
+        seen['producer_recovery_poll'] = dict(status=status, source=after)
+        assert after['owner'] == initial['owner'], after
+        assert after['process'] == initial['process'] and after['supervisor'] == initial['supervisor'], after
+        if status['source_resumed'] and status['producer_settled'] and not after.get('rootfs_hold'): break
         assert time.monotonic() < deadline, status
         time.sleep(.05)
     assert status['phase'] == 'failed' and status['reference'] is None
     after = record(handle['sandbox_id'])
-    assert not after.get('rootfs_hold') and after['owner'] == initial['owner']
+    assert not after.get('rootfs_hold') and after['owner'] == initial['owner'], after
     assert after['process'] == initial['process'] and after['supervisor'] == initial['supervisor']
     assert meta(interrupted)['source_writer'] == old_writer
     assert rpc(handle, dict(method='inspect', id=execution), 'execution')['state'] == 'running'

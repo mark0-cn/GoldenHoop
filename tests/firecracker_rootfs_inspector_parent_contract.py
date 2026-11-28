@@ -35,7 +35,10 @@ def exercise(handle, primary, cfg, manager, call, rpc, record, report):
             value = status(capture)
             job = meta(capture).get('inspection_job')
             if job and job['phase'] == 'collected' and value['producer_settled']:
-                return value, job
+                # I/O settlement precedes the final Ready acknowledgement.
+                # An acknowledged result must finish that publication too.
+                if job['result'] is None or value['phase'] == 'ready' and value['inspection_verified']:
+                    return value, job
             assert not job or job['phase'] != 'unconfirmed', job
             assert time.monotonic() < deadline, (value, job)
             time.sleep(.025)
