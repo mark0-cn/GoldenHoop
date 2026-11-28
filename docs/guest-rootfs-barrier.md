@@ -1,7 +1,9 @@
 # Private guest rootfs freeze and thaw
 
-This candidate implements a filesystem barrier for the next M4 rootfs capture
-path. Actual KVM acceptance is pending. It does not yet implement the Rust rootfs
+The private filesystem barrier passes actual KVM acceptance in
+[run46129726218](https://github.com/mark0-cn/GoldenHoop/actions/runs/46129726218),
+with source-bound [evidence](evidence/m4-rootfs-barrier-acceptance-summary.json).
+It does not yet implement the Rust rootfs
 capture/store coordinator, fresh cold boot, public snapshot operations, volume
 snapshots or templates. Those requirements remain in
 [native-rootfs-templates.md](native-rootfs-templates.md) and [roadmap.md](roadmap.md).
@@ -41,14 +43,22 @@ uncertainty. A deadline does not cancel a kernel ioctl inside the guest. A slow
 or unconfirmed operation is not acknowledged as complete; the future Rust
 capture coordinator still needs durable owner/phase records and recovery.
 
-The targeted KVM gate starts an actual asynchronous writer, checks ext4 recovery
+The passed targeted KVM gate starts an actual asynchronous writer, checks ext4 recovery
 flags before/after freeze, observes exact retry and foreign/cross-kind refusal,
 pauses the original VMM and makes a separate sparse test copy through a pinned
 source descriptor. It explicitly resumes/thaws the original guest, observes the
 same running command advancing its counter, then sends only the copied disk to
 the existing source-built runsc inspector. The isolated checker validates clean
 ext4, exact pinned agent/init/config and the copied user counter; input bytes
-remain unchanged. Lost freeze/thaw replies must reconcile the original operation.
+remain unchanged. Lost freeze/thaw replies reconcile the original operation.
+The original writer is then explicitly cancelled and observed Cancelled/Complete.
+All22 guest/driver groups pass, including seven new rootfs groups, with confirmed
+VM/cgroup/fixture/inspector/container/volume/image collection. Full Windows/Ubuntu
+CI passes against the same396 runtime inputs; actual KVM binds391 inputs,
+including its harness and both private workflows. The earlier failed KVM gate
+is retained: the harness expected Ok from Cancel, while the agent returns an
+execution that must be polled to terminal state. Production Rust did not change
+between that failed run and the successful follow-up.
 The Python copy is test construction, not the future production Rust store.
 
 The existing private guest-barrier workflow accepts `component=rootfs` and calls

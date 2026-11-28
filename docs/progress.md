@@ -1,6 +1,6 @@
 # Progress
 
-The next M4 candidate implements an independent private guest ext4 freeze/thaw
+The private M4 guest ext4 freeze/thaw component is accepted. It implements
 barrier, exact source-generation/root-descriptor receipts, permanent thaw intent,
 cross-kind exclusion and original-operation recovery after lost replies. It uses
 Linux UAPI ioctl encoding plus the portable libc statvfs ABI. A failed freeze or
@@ -15,8 +15,8 @@ pass format, strict workspace/all-target clippy,331 Rust tests and36 SDK tests.
 All three checks bind the same396 current runtime inputs. The exact GNU/musl
 check images and their containers are [absent](evidence/m4-rootfs-capture-check-images-collection.json),
 including the [superseded GNU image](evidence/m4-rootfs-capture-initial-image-collection.json).
-These checks are not KVM freeze or cold-boot evidence. The targeted actual
-KVM/runsc gate remains pending. The initial ABI compile failure and superseded
+These local checks are not KVM freeze or cold-boot evidence. The initial ABI
+compile failure and superseded
 20-test GNU follow-up are retained separately.
 
 [Full Windows/Ubuntu CI46128461372](https://github.com/mark0-cn/GoldenHoop/actions/runs/46128461372)
@@ -33,8 +33,24 @@ The failure is the new harness's Cancel response assumption: it expected Ok
 while the existing agent protocol returns an execution that may still be
 Running/Pending. The correction follows the existing native barrier contract,
 requiring that same ID to become Cancelled/Complete before the remaining
-memory-exclusion/lost-reply controls. Production Rust is unchanged; final actual
-KVM acceptance remains pending.
+memory-exclusion/lost-reply controls. Production Rust is unchanged.
+
+[Actual KVM/runsc46129726218](https://github.com/mark0-cn/GoldenHoop/actions/runs/46129726218)
+now passes all22 guest/driver groups, including all seven new rootfs groups.
+Its [archive](evidence/m4-rootfs-barrier-46129726218-archive.json) verifies391
+source inputs. The original writer advances after explicit source thaw, the
+independent copied counter is read inside the actual runsc inspector, and its
+disk digest stays fixed while the source continues. Cancellation is observed as
+Cancelled/Complete. Sync-only memory barriers remain separate; dropped freeze
+and thaw replies reconcile the original operation and never refreeze a spent ID.
+VMs, cgroups, fixtures, inspector processes, containers, volumes and exact owned
+workflow images are confirmed collected. The
+[component acceptance](evidence/m4-rootfs-barrier-acceptance-summary.json) binds
+local checks, full CI, actual KVM/runsc and retained failure evidence. The Python
+disk copy remains test construction. Production Rust capture/storage and
+inspection orchestration, fresh independent cold boots, public rootfs operations,
+volumes, immutable templates, remaining memory coverage and combined M4
+acceptance remain required, together with complete M5-M6.
 
 [Actual runsc46124741317](https://github.com/mark0-cn/GoldenHoop/actions/runs/46124741317)
 accepts the private read-only rootfs inspector at8a776b9: all18 groups pass with377
