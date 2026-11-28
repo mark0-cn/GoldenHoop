@@ -1,20 +1,26 @@
 # Progress
 
-The next private M4 fixture cuts the original Rust cold-boot copy at an observed
-partial target-file length, before materialization acknowledgement. It uses
-pidfd SIGSTOP to hold that exact supervisor, then SIGKILLs either its manager or
-the supervisor. The manager case must keep its original reference/lease and
-supervisor/generation across restart; the supervisor case must collect the
-original unready target and refuse a successful retry. No Rust, runtime, image
-recipe, limits or original cleanup assertions change. [Preflight evidence](evidence/m4-rootfs-copy-fault-preflight.json)
-verifies Python syntax and all408 existing full-CI runtime inputs exactly; it
-does not supply actual fault acceptance. Two live targets use240-second fixture
-lifetimes to accommodate the additional recovery steps; absolute expiry/collection
-tests keep their existing deadlines. A failed third target must close its own
-reference while the two successful copies still survive source-content GC.
-The workflow uses pinned official Docker actions and separate bounded GHA cache
-scopes for guest/inspector images; cache export errors do not replace builds or
-runtime validation. Cache performance and the new actual cuts remain unverified.
+The private M4 rootfs copy-fault follow-up is accepted on source e7a274f.
+[Actual KVM/runsc46154766048](evidence/m4-rootfs-copy-fault-46154766048-archive.json)
+passes33 groups with410 byte-verified inputs. At196608 of1073741824 target bytes,
+the original supervisor is held through pidfd while its manager is killed;
+restart reconnects the same supervisor, generation and source reference, and
+source GC stays fenced until that original copy is acknowledged. A separate
+supervisor is killed at327680 bytes; its unready target is positively collected,
+its reference closes without a copy acknowledgement, and retry is refused.
+Two successful fresh KVM targets retain independent writes after source-content
+GC while the original source continues. All three original target references,
+native/provider resources, content, quotas and fixtures are positively collected.
+The [acceptance summary](evidence/m4-rootfs-copy-fault-acceptance-summary.json)
+reuses CI46152295297 only after checking all408 production/runtime inputs byte
+for byte against both source commits; that CI passed838 Rust/72 SDK tests across
+both jobs. No production Rust or image recipe changed for this fault follow-up.
+Two live targets use240-second fixture lifetimes; absolute expiry/collection
+tests retain their existing deadlines. Pinned official Docker actions use
+separate bounded GHA cache scopes for the guest and inspector images; this run
+does not establish a cache speedup. Inspector death after an acknowledged result,
+public rootfs operations, immutable templates, volumes and combined M4-M6
+acceptance remain pending.
 
 The private M4 two-target rootfs cold-boot increment is accepted on source9e0b37c.
 [Actual KVM/runsc46152336903](evidence/m4-rootfs-coldboot-46152336903-archive.json)

@@ -48,10 +48,16 @@ shared descriptor handoff, independent receiver offsets, durable two-target GC
 fences, exact retry/refusal and two separate copies that survive source deletion.
 They do not establish KVM behavior or death during actual cold-boot disk copying.
 The hardware fixture submits production Rust requests and observes real target
-VMs; Python does not implement their disk copies. Actual copy-time manager and
-supervisor death remain separate required fault coverage.
-The follow-up fixture now observes a nonempty partial disk before its expected
-length, stops the original supervisor through pidfd, then kills its manager or
-the supervisor. Each path resumes any held original process on failure and
-retains actual cut/reference/native observations. Syntax and unchanged-runtime
-checks do not count as execution of these new cuts.
+VMs; Python does not implement their disk copies. The follow-up
+[actual KVM/runsc46154766048](evidence/m4-rootfs-copy-fault-46154766048-archive.json)
+passes33 groups on source e7a274f, including both copy-time death cuts. It observes
+a nonempty partial disk before its expected length and stops the original
+supervisor through pidfd before killing its manager or the supervisor. The
+manager path reconnects the same supervisor/generation/reference after restart;
+the supervisor path collects its unready target, closes the original reference
+without a copy acknowledgement and refuses replay. All three original target
+references and native/provider resources are positively collected. Each failure
+path resumes any held original process before collection. The acceptance summary
+binds410 actual source inputs and reuses full CI only for408 byte-identical
+production/runtime inputs. Inspector death after an acknowledged result and
+public rootfs/template/volume acceptance remain separate required coverage.
