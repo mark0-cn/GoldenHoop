@@ -1,5 +1,11 @@
 # Read-only ext4 inspection component
 
+The [actual runsc component gate](https://github.com/mark0-cn/GoldenHoop/actions/runs/46124741317)
+passes18 groups at8a776b9, with377 verified inputs and Complete collection of all19
+builder processes/cgroups, the transport preflight and exact owned resources.
+The [acceptance summary](evidence/m4-rootfs-inspection-acceptance-summary.json)
+also binds complete Windows/Ubuntu CI and its394 unchanged runtime inputs.
+
 The Rust image builder now has a separate disk-input inspection path. This is a
 private validation component, not a rootfs snapshot, cold-boot or template API.
 The remaining implementation and actual KVM requirements are in

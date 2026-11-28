@@ -18,6 +18,10 @@ Runtime support is declared per profile and checked against the host. Missing is
 
 The opt-in [basic local Firecracker profile](docs/m4-delivery.md) passes actual jailed bootstrap and the shared API/Python SDK/Rust CLI contract, including worker SIGKILL recovery and independent expiry. Basic commands, files, pause, no-NIC isolation and retained artifacts are published after actual probes. [The trusted image parent](docs/image-preparation.md) connects immutable source acquisition, host resource checks, isolated offline conversion and private disk storage. Additional image, snapshot and template work and combined M4 acceptance remain required.
 
+The private [read-only rootfs inspector](docs/rootfs-inspection.md) passes18 actual
+runsc groups with source-verified collection. Production rootfs capture, fresh
+KVM clones, public rootfs operations and templates remain pending.
+
 [Public snapshot interfaces](docs/public-snapshot-api.md) now include gateway
 capture admission, stored reads, pagination and durable deletion, with source
 authorization and Rust/Python/CLI methods. Native MemorySnapshot requires a

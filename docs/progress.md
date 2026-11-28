@@ -1,5 +1,27 @@
 # Progress
 
+[Actual runsc46124741317](https://github.com/mark0-cn/GoldenHoop/actions/runs/46124741317)
+accepts the private read-only rootfs inspector at8a776b9: all18 groups pass with377
+byte-verified inputs and Complete collection. The separate trusted transport
+preflight also passes. All19 actual Rust-builder host processes and their owned
+cgroups are absent; the preflight process/cgroup, owned containers, volumes,
+temporary files and exact workflow images are collected.
+
+[Full Windows/Ubuntu CI46122257413](https://github.com/mark0-cn/GoldenHoop/actions/runs/46122257413)
+passes at eac0525; all394 runtime inputs match the accepted component. The
+[acceptance summary](evidence/m4-rootfs-inspection-acceptance-summary.json) binds
+its raw reports, source proofs, Windows329/SDK36, focused Linux15, local follow-up
+and cleanup evidence. This accepts only the isolated inspection component.
+Production Rust rootfs orchestration, bounded filesystem freeze/thaw, source
+recovery, independent storage, fresh KVM clones, public operations, volume
+snapshots, templates, remaining memory coverage, clock review, combined M4 and
+complete M5-M6 remain required.
+
+## Earlier inspector development notes
+
+These notes retain failed/pending candidates. The source-verified component
+acceptance above is the current status.
+
 The next M4 increment adds a private Rust read-only ext4 inspector with separate
 disk request/result/inventory and operation-specific authorization. It requires
 clean/full-length content, read-only fsck, protected physical parents, exact
