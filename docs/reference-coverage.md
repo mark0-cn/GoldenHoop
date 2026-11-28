@@ -2,8 +2,10 @@
 
 The [public snapshot interface](public-snapshot-api.md) implements source-authorized
 capture/read/list/delete, durable collection and Rust/Python/CLI methods. Its
-runtime observations in focused interface tests are synthetic. Native public
-restore/execution binding and actual capability/KVM acceptance remain required;
+runtime observations in focused interface tests are synthetic. The
+[public restoration bridge](public-snapshot-restoration.md) implements new targets,
+retained execution/event/cancel bindings and durable late-target closure.
+Actual native capability/public KVM acceptance remains required;
 MemorySnapshot stays unadvertised. Rootfs/volume snapshots, templates and the
 complete M4-M6 requirements below are unchanged.
 

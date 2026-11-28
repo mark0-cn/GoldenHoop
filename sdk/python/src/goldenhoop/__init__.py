@@ -4,7 +4,7 @@ from ._protocol import (
     ProtocolError, RunOutput, TransportError, UncertainRequest, WaitTimeout,
     SessionSpec, SessionControl, SessionControlError,
     CodeContextSpec, CodeRunSpec, CodeRunOutput, CodeObservationError,
-    CreateIsolatedSession, CreateSnapshot,
+    CreateIsolatedSession, CreateSnapshot, RestoreSnapshot,
 )
 from .client import Client, SandboxLease
 from .async_client import AsyncClient, AsyncSandboxLease
@@ -15,5 +15,5 @@ __all__ = [
     "TransportError", "ObservationError", "UncertainRequest", "WaitTimeout", "CleanupError",
     "SessionSpec", "SessionControl", "SessionControlError",
     "CodeContextSpec", "CodeRunSpec", "CodeRunOutput", "CodeObservationError",
-    "CreateIsolatedSession", "CreateSnapshot",
+    "CreateIsolatedSession", "CreateSnapshot", "RestoreSnapshot",
 ]

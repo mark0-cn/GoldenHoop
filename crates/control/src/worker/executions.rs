@@ -1,15 +1,28 @@
 use super::*;
-use goldenhoop_store::StoredExecution;
+use goldenhoop_store::{RestoredExecutionBinding, StoredExecution};
 
-fn normalize(mut record: Execution, stored: &StoredExecution) -> Result<Execution, ApiError> {
-    if record.id != stored.execution.id
-        || (record.sandbox_id != Uuid::nil() && record.sandbox_id != stored.execution.sandbox_id)
+pub(super) fn normalize(
+    mut record: Execution,
+    stored: &StoredExecution,
+    binding: Option<&RestoredExecutionBinding>,
+) -> Result<Execution, ApiError> {
+    let agent_id = binding.map_or(stored.execution.id, |b| b.agent_id);
+    let agent_sandbox = binding.map_or(stored.execution.sandbox_id, |b| b.agent_sandbox_id);
+    if record.id != agent_id
+        || (record.sandbox_id != Uuid::nil() && record.sandbox_id != agent_sandbox)
+        || binding.is_some_and(|b| {
+            b.target_id != stored.execution.sandbox_id
+                || record.started_at != stored.execution.started_at
+                || record.started_at.is_none()
+                || record.state == ExecutionState::Pending
+        })
     {
         return Err(ApiError::new(
             ErrorCode::Conflict,
             "agent returned a different execution identity",
         ));
     }
+    record.id = stored.execution.id;
     record.sandbox_id = stored.execution.sandbox_id;
     record.created_at = stored.execution.created_at;
     Ok(record)
@@ -29,6 +42,18 @@ impl Worker {
         stored: StoredExecution,
     ) -> Result<bool, ApiError> {
         let id = stored.execution.id;
+        let binding = self.store.restored_execution_binding(id).await?;
+        if binding
+            .as_ref()
+            .is_some_and(|b| b.target_id != handle.sandbox_id)
+        {
+            return Err(ApiError::new(
+                ErrorCode::Conflict,
+                "retained execution belongs to a different target generation",
+            ));
+        }
+        let agent_id = binding.as_ref().map_or(id, |b| b.agent_id);
+        let offset = binding.as_ref().map_or(0, |b| b.event_offset);
         let session = self.store.session_spec(id).await?;
         if stored.cancel_requested {
             self.cancellations
@@ -38,12 +63,22 @@ impl Worker {
                 .or_insert_with(Instant::now);
         }
         let mut actual = match self
-            .rpc(driver, handle, &AgentRequest::Inspect { id })
+            .rpc(driver, handle, &AgentRequest::Inspect { id: agent_id })
             .await
         {
-            Ok(AgentResponse::Execution(record)) => normalize(record, &stored)?,
+            Ok(AgentResponse::Execution(record)) => normalize(record, &stored, binding.as_ref())?,
             Ok(_) => return Err(unexpected()),
             Err(error) if error.code == ErrorCode::NotFound => {
+                if binding.is_some() {
+                    self.stop(
+                        self.store.sandbox(handle.sandbox_id).await?,
+                        driver,
+                        "retained snapshot execution is absent; refusing to replay Start",
+                        ExecutionState::Failed,
+                    )
+                    .await?;
+                    return Ok(false);
+                }
                 if session.is_some() && stored.execution.started_at.is_some() {
                     self.stop(
                         self.store.sandbox(handle.sandbox_id).await?,
@@ -104,7 +139,9 @@ impl Worker {
                     }
                 };
                 match self.rpc(driver, handle, &start).await {
-                    Ok(AgentResponse::Execution(record)) => normalize(record, &stored)?,
+                    Ok(AgentResponse::Execution(record)) => {
+                        normalize(record, &stored, binding.as_ref())?
+                    }
                     Ok(_) => return Err(unexpected()),
                     Err(error)
                         if matches!(
@@ -140,8 +177,13 @@ impl Worker {
             }
         };
         if stored.cancel_requested && !actual.state.is_terminal() {
-            match self.rpc(driver, handle, &AgentRequest::Cancel { id }).await {
-                Ok(AgentResponse::Execution(record)) => actual = normalize(record, &stored)?,
+            match self
+                .rpc(driver, handle, &AgentRequest::Cancel { id: agent_id })
+                .await
+            {
+                Ok(AgentResponse::Execution(record)) => {
+                    actual = normalize(record, &stored, binding.as_ref())?
+                }
                 Ok(_) => return Err(unexpected()),
                 Err(error) => {
                     return self.execution_unknown(handle, driver, stored, &error).await;
@@ -164,8 +206,17 @@ impl Worker {
                 driver,
                 handle,
                 &AgentRequest::Events {
-                    id,
-                    after: stored.cursor,
+                    id: agent_id,
+                    after: stored
+                        .cursor
+                        .checked_add(offset)
+                        .filter(|n| *n <= i64::MAX as u64)
+                        .ok_or_else(|| {
+                            ApiError::new(
+                                ErrorCode::Conflict,
+                                "retained execution event cursor overflows",
+                            )
+                        })?,
                 },
             )
             .await?
@@ -175,10 +226,19 @@ impl Worker {
         let mut completion = None;
         let mut escalate = false;
         for event in &mut events {
+            if event.execution_id != agent_id || event.sequence <= offset {
+                return Err(ApiError::new(
+                    ErrorCode::Conflict,
+                    "retained execution event identity or cursor differs",
+                ));
+            }
+            event.execution_id = id;
+            event.sequence -= offset;
             if event.kind == EventKind::Completed {
                 let reported = normalize(
                     serde_json::from_value(event.data.clone()).map_err(|_| unexpected())?,
                     &stored,
+                    binding.as_ref(),
                 )?;
                 if !reported.state.is_terminal() || reported.cleanup != CleanupState::Complete {
                     event.kind = EventKind::Diagnostic;

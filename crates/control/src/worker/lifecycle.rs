@@ -45,6 +45,13 @@ impl Worker {
                     "worker has no matching runtime driver",
                 )
             })?;
+        if let Some(restoration) = self.store.restoration(id).await?
+            && !restoration.active
+        {
+            return self
+                .reconcile_restoration(stored, restoration, driver.as_ref())
+                .await;
+        }
         // Only explicitly staged complete allocations enter live control.
         // Partial/legacy journals cannot fall through to none-network creation.
         match self.store.network_allocation(id).await {
@@ -314,6 +321,7 @@ impl Worker {
         let expired = expired(&stored.sandbox, Utc::now());
         let failed = stored.sandbox.state == SandboxState::Failed
             || execution_state == ExecutionState::Failed;
+        self.collect_restoration(id, driver).await?;
         self.stop_network_task(id).await?;
         stored.handle = self.recovered_handle(&stored, driver).await?;
         self.settle_create_dispatches(&stored, driver).await?;
@@ -407,7 +415,7 @@ impl Worker {
                 .remove(&context.context.id);
         }
         let error = Some(ApiError::new(ErrorCode::InvalidState, reason));
-        for kind in ["create", "pause", "resume"] {
+        for kind in ["create", "snapshot_restore", "pause", "resume"] {
             self.store
                 .finish_operations(id, kind, OperationState::Failed, error.clone())
                 .await?;

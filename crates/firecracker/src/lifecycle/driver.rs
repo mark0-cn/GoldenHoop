@@ -13,6 +13,7 @@ use tokio::{
     sync::{Mutex, RwLock},
 };
 mod checkpoints;
+mod restore_closure;
 mod restores;
 
 struct Inner {
@@ -175,6 +176,7 @@ impl NativeEngine {
         let lock = self.vm_lock(sandbox.id).await;
         let _guard = lock.lock().await;
         let result = async {
+            self.require_restore_target_open(sandbox.id)?;
             let restore = match restore_request {
                 Some(request) => Some(self.restore_binding(request).await?),
                 None => None,

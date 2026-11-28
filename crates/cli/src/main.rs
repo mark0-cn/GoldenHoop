@@ -123,6 +123,19 @@ enum KeyCommand {
 
 #[derive(Subcommand)]
 enum SnapshotCommand {
+    Restore {
+        id: Uuid,
+        /// JSON RestoreSnapshot with an explicit target sandbox request.
+        #[arg(long)]
+        request: PathBuf,
+        #[arg(long)]
+        idempotency_key: Option<String>,
+        #[arg(long)]
+        no_wait: bool,
+    },
+    Restoration {
+        sandbox: Uuid,
+    },
     Create {
         sandbox: Uuid,
         #[arg(long,value_parser=snapshot_kind)]
@@ -556,6 +569,45 @@ async fn run(args: Args) -> CliResult<u8> {
     match args.command {
         Command::Profiles => print_json(&client.profiles().await?)?,
         Command::Snapshots { command } => match command {
+            SnapshotCommand::Restore {
+                id,
+                request,
+                idempotency_key,
+                no_wait,
+            } => {
+                let mut data = Vec::new();
+                std::fs::File::open(request)?
+                    .take(64 * 1024 + 1)
+                    .read_to_end(&mut data)?;
+                if data.len() > 64 * 1024 {
+                    return Err("restoration request exceeds size limit".into());
+                }
+                let request: RestoreSnapshot = serde_json::from_slice(&data)?;
+                let key = key(idempotency_key);
+                eprintln!("idempotency_key={key}");
+                let restored = client.restore_snapshot(id, &request, &key).await?;
+                eprintln!(
+                    "snapshot_id={id} sandbox_id={} operation_id={}",
+                    restored.sandbox.id, restored.operation.id
+                );
+                if no_wait {
+                    print_json(&restored)?;
+                } else {
+                    client
+                        .wait_operation(restored.operation.id, Duration::from_secs(60))
+                        .await?;
+                    let current = client.snapshot_restoration(restored.sandbox.id).await?;
+                    if current.sandbox.state != SandboxState::Running {
+                        return Err(
+                            Error::Protocol("restoration has no observed running target").into(),
+                        );
+                    }
+                    print_json(&current)?;
+                }
+            }
+            SnapshotCommand::Restoration { sandbox } => {
+                print_json(&client.snapshot_restoration(sandbox).await?)?
+            }
             SnapshotCommand::Create {
                 sandbox,
                 kind,

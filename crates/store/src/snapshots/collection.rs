@@ -90,6 +90,7 @@ impl Store {
             return self.operation(previous).await;
         }
         let mut stored = load(&mut tx, id).await?;
+        super::super::restorations::require_unreferenced(&mut tx, id).await?;
         if stored.collect_operation.is_some() {
             let previous = collect_operation(&mut tx, &stored).await?;
             sqlx::query("UPDATE idempotency SET resource_id=? WHERE scope=? AND client_key=?")

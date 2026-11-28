@@ -35,6 +35,131 @@ fn operation(op: Uuid, id: Uuid, state: &str) -> Value {
     json!({"id":op,"resource_id":id,"state":state,"created_at":"2026-01-01T00:00:00Z","finished_at":null,"error":null})
 }
 
+fn restoration(snapshot: Uuid, target: Uuid, op: Uuid, old: Uuid, new: Uuid) -> Value {
+    json!({"snapshot_id":snapshot,"sandbox":{"id":target,"profile":"fixture","image":"fixture-image","state":"pending","desired_state":"running","cleanup":"pending","created_at":"2026-01-01T00:00:00Z","expires_at":"2026-01-01T00:30:00Z","observed_at":null,"resources":{"cpu_millis":1000,"memory_bytes":1073741824_u64,"pids":256},"metadata":{},"reason":null},"operation":operation(op,target,"pending"),"executions":[{"source_execution_id":old,"execution":{"id":new,"sandbox_id":target,"state":"unknown","exit_code":null,"created_at":"2026-01-01T00:00:00Z","started_at":"2025-12-31T23:59:00Z","finished_at":null,"output_truncated":false,"cleanup":"pending","reason":null}}]})
+}
+
+#[tokio::test]
+async fn restoration_retry_keeps_the_same_target_and_explicit_retained_execution_binding() {
+    let (snapshot, target, op, old, new) = (
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+    );
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let recorded = seen.clone();
+    let count = calls.clone();
+    let router = Router::new()
+        .route(
+            &format!("/v1/snapshots/{snapshot}/restore"),
+            post(move |headers: HeaderMap, Json(request): Json<Value>| {
+                let seen = recorded.clone();
+                let calls = count.clone();
+                async move {
+                    seen.lock()
+                        .unwrap()
+                        .push(headers["idempotency-key"].to_str().unwrap().to_owned());
+                    assert_eq!(request["target"]["image"], "fixture-image");
+                    if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                        return (
+                            StatusCode::SERVICE_UNAVAILABLE,
+                            Json(json!(ApiError::new(
+                                ErrorCode::BackendUnavailable,
+                                "synthetic restore reply loss"
+                            ))),
+                        );
+                    }
+                    (
+                        StatusCode::ACCEPTED,
+                        Json(restoration(snapshot, target, op, old, new)),
+                    )
+                }
+            }),
+        )
+        .route(
+            &format!("/v1/sandboxes/{target}/restoration"),
+            get(move || async move { Json(restoration(snapshot, target, op, old, new)) }),
+        );
+    let (client, _server) = server(router).await;
+    let intent = RestoreSnapshot {
+        target: CreateSandbox::new("fixture", "fixture-image"),
+    };
+    assert!(matches!(
+        client.restore_snapshot(snapshot, &intent, "stable").await,
+        Err(Error::Api(_))
+    ));
+    let restored = client
+        .restore_snapshot(snapshot, &intent, "stable")
+        .await
+        .unwrap();
+    assert_eq!(restored.sandbox.id, target);
+    assert_eq!(restored.executions[0].source_execution_id, old);
+    assert_eq!(restored.executions[0].execution.id, new);
+    assert_eq!(
+        client
+            .snapshot_restoration(target)
+            .await
+            .unwrap()
+            .operation
+            .id,
+        op
+    );
+    assert_eq!(*seen.lock().unwrap(), vec!["stable", "stable"]);
+}
+
+#[tokio::test]
+async fn foreign_restoration_targets_and_execution_aliases_are_protocol_errors() {
+    let (snapshot, target, op, old, new) = (
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+    );
+    let mode = Arc::new(AtomicUsize::new(0));
+    let selected = mode.clone();
+    let router = Router::new().route(
+        &format!("/v1/snapshots/{snapshot}/restore"),
+        post(move || {
+            let mode = selected.clone();
+            async move {
+                let mut value = restoration(snapshot, target, op, old, new);
+                match mode.load(Ordering::SeqCst) {
+                    0 => value["snapshot_id"] = json!(Uuid::new_v4()),
+                    1 => value["operation"]["resource_id"] = json!(Uuid::new_v4()),
+                    2 => value["executions"][0]["execution"]["sandbox_id"] = json!(Uuid::new_v4()),
+                    3 => value["executions"][0]["execution"]["id"] = json!(old),
+                    4 => value["executions"][0]["source_execution_id"] = json!(Uuid::nil()),
+                    5 => value["sandbox"]["profile"] = json!("foreign"),
+                    6 => {
+                        let duplicate = value["executions"][0].clone();
+                        value["executions"].as_array_mut().unwrap().push(duplicate);
+                    }
+                    _ => unreachable!(),
+                }
+                Json(value)
+            }
+        }),
+    );
+    let (client, _server) = server(router).await;
+    let intent = RestoreSnapshot {
+        target: CreateSandbox::new("fixture", "fixture-image"),
+    };
+    for variant in 0..7 {
+        mode.store(variant, Ordering::SeqCst);
+        assert!(
+            matches!(
+                client.restore_snapshot(snapshot, &intent, "key").await,
+                Err(Error::Protocol(_))
+            ),
+            "variant {variant}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn explicit_capture_retry_and_deletion_preserve_keys_and_never_delete_source() {
     let (id, source, op, delete) = (

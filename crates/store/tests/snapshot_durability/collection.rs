@@ -1,7 +1,7 @@
 //! Real SQLite state transitions; physical runtime observations are synthetic.
 use super::*;
 
-async fn explicit_source_collection(store: &Store, id: Uuid) {
+pub(super) async fn explicit_source_collection(store: &Store, id: Uuid) {
     store
         .set_desired(id, DesiredState::Terminated, "explicit-source-collection")
         .await
@@ -129,7 +129,7 @@ async fn actual_v19_migration_and_collection_reopen_retain_ready_reference_until
     )
     .await
     .unwrap();
-    sqlx::raw_sql("ALTER TABLE snapshots DROP COLUMN collect_operation; UPDATE meta SET value='19' WHERE key='schema_version';").execute(&mut connection).await.unwrap();
+    sqlx::raw_sql("DROP TABLE restored_execution_bindings;DROP TABLE snapshot_restorations;ALTER TABLE snapshots DROP COLUMN collect_operation; UPDATE meta SET value='19' WHERE key='schema_version';").execute(&mut connection).await.unwrap();
     connection.close().await.unwrap();
     let store = Store::open(&path).await.unwrap();
     assert_eq!(store.installation_id(), installation);

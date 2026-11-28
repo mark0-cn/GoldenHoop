@@ -138,7 +138,7 @@ fn deadline(call: &DriverCall) -> Duration {
     Duration::from_secs(match call {
         DriverCall::Probe => 240,
         DriverCall::Create { .. } | DriverCall::CheckpointRestore { .. } => 150,
-        DriverCall::Remove { .. } => 45,
+        DriverCall::Remove { .. } | DriverCall::CheckpointRestoreCollect { .. } => 45,
         DriverCall::Reap => 240,
         _ => 20,
     })
@@ -269,6 +269,15 @@ impl FirecrackerDriver {
     pub fn prepared_image_policy(&self) -> Option<&PreparedImagePolicy> {
         self.cfg.prepared_images.as_ref()
     }
+    pub async fn checkpoint_restore_collect(
+        &self,
+        restore: &ManagedRestoreRequest,
+    ) -> std::result::Result<(), ApiError> {
+        self.call(DriverCall::CheckpointRestoreCollect {
+            restore: Box::new(restore.clone()),
+        })
+        .await
+    }
     pub async fn create_prepared(
         &self,
         sandbox: &Sandbox,
@@ -391,6 +400,29 @@ impl FirecrackerDriver {
 
 #[async_trait]
 impl RuntimeDriver for FirecrackerDriver {
+    fn supports_memory_restore(&self) -> bool {
+        self.cfg.checkpoints.is_some()
+    }
+    fn validate_memory_restore(
+        &self,
+        request: &MemoryRestoreRequest,
+    ) -> std::result::Result<(), ApiError> {
+        super::snapshots::restore_request(&self.cfg, request).map(|_| ())
+    }
+    async fn restore_memory(
+        &self,
+        request: &MemoryRestoreRequest,
+    ) -> std::result::Result<RuntimeHandle, ApiError> {
+        self.checkpoint_restore(&super::snapshots::restore_request(&self.cfg, request)?)
+            .await
+    }
+    async fn collect_memory_restore(
+        &self,
+        request: &MemoryRestoreRequest,
+    ) -> std::result::Result<(), ApiError> {
+        self.checkpoint_restore_collect(&super::snapshots::restore_request(&self.cfg, request)?)
+            .await
+    }
     fn supports_memory_capture(&self) -> bool {
         self.cfg.checkpoints.is_some()
     }
@@ -571,6 +603,10 @@ async fn dispatch(
         }
         DriverCall::CheckpointRestore { restore } => {
             serde_json::to_value(engine.checkpoint_restore(&restore).await?)
+        }
+        DriverCall::CheckpointRestoreCollect { restore } => {
+            engine.checkpoint_restore_collect(&restore).await?;
+            Ok(serde_json::Value::Null)
         }
     };
     data.map_err(|_| ApiError::new(ErrorCode::Internal, "cannot encode native manager result"))

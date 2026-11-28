@@ -68,6 +68,85 @@ fn ready(manifest: &CheckpointManifest) -> serde_json::Value {
     serde_json::json!({"capture":manifest.source.capture,"phase":"ready","capture_outcome":"ready","reserved_bytes":512*MIB,"manifest":manifest,"reference":manifest.reference().unwrap(),"content_verified":true,"error":null,"restoration":{"private_path":"/operator/private-restoration"}})
 }
 
+fn restoration_fixture() -> (DriverConfig, goldenhoop_runtime::MemoryRestoreRequest) {
+    let (cfg, source, manifest) = fixture();
+    let observation = project(&cfg, &source, ready(&manifest)).unwrap();
+    let MemoryCaptureState::Ready {
+        manifest,
+        reference,
+    } = observation.state
+    else {
+        panic!("fixture is not Ready")
+    };
+    let mut target = source.source.clone();
+    target.id = Uuid::new_v4();
+    target.state = SandboxState::Pending;
+    target.observed_at = None;
+    let mut request = CreateSandbox::new(PROFILE, cfg.image.clone());
+    request.resources = target.resources.clone();
+    request.ttl_seconds = 300;
+    (
+        cfg,
+        goldenhoop_runtime::MemoryRestoreRequest {
+            snapshot_id: source.id,
+            restoration: Uuid::new_v4(),
+            source: source.handle,
+            target,
+            request,
+            manifest: *manifest,
+            reference,
+        },
+    )
+}
+
+#[test]
+fn restore_preflight_binds_private_reference_source_and_new_target_without_backend_effects() {
+    let (cfg, original) = restoration_fixture();
+    let admitted = restore_request(&cfg, &original).unwrap();
+    assert_eq!(admitted.sandbox.id, original.target.id);
+    assert_eq!(admitted.reference.capture, original.snapshot_id);
+    for variant in 0..8 {
+        let mut r = original.clone();
+        match variant {
+            0 => r.target.id = r.source.sandbox_id,
+            1 => r.reference["installation"] = serde_json::json!(Uuid::new_v4()),
+            2 => r.reference["capture"] = serde_json::json!(Uuid::new_v4()),
+            3 => r.reference["manifest_sha256"] = serde_json::json!("invalid"),
+            4 => r.manifest.source_sandbox_id = Uuid::new_v4(),
+            5 => r.source.backend_ref.push_str("-foreign"),
+            6 => r.request.resources.cpu_millis += 1,
+            7 => r.manifest.kind = SnapshotKind::Rootfs,
+            _ => unreachable!(),
+        }
+        assert!(restore_request(&cfg, &r).is_err(), "variant {variant}");
+    }
+}
+
+#[test]
+fn restore_preflight_refuses_unconfigured_prepared_or_widened_feature_inputs() {
+    let (mut cfg, r) = restoration_fixture();
+    cfg.checkpoints = None;
+    assert_eq!(
+        restore_request(&cfg, &r).unwrap_err().code,
+        ErrorCode::UnsupportedCapability
+    );
+    let (cfg, r) = restoration_fixture();
+    let mut changed = r.clone();
+    changed.target.image = "prepared:foreign".into();
+    changed.request.image = changed.target.image.clone();
+    changed.manifest.image_digest = changed.target.image.clone();
+    assert_eq!(
+        restore_request(&cfg, &changed).unwrap_err().code,
+        ErrorCode::UnsupportedCapability
+    );
+    let mut changed = r;
+    changed.request.feature_limit = Some(Default::default());
+    assert_eq!(
+        restore_request(&cfg, &changed).unwrap_err().code,
+        ErrorCode::UnsupportedCapability
+    );
+}
+
 #[test]
 fn verified_ready_projection_binds_full_manifest_and_omits_private_native_data() {
     let (cfg, request, manifest) = fixture();

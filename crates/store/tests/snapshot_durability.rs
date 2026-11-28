@@ -8,6 +8,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use uuid::Uuid;
 #[path = "snapshot_durability/collection.rs"]
 mod collection;
+#[path = "snapshot_durability/restoration.rs"]
+mod restoration;
 
 fn profile() -> RuntimeProfile {
     RuntimeProfile {
@@ -504,7 +506,7 @@ async fn actual_v17_database_migration_preserves_installation_and_existing_sourc
     )
     .await
     .unwrap();
-    sqlx::raw_sql("DROP TABLE snapshot_execution_candidates; DROP TABLE snapshots; UPDATE meta SET value='17' WHERE key='schema_version';")
+    sqlx::raw_sql("DROP TABLE restored_execution_bindings;DROP TABLE snapshot_restorations;DROP TABLE snapshot_execution_candidates; DROP TABLE snapshots; UPDATE meta SET value='17' WHERE key='schema_version';")
         .execute(&mut connection)
         .await
         .unwrap();
@@ -576,7 +578,7 @@ async fn v18_migration_and_durable_refusal_release_only_original_dispatch_withou
     )
     .await
     .unwrap();
-    sqlx::raw_sql("ALTER TABLE snapshots DROP COLUMN collect_operation; ALTER TABLE snapshots DROP COLUMN capture_refusal; UPDATE meta SET value='18' WHERE key='schema_version';").execute(&mut connection).await.unwrap();
+    sqlx::raw_sql("DROP TABLE restored_execution_bindings;DROP TABLE snapshot_restorations;ALTER TABLE snapshots DROP COLUMN collect_operation; ALTER TABLE snapshots DROP COLUMN capture_refusal; UPDATE meta SET value='18' WHERE key='schema_version';").execute(&mut connection).await.unwrap();
     connection.close().await.unwrap();
     let store = Store::open(&path).await.unwrap();
     assert_eq!(store.installation_id(), installation);
@@ -688,7 +690,7 @@ async fn v18_migration_and_durable_refusal_release_only_original_dispatch_withou
         .fetch_one(&mut connection)
         .await
         .unwrap();
-    assert_eq!(version, "20");
+    assert_eq!(version, "21");
     connection.close().await.unwrap();
     directory.close().unwrap();
     assert!(!path.exists());

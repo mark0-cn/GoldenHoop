@@ -1,6 +1,69 @@
 //! Public resources retain source authorization; private backend data stays host-side.
 use super::*;
 
+pub(super) async fn restore(
+    State(app): State<AppState>,
+    ApiPath(id): ApiPath<Uuid>,
+    headers: HeaderMap,
+    ApiJson(request): ApiJson<RestoreSnapshot>,
+) -> Result<(StatusCode, Json<SnapshotRestored>), HttpError> {
+    let key = idempotency_key(&headers)?;
+    if let Some(previous) = app.store.prior_restoration(id, &request, key).await? {
+        return Ok((StatusCode::ACCEPTED, Json(previous)));
+    }
+    let profile = profile(
+        &app,
+        &request.target.profile,
+        Some(Capability::MemorySnapshot),
+    )
+    .await?;
+    if profile.availability != Availability::Available {
+        return Err(ApiError::new(
+            ErrorCode::BackendUnavailable,
+            "restoration profile is unavailable",
+        )
+        .into());
+    }
+    let reply: SnapshotRestored = worker_call(
+        &app,
+        "internal/restorations",
+        &crate::InternalRestoreCall {
+            snapshot_id: id,
+            request: request.clone(),
+            idempotency_key: key.into(),
+        },
+    )
+    .await?;
+    let stored = app
+        .store
+        .prior_restoration(id, &request, key)
+        .await?
+        .ok_or_else(|| {
+            ApiError::new(
+                ErrorCode::BackendUnavailable,
+                "private restoration admission has no durable binding",
+            )
+        })?;
+    if reply.snapshot_id != id
+        || reply.sandbox.id != stored.sandbox.id
+        || reply.operation.id != stored.operation.id
+        || reply.operation.resource_id != stored.sandbox.id
+    {
+        return Err(ApiError::new(
+            ErrorCode::BackendUnavailable,
+            "private restoration reply differs from its durable target",
+        )
+        .into());
+    }
+    Ok((StatusCode::ACCEPTED, Json(stored)))
+}
+pub(super) async fn restoration(
+    State(app): State<AppState>,
+    ApiPath(id): ApiPath<Uuid>,
+) -> Result<Json<SnapshotRestored>, HttpError> {
+    Ok(Json(app.store.restored(id).await?))
+}
+
 pub(super) async fn create(
     State(app): State<AppState>,
     ApiPath(id): ApiPath<Uuid>,

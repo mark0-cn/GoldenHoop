@@ -1,10 +1,14 @@
 # Public snapshots and durable deletion
 
+The [restoration interface](public-snapshot-restoration.md) adds a new target,
+retained execution bindings and target-held content references. Snapshot deletion
+also requires positive collection of that restoration target.
+
 The gateway, Rust/Python clients and CLI expose snapshot admission, stored reads,
 pagination and deletion intent. Memory capture still requires a currently
 advertised and available MemorySnapshot capability. Native registration keeps
-that capability off until public restore/execution bindings and actual profile
-acceptance are complete. Rootfs/volume capture, restoration, templates, combined
+that capability off until actual public restoration and profile acceptance are
+complete. Rootfs/volume capture, templates, combined
 M4 and complete M5-M6 remain required in [roadmap.md](roadmap.md).
 
 ## Routes and source authorization
@@ -15,7 +19,9 @@ M4 and complete M5-M6 remain required in [roadmap.md](roadmap.md).
 | `GET /v1/snapshots/{id}` | Stored public Snapshot |
 | `GET /v1/snapshots?sandbox_id={source}&after={cursor}&limit={n}` | SnapshotPage; limit1-1000, ascending UUID cursor |
 | `DELETE /v1/snapshots/{id}` | `202 Operation`; durable collection intent |
-| `GET /v1/operations/{id}` | Original capture or collection operation |
+| `POST /v1/snapshots/{id}/restore` | `202 SnapshotRestored`; explicit key and all-resource Write grant |
+| `GET /v1/sandboxes/{target}/restoration` | Stored new-target bindings; target Read grant |
+| `GET /v1/operations/{id}` | Capture/collection use source grants; restoration uses its new target grant |
 
 Snapshot resources and both operation kinds inherit the original source sandbox's
 grant. Read keys cannot mutate. A sandbox-scoped key must provide exactly one

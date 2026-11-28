@@ -191,7 +191,9 @@ async fn authorize(
     if !key.permissions.contains(&required) {
         return Err(denied());
     }
-    if pattern.ends_with("/isolated-sessions") && !matches!(key.resources, KeyResources::All) {
+    if (pattern.ends_with("/isolated-sessions") || pattern == "/v1/snapshots/{id}/restore")
+        && !matches!(key.resources, KeyResources::All)
+    {
         return Err(denied());
     }
     if pattern == "/healthz" || pattern == "/v1/profiles" {

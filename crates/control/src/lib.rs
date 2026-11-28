@@ -28,6 +28,14 @@ pub struct InternalSnapshotCall {
 
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct InternalRestoreCall {
+    pub snapshot_id: uuid::Uuid,
+    pub request: goldenhoop_protocol::RestoreSnapshot,
+    pub idempotency_key: String,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct InternalArtifactCall {
     pub artifact_id: uuid::Uuid,
 }

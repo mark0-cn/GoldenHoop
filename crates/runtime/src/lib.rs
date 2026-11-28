@@ -6,7 +6,9 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 mod snapshots;
-pub use snapshots::{MemoryCaptureObservation, MemoryCaptureRequest, MemoryCaptureState};
+pub use snapshots::{
+    MemoryCaptureObservation, MemoryCaptureRequest, MemoryCaptureState, MemoryRestoreRequest,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeHandle {
@@ -36,6 +38,41 @@ pub struct RuntimeObservation {
 
 #[async_trait]
 pub trait RuntimeDriver: Send + Sync {
+    fn supports_memory_restore(&self) -> bool {
+        false
+    }
+    /// Pure validation; never reserves a VM or changes runtime state.
+    fn validate_memory_restore(&self, request: &MemoryRestoreRequest) -> Result<(), ApiError> {
+        request.validate_identity()?;
+        if !self.supports_memory_restore() {
+            return Err(ApiError::new(
+                ErrorCode::UnsupportedCapability,
+                "memory restoration is not implemented by this driver",
+            ));
+        }
+        Ok(())
+    }
+    /// Idempotent only for this immutable target. An old target must not relaunch.
+    async fn restore_memory(
+        &self,
+        _request: &MemoryRestoreRequest,
+    ) -> Result<RuntimeHandle, ApiError> {
+        Err(ApiError::new(
+            ErrorCode::UnsupportedCapability,
+            "memory restoration is not implemented by this driver",
+        ))
+    }
+    /// Return only after positive collection AND durable rejection of any late
+    /// restore request for this target, including the pre-reservation window.
+    async fn collect_memory_restore(
+        &self,
+        _request: &MemoryRestoreRequest,
+    ) -> Result<(), ApiError> {
+        Err(ApiError::new(
+            ErrorCode::UnsupportedCapability,
+            "memory restoration collection is not implemented by this driver",
+        ))
+    }
     /// Compiled/configured private support only. This never advertises a public
     /// MemorySnapshot capability; profile probing and public acceptance do that.
     fn supports_memory_capture(&self) -> bool {

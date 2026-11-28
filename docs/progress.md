@@ -1,5 +1,50 @@
 # Progress
 
+The [public restoration bridge](public-snapshot-restoration.md) connects REST,
+Rust/Python clients and CLI to one durable new target. SQLite v21 atomically
+records target, operation, immutable intent and new public execution IDs bound to
+retained agent executions. Inspect/events/cancel translate those IDs and compose
+event offsets across another continuation. Activation requires an observed Running
+target and every retained execution; an absent retained job never enters Start.
+Restoration creation/retry requires an all-resource Write grant. New target reads,
+operations and executions keep their own exact sandbox grant; a source grant does
+not expand. The terminated source is not an ancestor of the target's new lifetime.
+
+Target collection holds snapshot references until positive native closure. The
+native manager serializes closure with target creation and retains a permanent
+receipt even before a VM journal exists, fencing late restore and ordinary boot.
+Unknown/lost closure replies preserve references and the original failure decision.
+The exact target and operation survive worker/database reconnects and old-key
+retries before profile/worker availability; another key cannot allocate a target.
+
+Final exact-grant focused Windows36/GNU-root44 and Python36 pass on identical391
+inputs. Full Windows325/GNU-root449 workspace checks also pass, with formatting,
+strict all-target clippy, Python36 and the GNU images-service release build. The
+review preserves M3's exact-resource policy and requires source-scoped creation
+and new-target reads to be refused. Checks include actual SQLite v20
+migration/reopen, cursor composition, public grants, loopback transport and CLI.
+GNU-root also exercises actual native closure files and native-manager reconnect
+without KVM; VM/agent observations remain synthetic. The fixture's failure-path
+pool-close wrapper is included in the final source. The
+[source/index audit](evidence/m4-snapshot-restore-source-index-audit.json) binds391
+Rust/manifest/Docker/Python inputs. The [development diagnosis](evidence/m4-snapshot-restore-development-diagnosis.json)
+retains initial test-premise failures, their corrections, the collected check image
+and one failed-test directory whose cleanup command was rejected by automatic
+approval review. That directory remains retained; collection is not Complete.
+The [upstream review](evidence/m4-snapshot-restore-upstream-review.json) compares
+OpenSandbox's persisted Ready/backend/limit resolution with native continuation.
+Scoped musl21, strict firecracker/init all-target clippy and four static component
+release builds also pass on those391 inputs. All five owned check tags and their
+owned containers are positively absent. The [implementation summary](evidence/m4-snapshot-restore-implementation-summary.json)
+binds final source maps, passing checks, superseded draft evidence and exact image
+collection receipts. Overall temporary collection remains incomplete for the
+automatically blocked failed-test fixture directory.
+
+MemorySnapshot remains unadvertised. Model schema registration and transient
+native validation-slot pressure handling remain part of public contract
+acceptance, together with actual public KVM/capability gates. Rootfs/volume
+snapshots, templates, combined M4 and complete M5-M6 remain required.
+
 The [public snapshot interface](public-snapshot-api.md) connects gateway capture,
 stored reads, source-filtered cursor pages and durable deletion with Rust/Python
 clients and CLI commands. All snapshot resources and capture/collection operations

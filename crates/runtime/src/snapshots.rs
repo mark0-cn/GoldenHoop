@@ -1,7 +1,7 @@
 //! Private worker/backend observations. These types are not public API payloads.
 use crate::RuntimeHandle;
 use chrono::{DateTime, Utc};
-use goldenhoop_protocol::{ApiError, ErrorCode, Sandbox, SnapshotManifest};
+use goldenhoop_protocol::{ApiError, CreateSandbox, ErrorCode, Sandbox, SnapshotManifest};
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
@@ -52,4 +52,49 @@ pub enum MemoryCaptureState {
     },
     /// Positive backend object/quota collection, bound to the original source.
     Collected,
+}
+
+/// Immutable private intent. Repeated calls must retain this exact target and
+/// restoration identity, including after transport loss and completed collection.
+#[derive(Debug, Clone)]
+pub struct MemoryRestoreRequest {
+    pub snapshot_id: Uuid,
+    pub restoration: Uuid,
+    pub source: RuntimeHandle,
+    pub target: Sandbox,
+    pub request: CreateSandbox,
+    pub manifest: SnapshotManifest,
+    pub reference: serde_json::Value,
+}
+impl MemoryRestoreRequest {
+    pub fn validate_identity(&self) -> Result<(), ApiError> {
+        if [
+            self.snapshot_id,
+            self.restoration,
+            self.source.sandbox_id,
+            self.target.id,
+        ]
+        .iter()
+        .any(Uuid::is_nil)
+            || self.source.sandbox_id == self.target.id
+            || self.source.profile != self.target.profile
+            || self.source.backend_ref.is_empty()
+            || self.target.profile != self.request.profile
+            || self.target.image != self.request.image
+            || self.target.resources != self.request.resources
+            || self.manifest.id != self.snapshot_id
+            || self.manifest.format_version != 1
+            || self.manifest.kind != goldenhoop_protocol::SnapshotKind::MemoryAndDisk
+            || self.manifest.source_sandbox_id != self.source.sandbox_id
+            || self.manifest.driver != self.source.profile
+            || self.manifest.image_digest != self.target.image
+            || !self.reference.is_object()
+        {
+            return Err(ApiError::new(
+                ErrorCode::Conflict,
+                "memory restoration differs from its immutable source or target",
+            ));
+        }
+        Ok(())
+    }
 }

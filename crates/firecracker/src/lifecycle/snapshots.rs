@@ -11,6 +11,57 @@ fn inconsistent() -> ApiError {
         "native capture observation differs from its original binding",
     )
 }
+pub(super) fn restore_request(
+    cfg: &DriverConfig,
+    request: &goldenhoop_runtime::MemoryRestoreRequest,
+) -> std::result::Result<ManagedRestoreRequest, ApiError> {
+    request.validate_identity()?;
+    let reference: CheckpointReference =
+        serde_json::from_value(request.reference.clone()).map_err(|_| inconsistent())?;
+    let parts: Vec<_> = request.source.backend_ref.split(':').collect();
+    let source_generation = parts
+        .get(2)
+        .and_then(|id| Uuid::parse_str(id).ok())
+        .ok_or_else(inconsistent)?;
+    if cfg.checkpoints.is_none()
+        || request.target.image != cfg.image
+        || request.request.child_budget.is_some()
+        || request.request.feature_limit.is_some()
+        || request.request.network != NetworkPolicy::default()
+    {
+        return Err(ApiError::new(
+            ErrorCode::UnsupportedCapability,
+            "native memory restoration requires the configured baseline and isolated source feature set",
+        ));
+    }
+    if source_generation.is_nil()
+        || request.target.profile != PROFILE
+        || reference.installation != cfg.installation_id
+        || reference.capture != request.snapshot_id
+        || reference.manifest_sha256.len() != 64
+        || !reference
+            .manifest_sha256
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        || request.source.backend_ref
+            != super::driver::native_handle(
+                cfg.installation_id,
+                request.source.sandbox_id,
+                source_generation,
+            )
+            .backend_ref
+        || request.request.ttl_seconds == 0
+        || request.request.ttl_seconds > cfg.max_ttl_seconds
+    {
+        return Err(inconsistent());
+    }
+    Ok(ManagedRestoreRequest {
+        sandbox: request.target.clone(),
+        request: request.request.clone(),
+        reference,
+        restoration: request.restoration,
+    })
+}
 pub(super) fn validate(
     cfg: &DriverConfig,
     request: &MemoryCaptureRequest,

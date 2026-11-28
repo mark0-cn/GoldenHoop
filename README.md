@@ -21,9 +21,10 @@ The opt-in [basic local Firecracker profile](docs/m4-delivery.md) passes actual 
 [Public snapshot interfaces](docs/public-snapshot-api.md) now include gateway
 capture admission, stored reads, pagination and durable deletion, with source
 authorization and Rust/Python/CLI methods. Native MemorySnapshot remains
-unadvertised pending public restore/execution bindings and actual profile/KVM
-acceptance. Snapshot deletion requires positive collection and preserves the
-original source's lifecycle authority.
+unadvertised pending actual public restoration/profile KVM acceptance. The
+[restoration bridge](docs/public-snapshot-restoration.md) implements one new target,
+retained execution/event/cancel bindings and native late-target closure. Snapshot
+deletion requires positive source and target collection.
 
 ## Development
 

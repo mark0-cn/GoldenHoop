@@ -1,0 +1,67 @@
+{
+  "recorded_at": "2026-11-28T02:04:42.797762+00:00",
+  "scope": "Public restoration development failures and exact collection limits; original evidence retained.",
+  "failures": [
+    {
+      "reports": [
+        "m4-snapshot-restore-targeted-windows-initial.json",
+        "m4-snapshot-restore-targeted-linux-initial.json"
+      ],
+      "observed": "Both strict compiles pass; snapshot database tests pass12/fail1. The new test attempted Pending-to-Running and received InvalidState before reaching its expected restoration binding Conflict.",
+      "correction": "Test now takes the valid Starting transition before asserting that unactivated Running publication is refused. The ownership assertion remains unchanged; no production transition or error policy was relaxed."
+    },
+    {
+      "report": "m4-snapshot-restore-development-python.json",
+      "observed": "36 SDK tests execute; one new sync test expected UncertainRequest after its first lost reply, but existing keyed transport retries up to three times before TransportError.",
+      "correction": "The synthetic transport now loses all three attempts; the test requires TransportError, then retries explicitly with the same key and validates the same target/bindings. No production retry behavior was changed."
+    }
+  ],
+  "same_revision_targeted_rechecks": {
+    "windows_report": "m4-snapshot-restore-targeted-windows-recheck.json",
+    "windows_rust_passed": 36,
+    "python_sdk_passed": 36,
+    "linux_report": "m4-snapshot-restore-targeted-linux-recheck.json",
+    "linux_passed": 44
+  },
+  "subsequent_test_hygiene_change": "The migration/reopen fixture now catches panic, closes all opened Store pools, then removes its directory before resuming the panic; the raw migration connection closes before asserting its result. Full validation is run on that later source map.",
+  "failed_image_collection": {
+    "tag": "goldenhoop-snapshot-restore-unit:20261128-initial",
+    "owner": "c2e1c07d8db047e781dc230af9857e7b",
+    "tag_absent": true,
+    "owned_containers_absent": true
+  },
+  "successful_unit_image_collection": "m4-snapshot-restore-unit-image-collection.json",
+  "retained_failed_test_directory": {
+    "directory_name": "gh-restore-db-VcJdRC",
+    "location": "Windows system temp",
+    "observed_contents": [
+      "state.db"
+    ],
+    "automatic_approval": "rejected the combined ownership-inspection and deletion command before process creation",
+    "reported_reason": "blocked by policy; no more specific reason was provided",
+    "ownership_database_inspection_executed": false,
+    "deletion_executed": false,
+    "retry_attempted": false,
+    "collection": "retained; not Complete"
+  },
+  "authorization_review": {
+    "reviewed_at": "2026-11-28T02:20:36.747579+00:00",
+    "authoritative_contract": "docs/m3-delivery.md lines15-18 and protocol KeyResources::permits: exact sandbox grants do not include descendants; independent creation requires an all-resource grant.",
+    "draft_problem": "The draft automatically extended source grants to new restoration targets. Passing draft tests did not prove preservation of the accepted M3 authorization contract.",
+    "correction": "Restoration POST, including exact retries, requires all-resource Write authority. Target resources/operations/executions keep exact new-target grants. Removed inherited-authority traversal and its arbitrary lineage limit; source provenance remains immutable snapshot metadata.",
+    "verification": {
+      "windows_report": "m4-snapshot-restore-targeted-windows-exact-grants.json",
+      "windows_rust_passed": 36,
+      "python_sdk_passed": 36,
+      "linux_report": "m4-snapshot-restore-targeted-linux-exact-grants.json",
+      "linux_passed": 44,
+      "full_validation": {
+        "windows": "m4-snapshot-restore-validation-windows-final.json",
+        "windows_rust_passed": 325,
+        "sdk_passed": 36,
+        "gnu": "m4-snapshot-restore-validation-linux-final.json",
+        "gnu_passed": 449
+      }
+    }
+  }
+}

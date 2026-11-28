@@ -22,7 +22,7 @@ from ._protocol import CreateIsolatedSession
 from ._isolated import check_scope, check_isolated_created
 from ._network import policy_state, policy_request, policy_change
 from . import _credentials, _snapshots
-from ._protocol import CreateSnapshot
+from ._protocol import CreateSnapshot, RestoreSnapshot
 
 
 class AsyncClient(AsyncCodeClientMixin):
@@ -83,6 +83,14 @@ class AsyncClient(AsyncCodeClientMixin):
     async def create_snapshot(self, sandbox_id: str, request: CreateSnapshot | Json, key: str) -> Json:
         sid, request = identity(sandbox_id), _snapshots.request(request)
         return _snapshots.created(await self._request("POST", f"v1/sandboxes/{sid}/snapshots", request, key=key), sid, request["kind"])
+
+    async def restore_snapshot(self, snapshot_id: str, request: RestoreSnapshot | Json, key: str) -> Json:
+        sid, request = identity(snapshot_id), _snapshots.restore_request(request)
+        return _snapshots.restored(await self._request("POST", f"v1/snapshots/{sid}/restore", request, key=key), snapshot_id=sid, request=request)
+
+    async def snapshot_restoration(self, sandbox_id: str) -> Json:
+        sid = identity(sandbox_id)
+        return _snapshots.restored(await self._request("GET", f"v1/sandboxes/{sid}/restoration"), target_id=sid)
 
     async def snapshot(self, snapshot_id: str) -> Json:
         sid = identity(snapshot_id)

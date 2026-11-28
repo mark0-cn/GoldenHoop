@@ -13,6 +13,7 @@ use driver::WorkerDriver;
 pub use network_bootstrap::{NetworkOptions, NetworkSetup};
 mod network_policy;
 mod networks;
+mod restorations;
 mod sessions;
 mod snapshots;
 
@@ -309,6 +310,10 @@ impl Worker {
             .route(
                 "/internal/snapshots",
                 post(snapshots::create).layer(DefaultBodyLimit::max(8192)),
+            )
+            .route(
+                "/internal/restorations",
+                post(restorations::create).layer(DefaultBodyLimit::max(64 * 1024)),
             )
             .route("/internal/diagnostics", post(diagnostics))
             .route("/internal/artifact-content", post(artifacts::content))

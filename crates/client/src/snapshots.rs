@@ -54,6 +54,43 @@ fn record(
     Ok(())
 }
 impl Client {
+    pub async fn restore_snapshot(
+        &self,
+        id: Uuid,
+        request: &RestoreSnapshot,
+        key: &str,
+    ) -> Result<SnapshotRestored> {
+        let value: SnapshotRestored = Self::json(
+            self.send(
+                Method::POST,
+                &format!("v1/snapshots/{id}/restore"),
+                Some(
+                    serde_json::to_value(request)
+                        .map_err(|_| Error::Protocol("invalid restoration request"))?,
+                ),
+                Some(key),
+            )
+            .await?,
+        )
+        .await?;
+        restoration(&value, Some(id), None)?;
+        if value.sandbox.profile != request.target.profile
+            || value.sandbox.image != request.target.image
+            || value.sandbox.resources != request.target.resources
+        {
+            return Err(Error::Protocol(
+                "restoration target differs from the requested image, profile or resources",
+            ));
+        }
+        Ok(value)
+    }
+    pub async fn snapshot_restoration(&self, target: Uuid) -> Result<SnapshotRestored> {
+        let value: SnapshotRestored = self
+            .get(&format!("v1/sandboxes/{target}/restoration"))
+            .await?;
+        restoration(&value, None, Some(target))?;
+        Ok(value)
+    }
     /// Keep this key after transport uncertainty; a retry must use the same key.
     pub async fn create_snapshot(
         &self,
@@ -142,4 +179,40 @@ impl Client {
         }
         Ok(value)
     }
+}
+
+fn restoration(
+    value: &SnapshotRestored,
+    snapshot: Option<Uuid>,
+    target: Option<Uuid>,
+) -> Result<()> {
+    if value.snapshot_id.is_nil()
+        || value.sandbox.id.is_nil()
+        || value.snapshot_id == value.sandbox.id
+        || snapshot.is_some_and(|id| id != value.snapshot_id)
+        || target.is_some_and(|id| id != value.sandbox.id)
+        || value.operation.id.is_nil()
+        || value.operation.resource_id != value.sandbox.id
+        || value.executions.len() > 256
+    {
+        return Err(Error::Protocol(
+            "restoration identity or target operation differs",
+        ));
+    }
+    let mut previous = None;
+    let mut ids = std::collections::BTreeSet::new();
+    for binding in &value.executions {
+        if binding.source_execution_id.is_nil()
+            || binding.execution.id.is_nil()
+            || binding.execution.id == binding.source_execution_id
+            || binding.execution.id == value.sandbox.id
+            || binding.execution.sandbox_id != value.sandbox.id
+            || previous.is_some_and(|id| id >= binding.source_execution_id)
+            || !ids.insert(binding.execution.id)
+        {
+            return Err(Error::Protocol("restoration execution binding differs"));
+        }
+        previous = Some(binding.source_execution_id);
+    }
+    Ok(())
 }

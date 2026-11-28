@@ -73,6 +73,11 @@ class CreateSnapshot:
     kind: str
 
 
+@dataclass(frozen=True)
+class RestoreSnapshot:
+    target: CreateSandbox
+
+
 class SessionControlError(Error):
     def __init__(self, execution_id: str, sequence: int, error: Error):
         self.execution_id, self.sequence, self.error = execution_id, sequence, error
@@ -179,7 +184,9 @@ class CodeRunOutput:
     errors: list[Json]
 
 
-def body(value: CreateSandbox | CreateIsolatedSession | Command | CreateArtifact | CreateSnapshot | SessionSpec | SessionControl | CodeContextSpec | CodeRunSpec | Json) -> Json:
+def body(value: CreateSandbox | CreateIsolatedSession | Command | CreateArtifact | CreateSnapshot | RestoreSnapshot | SessionSpec | SessionControl | CodeContextSpec | CodeRunSpec | Json) -> Json:
+    if isinstance(value, RestoreSnapshot):
+        return {"target": body(value.target)}
     result = asdict(value) if isinstance(value, (CreateSandbox, CreateIsolatedSession, Command, CreateArtifact, CreateSnapshot, SessionSpec, SessionControl, CodeContextSpec, CodeRunSpec)) else dict(value)
     if isinstance(value, (CreateSandbox, CreateIsolatedSession)):
         for name in ("child_budget", "feature_limit", "ttl_seconds", "image", "network"):

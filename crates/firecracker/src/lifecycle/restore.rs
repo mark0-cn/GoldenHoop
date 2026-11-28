@@ -271,6 +271,7 @@ mod tests {
         };
         let lease = metadata::claim_installation(&cfg.data_root, cfg.installation_id).unwrap();
         let engine = driver::NativeEngine::connect(cfg.clone(), lease).unwrap();
+        let mut closed_intents = Vec::new();
         for expired in [false, true] {
             let now = Utc::now();
             let created = now - chrono::Duration::seconds(if expired { 120 } else { 0 });
@@ -387,8 +388,69 @@ mod tests {
             ] {
                 assert!(!cfg.data_root.join("checkpoints").join(suffix).exists());
             }
+            engine.checkpoint_restore_collect(&operation).await.unwrap();
+            let closure = cfg
+                .data_root
+                .join("restore-closures")
+                .join(format!("{}.json", operation.sandbox.id));
+            let original_closure = std::fs::read(&closure).unwrap();
+            engine.checkpoint_restore_collect(&operation).await.unwrap();
+            assert_eq!(std::fs::read(&closure).unwrap(), original_closure);
+            assert_eq!(
+                engine
+                    .checkpoint_restore_collect(&changed)
+                    .await
+                    .unwrap_err()
+                    .code,
+                ErrorCode::Conflict
+            );
+            assert_eq!(
+                engine
+                    .checkpoint_restore(&operation)
+                    .await
+                    .unwrap_err()
+                    .code,
+                ErrorCode::InvalidState
+            );
+            assert_eq!(std::fs::read(&path).unwrap(), original);
+            let mut never_dispatched = operation.clone();
+            never_dispatched.sandbox.id = Uuid::new_v4();
+            never_dispatched.restoration = Uuid::new_v4();
+            engine
+                .checkpoint_restore_collect(&never_dispatched)
+                .await
+                .unwrap();
+            assert!(!cfg.record_path(never_dispatched.sandbox.id).exists());
+            assert_eq!(
+                engine
+                    .checkpoint_restore(&never_dispatched)
+                    .await
+                    .unwrap_err()
+                    .code,
+                ErrorCode::InvalidState
+            );
+            assert_eq!(
+                engine
+                    .create(&never_dispatched.sandbox, &never_dispatched.request)
+                    .await
+                    .unwrap_err()
+                    .code,
+                ErrorCode::InvalidState
+            );
+            closed_intents.push(never_dispatched);
         }
         drop(engine);
+        let lease = metadata::claim_installation(&cfg.data_root, cfg.installation_id).unwrap();
+        let reopened = driver::NativeEngine::connect(cfg.clone(), lease).unwrap();
+        for intent in closed_intents {
+            reopened.checkpoint_restore_collect(&intent).await.unwrap();
+            assert_eq!(
+                reopened.checkpoint_restore(&intent).await.unwrap_err().code,
+                ErrorCode::InvalidState
+            );
+            assert!(!cfg.record_path(intent.sandbox.id).exists());
+        }
+        drop(reopened);
         let path = directory.path().to_owned();
         directory.close().unwrap();
         assert!(!path.exists());

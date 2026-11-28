@@ -195,7 +195,7 @@ impl Store {
     pub async fn work(&self) -> Result<Vec<StoredSandbox>, ApiError> {
         // Collection and lifecycle acknowledgement are separate durable writes.
         // A restart between them must still settle the existing operation.
-        sqlx::query("SELECT b.* FROM sandboxes b WHERE b.cleanup<>'complete' OR EXISTS(SELECT 1 FROM executions e WHERE e.sandbox_id=b.id AND e.state NOT IN('succeeded','failed','cancelled','timed_out')) OR EXISTS(SELECT 1 FROM code_contexts c WHERE c.sandbox_id=b.id AND c.cleanup!='complete') OR EXISTS(SELECT 1 FROM network_controllers c WHERE c.sandbox_id=b.id AND c.phase<>'collected') OR b.id IN(SELECT resource_id FROM operations WHERE kind IN('create','pause','resume','terminate') AND state IN('pending','running')) ORDER BY b.id")
+        sqlx::query("SELECT b.* FROM sandboxes b WHERE b.cleanup<>'complete' OR EXISTS(SELECT 1 FROM executions e WHERE e.sandbox_id=b.id AND e.state NOT IN('succeeded','failed','cancelled','timed_out')) OR EXISTS(SELECT 1 FROM code_contexts c WHERE c.sandbox_id=b.id AND c.cleanup!='complete') OR EXISTS(SELECT 1 FROM network_controllers c WHERE c.sandbox_id=b.id AND c.phase<>'collected') OR b.id IN(SELECT resource_id FROM operations WHERE kind IN('create','snapshot_restore','pause','resume','terminate') AND state IN('pending','running')) ORDER BY b.id")
             .fetch_all(&self.pool)
             .await
             .map_err(db)?
@@ -245,6 +245,7 @@ impl Store {
             super::isolated::confirm_children_absent(&mut tx, stored.sandbox.id).await?;
         }
         super::snapshots::observe_source(&mut tx, &previous, &stored).await?;
+        super::restorations::observe(&mut tx, &stored).await?;
         // The worker only supplies observations; request identity and absolute TTL
         // remain the values committed by the API, even when its snapshot is stale.
         let reported = stored.sandbox;
@@ -378,7 +379,7 @@ impl Store {
         };
         // Desired lifecycle supersession must not cancel independent policy
         // intent. Its own source-version/native-confirmation path settles it.
-        let pending = sqlx::query("SELECT id,kind,payload FROM operations WHERE resource_id=? AND kind IN('create','pause','resume','terminate') AND state IN('pending','running')").bind(id.to_string()).fetch_all(&mut *tx).await.map_err(db)?;
+        let pending = sqlx::query("SELECT id,kind,payload FROM operations WHERE resource_id=? AND kind IN('create','snapshot_restore','pause','resume','terminate') AND state IN('pending','running')").bind(id.to_string()).fetch_all(&mut *tx).await.map_err(db)?;
         for row in pending {
             if row.try_get::<&str, _>("kind").map_err(db)? == "create"
                 && desired != DesiredState::Terminated

@@ -1,5 +1,10 @@
 # Public snapshot operation storage
 
+The [public restoration bridge](public-snapshot-restoration.md) adds schema v21's
+single durable target, private retained-agent execution/cursor bindings and target
+collection references. REST, Rust/Python clients and CLI expose these operations;
+actual native capability/probe and public KVM acceptance remain required.
+
 The [public snapshot interface](public-snapshot-api.md) now connects gateway,
 source authorization, clients and durable deletion. Schema v20 retains a separate
 collection operation until positive backend GC, preserving original capture
@@ -13,8 +18,9 @@ bound to its original source.
 The storage increment supplies domain resources, durable capture intent and source
 admission fencing. The [worker bridge](snapshot-worker.md) now adds authenticated
 private admission, native capture/inspection and failed-capture collection. Public
-snapshot HTTP routes, restored public execution bindings and MemorySnapshot
-capability registration remain unavailable.
+snapshot HTTP routes and restored public execution bindings are described in the
+linked interface increments. MemorySnapshot capability registration remains
+unavailable pending actual public backend acceptance.
 The complete M0-M6 objective remains in [roadmap.md](roadmap.md).
 
 ## State and ownership
@@ -98,8 +104,7 @@ The [observation report](evidence/m4-public-snapshot-validation-observation.json
 retains that failure and states that its cause remains unverified; no Rust source,
 assertion or production limit was changed for those rechecks.
 
-Worker restoration/Ready-object deletion, no-intent convergence, execution bindings, gateway permissions,
-REST/CLI/Rust/Python clients and actual profile probe/public KVM acceptance remain
+Actual profile probe/public KVM capture, restoration and deletion acceptance remain
 required before enabling the capability. Rootfs/volume snapshots, templates and
 combined M4-M6 remain separate required work. The upstream comparison is recorded
 in [the source review](evidence/m4-public-snapshot-upstream-review.json).

@@ -95,3 +95,43 @@ def parameters(sandbox_id, after, limit):
     sandbox_id = identity(sandbox_id) if sandbox_id is not None else None
     after = identity(after) if after is not None else None
     return sandbox_id, after, {"limit": limit, **({"sandbox_id": sandbox_id} if sandbox_id else {}), **({"after": after} if after else {})}
+
+
+def restore_request(value):
+    try:
+        result = body(value)
+        target = result["target"]
+        if (set(result) != {"target"} or not isinstance(target, dict)
+                or not set(target) <= {"profile", "image", "resources", "ttl_seconds", "required_capabilities", "network", "metadata", "child_budget", "feature_limit"}
+                or any(not isinstance(target.get(k), str) or not target[k] for k in ("profile", "image"))):
+            raise ProtocolError("restoration requires an explicit target sandbox request")
+    except (KeyError, TypeError, ValueError, AttributeError):
+        raise ProtocolError("invalid restoration request") from None
+    return result
+
+
+def restored(value, snapshot_id=None, target_id=None, request=None):
+    try:
+        snapshot, target = _uuid(value["snapshot_id"]), _uuid(value["sandbox"]["id"])
+        if (snapshot == target or snapshot_id is not None and snapshot != snapshot_id
+                or target_id is not None and target != target_id):
+            raise ProtocolError("restoration identity differs from its original target")
+        operation(value["operation"], target)
+        if request is not None and (value["sandbox"]["profile"] != request["target"]["profile"]
+                or value["sandbox"]["image"] != request["target"]["image"]
+                or "resources" in request["target"] and value["sandbox"]["resources"] != request["target"]["resources"]):
+            raise ProtocolError("restoration target configuration differs")
+        bindings, previous, ids = value["executions"], None, set()
+        if not isinstance(bindings, list) or len(bindings) > 256:
+            raise ProtocolError("restoration execution binding limit exceeded")
+        for binding in bindings:
+            source, execution = _uuid(binding["source_execution_id"]), binding["execution"]
+            eid = _uuid(execution["id"])
+            if (eid in (source, target) or eid in ids or _uuid(execution["sandbox_id"]) != target
+                    or previous is not None and source <= previous):
+                raise ProtocolError("restoration execution binding differs")
+            previous = source
+            ids.add(eid)
+    except (KeyError, TypeError, AttributeError):
+        raise ProtocolError("invalid restoration response") from None
+    return value

@@ -61,7 +61,7 @@ fn row(value: &sqlx::sqlite::SqliteRow) -> Result<StoredSnapshot, ApiError> {
             .map_err(|_| internal())?,
     })
 }
-async fn load(
+pub(super) async fn load(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     id: Uuid,
 ) -> Result<StoredSnapshot, ApiError> {

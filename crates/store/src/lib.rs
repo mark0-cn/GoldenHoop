@@ -18,12 +18,14 @@ pub use network_policy::{NetworkPolicyControl, NetworkPolicyOwner, NetworkPolicy
 mod credentials;
 #[cfg(test)]
 mod pool_tests;
+mod restorations;
 mod security;
 mod sessions;
 mod snapshots;
 pub use networks::{
     NetworkAbsence, NetworkAllocation, NetworkBinding, NetworkNativeBinding, NetworkPhase,
 };
+pub use restorations::{RestoredExecutionBinding, StoredRestoration};
 pub use snapshots::{SnapshotCaptureDispatch, SnapshotExecutionCandidate, StoredSnapshot};
 
 use std::{path::Path, time::Duration};
@@ -275,7 +277,7 @@ impl Store {
                 .await
                 .map_err(db)?;
         let version: u32 = version.parse().map_err(|_| internal())?;
-        if !(1..=20).contains(&version) {
+        if !(1..=21).contains(&version) {
             return Err(ApiError::new(
                 ErrorCode::UnsupportedCapability,
                 "database schema version is unsupported",
@@ -301,6 +303,7 @@ impl Store {
             (18, include_str!("schema-v18.sql")),
             (19, include_str!("schema-v19.sql")),
             (20, include_str!("schema-v20.sql")),
+            (21, include_str!("schema-v21.sql")),
         ];
         for (target, migration) in migrations {
             if version < target {

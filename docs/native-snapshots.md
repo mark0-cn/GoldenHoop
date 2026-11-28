@@ -12,22 +12,24 @@ targeted native6/shared-guest6 gate passes12/90/Complete at0caa8a7. The independ
 actual missing-writer cut also passes9/90/Complete at2f3a8a5, including a live VMM
 unacknowledged by both native journal and store, original collection proof and
 Closed/Unconfirmed with exact quota/GC and no relaunch.
-Public native snapshot/restore/template execution and capability registration
-remain unavailable. The [public operation foundation](public-snapshot-operations.md)
+Actual public native snapshot/restore/template acceptance and capability
+registration remain unaccepted. The [public operation foundation](public-snapshot-operations.md)
 now persists capture intent, source fencing and immutable execution candidates;
 The [worker bridge](snapshot-worker.md) now implements private source-serialized
 admission, capture dispatch, inspection and failed-capture collection. The
 [durable capture outcome increment](capture-outcomes.md) adds source-bound
 pre-reservation refusal and late-producer fencing. Actual manager/worker KVM
-refusal acceptance, public restoration/clients and full profile acceptance remain
+refusal acceptance, public KVM restoration and full profile acceptance remain
 required.
 The complete M0-M6 objective in [roadmap.md](roadmap.md) is unchanged.
 
 The [public snapshot interface](public-snapshot-api.md) adds gateway admission,
 source-bound authorization, stored reads, pagination, durable deletion and
 Rust/Python/CLI methods. It retains the original source collection requirement
-and private references until positive backend GC. Public restoration/execution
-bindings and actual capability/public KVM acceptance remain required.
+and private references until positive backend GC. The [public restoration bridge](public-snapshot-restoration.md)
+now adds one durable new target, retained execution/event/cancellation bindings,
+exact new-target grants and native late-target closure. Actual capability
+and public KVM acceptance remain required.
 
 ## Upstream constraints
 
@@ -70,7 +72,7 @@ The private [single-use continuation](native-continuation.md) implements a claim
 same-observer source-termination fences and a fresh owned-Machine loader. Its
 actual fresh-target gate passes70/384/Complete. Native persistent manager/supervisor
 coordination passes its separate targeted12/90 and writer-cut9/90 hardware gates;
-public restoration remains unimplemented. Old guests refuse
+the public restoration bridge remains unaccepted on KVM. Old guests refuse
 requests requiring unsupported semantics.
 
 PID1 remains outside workload task groups. The implemented private barrier closes

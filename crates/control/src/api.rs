@@ -112,6 +112,14 @@ pub fn router_with_vault(
         )
         .route("/v1/snapshots", get(snapshots::list))
         .route(
+            "/v1/snapshots/{id}/restore",
+            post(snapshots::restore).layer(DefaultBodyLimit::max(64 * 1024)),
+        )
+        .route(
+            "/v1/sandboxes/{id}/restoration",
+            get(snapshots::restoration),
+        )
+        .route(
             "/v1/snapshots/{id}",
             get(snapshots::inspect).delete(snapshots::delete),
         )

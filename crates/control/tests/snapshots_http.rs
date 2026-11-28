@@ -26,6 +26,8 @@ use uuid::Uuid;
 
 const ADMIN: &str = "snapshot-http-admin-token-0123456789abcdef";
 const PRIVATE: &str = "snapshot-http-private-token-0123456789abcdef";
+#[path = "snapshots_http/restoration.rs"]
+mod restoration;
 fn profile() -> RuntimeProfile {
     serde_json::from_value(json!({"id":"snapshot-http-fixture","placement":"local","isolation":"firecracker","availability":"available","capabilities":["commands","files","pause","network_isolation","memory_snapshot"],"max_resources":{"cpu_millis":4000,"memory_bytes":4294967296_u64,"pids":1024},"max_ttl_seconds":3600})).unwrap()
 }

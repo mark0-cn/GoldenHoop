@@ -497,6 +497,9 @@ pub enum DriverCall {
     CheckpointRestore {
         restore: Box<ManagedRestoreRequest>,
     },
+    CheckpointRestoreCollect {
+        restore: Box<ManagedRestoreRequest>,
+    },
 }
 
 /// Operator/test CLI for the actual RuntimeDriver and AgentTransport traits.
@@ -552,6 +555,10 @@ pub async fn run_driver_call(config: PathBuf, request: PathBuf) -> Result<serde_
             }
             DriverCall::CheckpointRestore { restore } => {
                 serde_json::to_value(driver.checkpoint_restore(&restore).await?).unwrap()
+            }
+            DriverCall::CheckpointRestoreCollect { restore } => {
+                driver.checkpoint_restore_collect(&restore).await?;
+                serde_json::Value::Null
             }
         })
     };
