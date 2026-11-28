@@ -23,6 +23,12 @@ combined M4 and complete M5-M6 remain required. The next
 One historical failed-test directory remains separately uncollected after an
 automatic approval rejection; this gate does not establish its absence.
 
+The exact clean memory-development worktree is now absent, including its Git
+registration, after all97 changed source/evidence files matched the published
+main checkout. The [collection receipt](evidence/m4-memory-profile-worktree-collection.json)
+retains the verified owner, source tree and file digests. Useful caches and the
+candidate branch remain available.
+
 ## Earlier candidate development notes
 
 These notes preserve earlier candidate and pending states. The source-verified
