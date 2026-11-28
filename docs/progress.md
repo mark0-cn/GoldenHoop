@@ -1,5 +1,21 @@
 # Progress
 
+The next private M4 fixture cuts the original Rust cold-boot copy at an observed
+partial target-file length, before materialization acknowledgement. It uses
+pidfd SIGSTOP to hold that exact supervisor, then SIGKILLs either its manager or
+the supervisor. The manager case must keep its original reference/lease and
+supervisor/generation across restart; the supervisor case must collect the
+original unready target and refuse a successful retry. No Rust, runtime, image
+recipe, limits or original cleanup assertions change. [Preflight evidence](evidence/m4-rootfs-copy-fault-preflight.json)
+verifies Python syntax and all408 existing full-CI runtime inputs exactly; it
+does not supply actual fault acceptance. Two live targets use240-second fixture
+lifetimes to accommodate the additional recovery steps; absolute expiry/collection
+tests keep their existing deadlines. A failed third target must close its own
+reference while the two successful copies still survive source-content GC.
+The workflow uses pinned official Docker actions and separate bounded GHA cache
+scopes for guest/inspector images; cache export errors do not replace builds or
+runtime validation. Cache performance and the new actual cuts remain unverified.
+
 The private M4 two-target rootfs cold-boot increment is accepted on source9e0b37c.
 [Actual KVM/runsc46152336903](evidence/m4-rootfs-coldboot-46152336903-archive.json)
 passes31 groups with409 byte-verified inputs. One Rust-captured/inspected disk

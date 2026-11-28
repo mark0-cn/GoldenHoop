@@ -9,7 +9,7 @@ import time
 import uuid
 
 
-def exercise(source, capture, counter, captured_value, source_execution, cfg, call, rpc, record, report):
+def exercise(source, capture, counter, captured_value, source_execution, cfg, manager, call, rpc, record, report):
     root=Path(cfg['data_root'])
     seen=report['observations']['rootfs_coldboot']={}
     original=record(source['sandbox_id'])
@@ -18,23 +18,36 @@ def exercise(source, capture, counter, captured_value, source_execution, cfg, ca
     reference=status['reference']
     def request():
         now=datetime.datetime.now(datetime.timezone.utc);sid=str(uuid.uuid4());resources=original['resources']
-        create=dict(profile='local-firecracker',image=cfg['image'],resources=resources,ttl_seconds=120,
+        create=dict(profile='local-firecracker',image=cfg['image'],resources=resources,ttl_seconds=240,
                     required_capabilities=['commands','files','pause','network_isolation'])
         sandbox=dict(id=sid,profile=create['profile'],image=create['image'],resources=resources,
                      state='pending',desired_state='running',cleanup='pending',created_at=now.isoformat(),
-                     expires_at=(now+datetime.timedelta(seconds=120)).isoformat(),observed_at=None,metadata={},reason=None)
+                     expires_at=(now+datetime.timedelta(seconds=240)).isoformat(),observed_at=None,metadata={},reason=None)
         return dict(operation='rootfs_boot',boot=dict(sandbox=sandbox,request=create,reference=reference,
                                                     operation=str(uuid.uuid4()),expected_source=source))
     def read(handle):
         result=rpc(handle,dict(method='read_file',path=counter,max_bytes=128),'file')
         return int(base64.b64decode(result['data_base64'],validate=True))
-    requests=[request(),request()]
+    requests=[request()]
     bad=copy.deepcopy(requests[0]);bad['boot']['reference']['manifest_sha256']='f'*64
     call(bad,expect=False)
     assert not (root/'records'/f'{bad["boot"]["sandbox"]["id"]}.json').exists()
     targets=[]
-    for value in requests:
-        target=call(value);targets.append(target)
+    for index in range(2):
+        if index==0:
+            value=requests[0]
+            from firecracker_rootfs_copy_fault_contract import boot_with_manager_kill
+            seen['manager_death']={}
+            target=boot_with_manager_kill(value,source,capture,manager,call,record,seen['manager_death'])
+            report['cases'].append('SIGKILL_manager_during_actual_partial_rootfs_copy_retains_original_supervisor_lease_and_durable_reference_then_reconnects_same_target')
+        else:
+            from firecracker_rootfs_copy_fault_contract import kill_supervisor_during_copy
+            seen['supervisor_death']={}
+            kill_supervisor_during_copy(request(),source,capture,manager,call,record,seen['supervisor_death'])
+            report['cases'].append('SIGKILL_original_supervisor_during_actual_partial_rootfs_copy_collects_original_unready_target_and_reference_without_replay_or_false_ready')
+            value=request();requests.append(value)
+            target=call(value)
+        targets.append(target)
         native=record(target['sandbox_id']);binding=native['rootfs_boot']
         job=json.loads((root/'rootfs'/f'boot-{target["sandbox_id"]}.json').read_bytes())
         seen.setdefault('targets',[]).append(dict(request=value,handle=target,native=native,reference_job=job))
@@ -58,7 +71,7 @@ def exercise(source, capture, counter, captured_value, source_execution, cfg, ca
     assert read(source)>captured_value
     changed=copy.deepcopy(requests[0]);changed['boot']['operation']=str(uuid.uuid4())
     assert call(changed,expect=False)['code']=='conflict'
-    changed=copy.deepcopy(requests[0]);changed['operation']='create';changed=changed['boot']
+    changed=copy.deepcopy(requests[0])['boot']
     assert call(dict(operation='create',sandbox=changed['sandbox'],request=changed['request']),expect=False)['code']=='conflict'
     report['cases'].append('one_Rust_captured_and_runsc_inspected_disk_starts_two_fresh_KVM_targets_with_distinct_disks_and_no_retained_execution_or_writer')
     report['cases'].append('rootfs_boot_exact_retry_reuses_original_target_and_refuses_changed_reference_operation_or_ordinary_boot_kind')

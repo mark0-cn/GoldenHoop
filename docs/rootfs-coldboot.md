@@ -50,3 +50,8 @@ They do not establish KVM behavior or death during actual cold-boot disk copying
 The hardware fixture submits production Rust requests and observes real target
 VMs; Python does not implement their disk copies. Actual copy-time manager and
 supervisor death remain separate required fault coverage.
+The follow-up fixture now observes a nonempty partial disk before its expected
+length, stops the original supervisor through pidfd, then kills its manager or
+the supervisor. Each path resumes any held original process on failure and
+retains actual cut/reference/native observations. Syntax and unchanged-runtime
+checks do not count as execution of these new cuts.

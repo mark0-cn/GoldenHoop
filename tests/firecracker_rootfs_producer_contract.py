@@ -196,7 +196,7 @@ def exercise(handle, initial, runtime, cfg, manager, call, rpc, record, report,
 
     if coldboot:
         from firecracker_rootfs_coldboot_contract import exercise as boot_exercise
-        boot_exercise(handle,capture,counter,isolated['observations']['captured_counter'],execution,cfg,call,rpc,record,report)
+        boot_exercise(handle,capture,counter,isolated['observations']['captured_counter'],execution,cfg,manager,call,rpc,record,report)
 
     rpc(handle, dict(method='cancel', id=execution), 'execution')
     deadline = time.monotonic()+20

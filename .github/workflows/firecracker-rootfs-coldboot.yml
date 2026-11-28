@@ -40,10 +40,38 @@ jobs:
           runsc --version
       - name: Build the checked native driver, supervisor and manager
         run: cargo build --locked --release -p goldenhoop-firecracker
-      - name: Build identical pinned guest assets for KVM and isolated inspection
-        run: |
-          docker build --build-arg VALIDATE_WORKSPACE=0 --target microvm-rootfs --label dev.goldenhoop.task=m4-guest --label dev.goldenhoop.run="$M4_OWNER" --tag "$M4_IMAGE" --file images/agent/Dockerfile .
-          docker build --build-arg VALIDATE_WORKSPACE=0 --target image-builder --label dev.goldenhoop.task=m4-image-builder-fixture --label dev.goldenhoop.owner="$M4_OWNER" --tag "$M4_INSPECTOR" --file images/agent/Dockerfile .
+      - name: Set up the owned cached image builder
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build the identical pinned KVM guest assets
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: images/agent/Dockerfile
+          target: microvm-rootfs
+          build-args: VALIDATE_WORKSPACE=0
+          load: true
+          tags: ${{ env.M4_IMAGE }}
+          labels: |
+            dev.goldenhoop.task=m4-guest
+            dev.goldenhoop.run=${{ env.M4_OWNER }}
+          cache-from: type=gha,scope=goldenhoop-m4-coldboot-guest-v1
+          cache-to: type=gha,scope=goldenhoop-m4-coldboot-guest-v1,mode=max,timeout=2m,ignore-error=true
+      - name: Build the identical pinned isolated inspector assets
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: images/agent/Dockerfile
+          target: image-builder
+          build-args: VALIDATE_WORKSPACE=0
+          load: true
+          tags: ${{ env.M4_INSPECTOR }}
+          labels: |
+            dev.goldenhoop.task=m4-image-builder-fixture
+            dev.goldenhoop.owner=${{ env.M4_OWNER }}
+          cache-from: |
+            type=gha,scope=goldenhoop-m4-coldboot-guest-v1
+            type=gha,scope=goldenhoop-m4-coldboot-inspector-v1
+          cache-to: type=gha,scope=goldenhoop-m4-coldboot-inspector-v1,mode=max,timeout=2m,ignore-error=true
       - name: Require two actual fresh KVM rootfs boots, original references and physical collection
         run: sudo -n "$pythonLocation/bin/python3" -B tests/firecracker_guest_contract.py --driver-contract --rootfs-producer-contract --rootfs-inspector-parent-contract --rootfs-coldboot-contract --source-commit "$GITHUB_SHA" --binary "$PWD/target/release/goldenhoop-firecracker" --image "$M4_IMAGE" --owner "$M4_OWNER" --builder-image "$M4_INSPECTOR" --builder-owner "$M4_OWNER" --output "$PWD/evidence/firecracker-rootfs-coldboot.json"
       - name: Collect the exact owned images and confirm absence

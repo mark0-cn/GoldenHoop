@@ -160,7 +160,7 @@ def main():
         if args.rootfs_inspector_parent_contract:
             sources += [root/'tests/firecracker_rootfs_inspector_parent_contract.py',root/'.github/workflows/firecracker-rootfs-inspector-parent.yml']
         if args.rootfs_coldboot_contract:
-            sources += [root/'tests/firecracker_rootfs_coldboot_contract.py',root/'.github/workflows/firecracker-rootfs-coldboot.yml']
+            sources += [root/'tests/firecracker_rootfs_coldboot_contract.py',root/'tests/firecracker_rootfs_copy_fault_contract.py',root/'.github/workflows/firecracker-rootfs-coldboot.yml']
     if args.guest_authority_contract:
         sources += [root/'tests/firecracker_authority_contract.py',root/'.github/workflows/firecracker-guest-authority.yml']
     if args.checkpoint_contract:
@@ -370,7 +370,7 @@ def main():
         if args.rootfs_inspector_parent_contract:
             report['scope']='actual Rust original-generation capture and durable runsc inspector parent, original inspector-producer SIGKILL, exact same-provider/host collection before Ready and original source continuation. Independent counter inspection remains an additional test fixture; cold boot, public operations, templates and complete M4-M6 remain unverified'
         if args.rootfs_coldboot_contract:
-            report['scope']='actual Rust rootfs capture/isolated inspection and two fresh KVM boots with original kind-specific target references, independent materialized disks and writes after source-content GC, exact retry and native/reference collection. Original producer/inspector SIGKILL remains retained coverage; death during cold-boot copy, public rootfs operations, templates and full M4-M6 remain unverified'
+            report['scope']='actual Rust rootfs capture/isolated inspection, manager/supervisor SIGKILL at actual partial cold-boot disk copies, original same-supervisor handoff and unready-target collection, two fresh KVM boots with independent disks/writes after source-content GC, exact retry and native/reference collection. Acknowledged-result inspector death, public rootfs operations, templates and full M4-M6 remain unverified'
         if args.guest_authority_contract:
             report['scope']='actual generation-bound guest RPC and authority-transfer protocol on the same physical VMM plus retained barrier/root52; no memory capture, source termination, restore claim, new VMM or full M4-M6 acceptance'
 
