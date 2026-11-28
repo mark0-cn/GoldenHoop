@@ -1,7 +1,10 @@
-# Private rootfs cold boot candidate
+# Private rootfs cold boot
 
-This increment is not accepted. The actual KVM gate must prove two fresh VMs,
-independent disk writes, source-content GC and original native/reference cleanup.
+This increment is accepted on sourced9e0b37c by
+[actual KVM/runsc46152336903](evidence/m4-rootfs-coldboot-46152336903-archive.json)
+and [full CI46152295297](evidence/m4-rootfs-coldboot-ci-46152295297.json).
+The gate proves two fresh VMs, independent disk writes after source-content GC
+and original native/reference cleanup.
 Public rootfs APIs/SDKs, volume snapshots, templates and complete M4-M6 remain
 required by [roadmap.md](roadmap.md).
 

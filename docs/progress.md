@@ -1,9 +1,25 @@
 # Progress
 
-The next private M4 candidate implements two-target rootfs cold boot with separate
+The private M4 two-target rootfs cold-boot increment is accepted on sourced9e0b37c.
+[Actual KVM/runsc46152336903](evidence/m4-rootfs-coldboot-46152336903-archive.json)
+passes31 groups with409 byte-verified inputs. One Rust-captured/inspected disk
+starts two distinct jailed VMMs and disk inodes with fresh execution state. The
+targets continue and write8000001/8000002 independently after source-content GC,
+while the original source continues. Exact retry keeps the original targets;
+changed kind/reference/operation and recreation of spent targets are refused.
+The protected file default stays256 tasks while both admitted targets run32.
+Native processes/cgroups/roots, target references, source content, provider
+resources, quotas and fixtures are positively collected. [Full CI46152295297](evidence/m4-rootfs-coldboot-ci-46152295297.json)
+passes both jobs on the same source, with408 inputs and838 Rust/72 SDK aggregate
+passes. The [acceptance summary](evidence/m4-rootfs-coldboot-acceptance-summary.json)
+retains the failed first run and scoped collection records. Cold-boot copy-time
+manager/supervisor death, acknowledged-result inspector death, public rootfs,
+templates, volumes and combined M4-M6 acceptance remain pending.
+
+The implementation uses separate
 durable source references, shared-mutex descriptor handoff, production Rust disk
 materialization and original native collection receipts. It keeps memory claims
-and prepared-image inputs separate. See [the candidate contract](rootfs-coldboot.md).
+and prepared-image inputs separate. See [the private contract](rootfs-coldboot.md).
 The [Linux checks](evidence/m4-rootfs-coldboot-linux-copies.json) pass format,
 strict native/images all-target clippy and21 focused tests, including shared
 handoff and actual local two-copy GC fences/independent writes. Their guest and
