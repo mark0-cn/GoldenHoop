@@ -25,6 +25,7 @@ struct Backend {
     events: StdMutex<Vec<ExecutionEvent>>,
     closed: StdMutex<HashSet<Uuid>>,
     lose_restore: AtomicBool,
+    busy_restore: AtomicBool,
     lose_close: AtomicBool,
     allocations: AtomicUsize,
     starts: AtomicUsize,
@@ -39,6 +40,12 @@ impl RuntimeDriver for Backend {
     }
     async fn restore_memory(&self, r: &MemoryRestoreRequest) -> Result<RuntimeHandle, ApiError> {
         r.validate_identity()?;
+        if self.busy_restore.swap(false, Ordering::SeqCst) {
+            return Err(ApiError::new(
+                ErrorCode::QuotaExceeded,
+                "synthetic native capacity is temporarily reserved",
+            ));
+        }
         if self.closed.lock().unwrap().contains(&r.target.id) {
             return Err(ApiError::new(
                 ErrorCode::InvalidState,
@@ -351,6 +358,76 @@ async fn prepared(w: &Worker, b: &Backend) -> (Uuid, RestoreSnapshot, Execution)
 async fn step(w: &Worker, target: Uuid) -> Result<(), ApiError> {
     let _guard = w.lock(target).await.lock_owned().await;
     w.reconcile(target).await
+}
+
+#[tokio::test]
+async fn temporary_capacity_keeps_the_original_target_and_operation_until_retry() {
+    checked(|w, b, _, _| async move {
+        let (snapshot, intent, _) = prepared(&w, &b).await;
+        b.busy_restore.store(true, Ordering::SeqCst);
+        let original = w
+            .admit_restoration(snapshot, &intent, "capacity-retry")
+            .await
+            .unwrap();
+        let target = original.sandbox.id;
+        step(&w, target).await.unwrap();
+        assert_eq!(b.allocations.load(Ordering::SeqCst), 0);
+        assert_eq!(b.closes.load(Ordering::SeqCst), 0);
+        assert_eq!(b.starts.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            w.store
+                .operation(original.operation.id)
+                .await
+                .unwrap()
+                .state,
+            OperationState::Running
+        );
+        assert_eq!(
+            w.store.sandbox(target).await.unwrap().sandbox.state,
+            SandboxState::Unknown
+        );
+        assert!(
+            !w.store
+                .restoration(target)
+                .await
+                .unwrap()
+                .unwrap()
+                .collected
+        );
+        assert!(w.store.delete_snapshot(snapshot, "held").await.is_err());
+        let retried = w
+            .admit_restoration(snapshot, &intent, "capacity-retry")
+            .await
+            .unwrap();
+        assert_eq!(retried.sandbox.id, target);
+        assert_eq!(retried.operation.id, original.operation.id);
+        step(&w, target).await.unwrap();
+        assert_eq!(
+            w.store
+                .operation(original.operation.id)
+                .await
+                .unwrap()
+                .state,
+            OperationState::Succeeded
+        );
+        assert_eq!(
+            w.store.sandbox(target).await.unwrap().sandbox.state,
+            SandboxState::Running
+        );
+        assert_eq!(b.allocations.load(Ordering::SeqCst), 1);
+        assert_eq!(b.starts.load(Ordering::SeqCst), 0);
+        w.store
+            .set_desired(target, DesiredState::Terminated, "collect")
+            .await
+            .unwrap();
+        step(&w, target).await.unwrap();
+        assert_eq!(b.closes.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            w.store.sandbox(target).await.unwrap().sandbox.cleanup,
+            CleanupState::Complete
+        );
+    })
+    .await;
 }
 
 #[tokio::test]

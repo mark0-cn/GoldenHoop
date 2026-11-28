@@ -136,7 +136,7 @@ fn unavailable() -> ApiError {
 }
 fn deadline(call: &DriverCall) -> Duration {
     Duration::from_secs(match call {
-        DriverCall::Probe => 240,
+        DriverCall::Probe => 660,
         DriverCall::Create { .. } | DriverCall::CheckpointRestore { .. } => 150,
         DriverCall::Remove { .. } | DriverCall::CheckpointRestoreCollect { .. } => 45,
         DriverCall::Reap => 240,

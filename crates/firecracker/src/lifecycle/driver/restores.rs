@@ -69,6 +69,7 @@ impl NativeEngine {
                 || record.owner.expires_at != request.sandbox.expires_at
                 || binding.intent.reference != request.reference
                 || binding.intent.restoration != request.restoration
+                || binding.expected_source != request.expected_source
             {
                 return Err(ApiError::new(
                     ErrorCode::Conflict,
@@ -95,10 +96,12 @@ impl NativeEngine {
             .clone()
             .try_acquire_owned()
             .map_err(|_| {
-                ApiError::new(
-                    ErrorCode::QuotaExceeded,
+                let mut error = ApiError::new(
+                    ErrorCode::BackendUnavailable,
                     "native checkpoint validation worker is reserved",
-                )
+                );
+                error.retryable = true;
+                error
             })?;
         let manifest = tokio::task::spawn_blocking(move || {
             let _permit = permit;
@@ -107,6 +110,22 @@ impl NativeEngine {
         })
         .await??;
         let source = self.load(manifest.source.sandbox)?;
+        let actual_source = native_handle(
+            manifest.source.installation,
+            manifest.source.sandbox,
+            manifest.source.source_generation,
+        );
+        if request
+            .expected_source
+            .as_ref()
+            .is_some_and(|expected| expected != &actual_source)
+        {
+            return Err(ApiError::new(
+                ErrorCode::Conflict,
+                "native restoration expected source generation differs from the captured source",
+            )
+            .into());
+        }
         if source.owner.installation_id != manifest.source.installation
             || source.owner.generation != manifest.source.source_generation
             || source.owner.request_sha256 != manifest.source.request_sha256
@@ -124,6 +143,7 @@ impl NativeEngine {
         }
         let generation = Uuid::new_v4();
         Ok(RestoreBinding {
+            expected_source: request.expected_source.clone(),
             intent: RestoreIntent {
                 reference: request.reference.clone(),
                 runtime: manifest.runtime,

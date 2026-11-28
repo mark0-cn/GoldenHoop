@@ -1,5 +1,26 @@
 # Progress
 
+The [native memory capability probe](native-memory-capability.md) now performs a
+real single-use continuation before advertising memory support. Its durable
+intent owns the original source/capture/target across interruption; a completed
+probe requires preserved guest RAM, disk, execution identity and positive VM and
+snapshot-object collection. Reconnect only reuses exact same-boot/configuration
+proof after fresh collection observations. Public target bindings now preserve
+the expected captured native source generation, and temporary capacity/validation
+pressure retains the same operation and one-use target for reconciliation.
+Host artifact capability projection follows ordinary native creation.
+RestoreSnapshot, RestoredExecution and SnapshotRestored are registered in the
+schema export. A separate actual public memory KVM workflow checks SDK/CLI retry,
+source fences, exact target grants, retained event/cancel mappings and manager
+SIGKILL recovery. Final publication-source checks pass Windows326/GNU-root451 and Python36 on
+identical392 frozen inputs, with formatting, strict workspace all-target clippy
+and the GNU images-service release build. Schema generation resolves all93
+references across76 components. The final normalized-source musl check and the
+new actual public KVM gate remain pending; M4-M6 remain unaccepted. The
+[implementation summary](evidence/m4-memory-profile-implementation-summary.json)
+binds the exact current reports, scoped image collection, initial diagnosis and
+explicitly superseded pre-normalization checks.
+
 The [public restoration bridge](public-snapshot-restoration.md) connects REST,
 Rust/Python clients and CLI to one durable new target. SQLite v21 atomically
 records target, operation, immutable intent and new public execution IDs bound to
@@ -40,10 +61,10 @@ binds final source maps, passing checks, superseded draft evidence and exact ima
 collection receipts. Overall temporary collection remains incomplete for the
 automatically blocked failed-test fixture directory.
 
-MemorySnapshot remains unadvertised. Model schema registration and transient
-native validation-slot pressure handling remain part of public contract
-acceptance, together with actual public KVM/capability gates. Rootfs/volume
-snapshots, templates, combined M4 and complete M5-M6 remain required.
+MemorySnapshot is advertised only after the actual probe described above passes;
+configuration alone does not enable it. The bridge's source-bound evidence remains
+distinct from the new actual public KVM/capability gate. Rootfs/volume snapshots,
+templates, combined M4 and complete M5-M6 remain required.
 
 The [public snapshot interface](public-snapshot-api.md) connects gateway capture,
 stored reads, source-filtered cursor pages and durable deletion with Rust/Python

@@ -236,7 +236,6 @@ impl Worker {
                 ErrorCode::InvalidRequest
                     | ErrorCode::InvalidState
                     | ErrorCode::UnsupportedCapability
-                    | ErrorCode::QuotaExceeded
                     | ErrorCode::Forbidden
                     | ErrorCode::Conflict
                     | ErrorCode::NotFound
@@ -251,7 +250,18 @@ impl Worker {
                     )
                     .await;
             }
-            self.save(self.store.sandbox(id).await?,SandboxState::Unknown,CleanupState::Unknown,Some("restoration transport is unconfirmed; retain the original target and references".into())).await?;
+            let reason = if error.code == ErrorCode::QuotaExceeded {
+                "restoration capacity is temporarily reserved; retry the original target and retain its references"
+            } else {
+                "restoration transport is unconfirmed; retain the original target and references"
+            };
+            self.save(
+                self.store.sandbox(id).await?,
+                SandboxState::Unknown,
+                CleanupState::Unknown,
+                Some(reason.into()),
+            )
+            .await?;
             report("restoration_reconciliation_unconfirmed", &error);
         }
         Ok(())

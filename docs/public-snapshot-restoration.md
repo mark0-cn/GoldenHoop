@@ -3,7 +3,8 @@
 The public restoration path creates one new sandbox from a Ready memory-and-disk
 snapshot after positive original-source collection. It uses the existing native
 manager's independently supervised continuation path. Native MemorySnapshot
-advertisement and the actual public KVM release gate remain separate requirements.
+advertisement requires an [actual continuation and collection probe](native-memory-capability.md);
+the actual public KVM release gate remains a separate requirement.
 The complete [M0-M6 objective](roadmap.md) is unchanged.
 
 ## Requests and durable identity
@@ -32,6 +33,11 @@ exact original target and restoration ID. Native journal identity and the unique
 native continuation claim prevent ordinary boot, another generation or a second
 supervisor from relaunching an already settled target. A stored runtime handle
 cannot be replaced or erased before positive target collection.
+
+The private native request and journal bind the expected captured source handle,
+including its generation. A foreign validly encoded generation is refused before
+target allocation. Temporary VM-capacity or validation-slot pressure preserves the
+same operation and pending target until reconciliation, TTL or cancellation.
 
 ## Retained execution and events
 

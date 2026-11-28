@@ -1,0 +1,49 @@
+name: Firecracker public memory continuation
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  CARGO_BUILD_JOBS: 2
+  CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS: 'true'
+  CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS: 'true'
+  M4_IMAGE: goldenhoop-m4-memory-rootfs:${{ github.run_id }}-${{ github.run_attempt }}
+  M4_OWNER: ${{ github.run_id }}-${{ github.run_attempt }}
+jobs:
+  memory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install httpx==0.28.1
+      - name: Build checked optimized Rust control CLI native driver and supervisor
+        run: cargo build --locked --release -p goldenhoop-control -p goldenhoop-cli -p goldenhoop-firecracker
+      - name: Build the actual Rust guest
+        run: docker build --build-arg VALIDATE_WORKSPACE=0 --target microvm-rootfs --label dev.goldenhoop.task=m4-guest --label dev.goldenhoop.run="$M4_OWNER" --tag "$M4_IMAGE" --file images/agent/Dockerfile .
+      - name: Require actual public memory capture restore and retained execution recovery
+        run: sudo -n env PYTHONPATH="$PWD/sdk/python/src" "$pythonLocation/bin/python3" -B tests/firecracker_guest_contract.py --public-contract --memory-public-contract --source-commit "$GITHUB_SHA" --binary "$PWD/target/release/goldenhoop-firecracker" --control "$PWD/target/release/goldenhoopd" --cli "$PWD/target/release/goldenhoop" --image "$M4_IMAGE" --owner "$M4_OWNER" --output "$PWD/evidence/firecracker-memory-public.json"
+      - name: Collect the exact owned image and observe absence
+        if: always()
+        shell: python
+        run: |
+          import json, os, subprocess
+          tag = os.environ['M4_IMAGE']
+          def listed():
+              return subprocess.check_output(['docker', 'image', 'ls', '--no-trunc', '--filter', 'reference='+tag, '--format', '{{.ID}}']).strip()
+          if listed():
+              value = json.loads(subprocess.check_output(['docker', 'image', 'inspect', tag]))[0]
+              assert value['Config']['Labels']['dev.goldenhoop.run'] == os.environ['M4_OWNER']
+              assert value['Config']['Labels']['dev.goldenhoop.task'] == 'm4-guest'
+              subprocess.run(['docker', 'image', 'rm', tag], check=True)
+          assert not listed()
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: firecracker-memory-public
+          path: evidence/*.json
+          if-no-files-found: error

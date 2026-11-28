@@ -55,11 +55,16 @@ pub(super) fn restore_request(
     {
         return Err(inconsistent());
     }
+    let mut native = request.request.clone();
+    // Artifact retention is composed by the probed host storage worker, as in
+    // ordinary native creation. Keep every actual guest constraint unchanged.
+    native.required_capabilities.remove(&Capability::Artifacts);
     Ok(ManagedRestoreRequest {
         sandbox: request.target.clone(),
-        request: request.request.clone(),
+        request: native,
         reference,
         restoration: request.restoration,
+        expected_source: Some(request.source.clone()),
     })
 }
 pub(super) fn validate(

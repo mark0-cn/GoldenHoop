@@ -10,7 +10,7 @@ pub use snapshots::{
     MemoryCaptureObservation, MemoryCaptureRequest, MemoryCaptureState, MemoryRestoreRequest,
 };
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeHandle {
     pub sandbox_id: Uuid,
     pub profile: String,

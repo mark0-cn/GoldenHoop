@@ -662,6 +662,7 @@ fn real_native_collection_closes_lost_writer_ack_only_with_original_collected_re
         capture_hold: None,
         restore: Some(lifecycle::RestoreBinding {
             intent: intent.clone(),
+            expected_source: None,
         }),
         resources: f.manifest.resources.clone(),
         supervisor: Some(producer.clone()),

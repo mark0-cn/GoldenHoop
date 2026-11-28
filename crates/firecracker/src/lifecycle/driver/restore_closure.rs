@@ -102,6 +102,7 @@ impl NativeEngine {
                     || record.restore.as_ref().is_none_or(|r| {
                         r.intent.reference != request.reference
                             || r.intent.restoration != request.restoration
+                            || r.expected_source != request.expected_source
                     })
                 {
                     return Err(ApiError::new(

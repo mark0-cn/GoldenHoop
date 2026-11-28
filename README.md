@@ -16,12 +16,13 @@ The full target includes local containers, Firecracker microVMs, and Kubernetes;
 
 Runtime support is declared per profile and checked against the host. Missing isolation must fail closed. A successful unit test is not evidence of a working isolation boundary.
 
-The opt-in [basic local Firecracker profile](docs/m4-delivery.md) passes actual jailed bootstrap and the shared API/Python SDK/Rust CLI contract, including worker SIGKILL recovery and independent expiry. Only actually probed basic commands, files, pause, no-NIC isolation and retained artifacts are published. [The trusted image parent](docs/image-preparation.md) connects immutable source acquisition, host resource checks, isolated offline conversion and private disk storage. Production gVisor/produced-disk KVM gates, full allocation recovery, snapshots/restores/templates, hard-manager recovery and combined M4 acceptance remain required.
+The opt-in [basic local Firecracker profile](docs/m4-delivery.md) passes actual jailed bootstrap and the shared API/Python SDK/Rust CLI contract, including worker SIGKILL recovery and independent expiry. Basic commands, files, pause, no-NIC isolation and retained artifacts are published after actual probes. [The trusted image parent](docs/image-preparation.md) connects immutable source acquisition, host resource checks, isolated offline conversion and private disk storage. Additional image, snapshot and template work and combined M4 acceptance remain required.
 
 [Public snapshot interfaces](docs/public-snapshot-api.md) now include gateway
 capture admission, stored reads, pagination and durable deletion, with source
-authorization and Rust/Python/CLI methods. Native MemorySnapshot remains
-unadvertised pending actual public restoration/profile KVM acceptance. The
+authorization and Rust/Python/CLI methods. Native MemorySnapshot requires a
+configured [actual RAM continuation and collection probe](docs/native-memory-capability.md).
+Its public KVM workflow is a separate release gate. The
 [restoration bridge](docs/public-snapshot-restoration.md) implements one new target,
 retained execution/event/cancel bindings and native late-target closure. Snapshot
 deletion requires positive source and target collection.

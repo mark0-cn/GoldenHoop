@@ -13,6 +13,7 @@ use tokio::{
     sync::{Mutex, RwLock},
 };
 mod checkpoints;
+mod memory_probe;
 mod restore_closure;
 mod restores;
 
@@ -22,6 +23,7 @@ struct Inner {
     operations: Mutex<()>,
     vm_locks: Mutex<std::collections::HashMap<Uuid, std::sync::Weak<Mutex<()>>>>,
     profile: RwLock<RuntimeProfile>,
+    probe_lock: Mutex<()>,
     children: std::sync::Mutex<std::collections::HashMap<Uuid, OwnedChild>>,
     recovered: std::collections::BTreeSet<Uuid>,
     metadata_recovery: metadata::Recovery,
@@ -256,6 +258,7 @@ impl NativeEngine {
                 operations: Mutex::new(()),
                 vm_locks: Mutex::new(Default::default()),
                 profile: RwLock::new(observed),
+                probe_lock: Mutex::new(()),
                 children: std::sync::Mutex::new(Default::default()),
                 recovered,
                 metadata_recovery,
@@ -752,12 +755,22 @@ impl NativeEngine {
             )
             .into());
         }
-        let supported = std::collections::BTreeSet::from([
+        let mut supported = std::collections::BTreeSet::from([
             Capability::Commands,
             Capability::Files,
             Capability::Pause,
             Capability::NetworkIsolation,
         ]);
+        if self
+            .inner
+            .profile
+            .read()
+            .await
+            .capabilities
+            .contains(&Capability::MemorySnapshot)
+        {
+            supported.insert(Capability::MemorySnapshot);
+        }
         if request
             .required_capabilities
             .iter()
@@ -781,6 +794,7 @@ impl NativeEngine {
                 request: request.clone(),
                 reference: restore.intent.reference.clone(),
                 restoration: restore.intent.restoration,
+                expected_source: restore.expected_source.clone(),
             }
             .digest()?,
             None => request_digest(request)?,
@@ -793,7 +807,7 @@ impl NativeEngine {
                     .restore
                     .as_ref()
                     .zip(restore.as_ref())
-                    .is_some_and(|(a, b)| a.intent != b.intent)
+                    .is_some_and(|(a, b)| a != b)
             {
                 return Err(ApiError::new(
                     ErrorCode::Conflict,
@@ -1278,6 +1292,16 @@ impl NativeEngine {
 #[async_trait]
 impl RuntimeDriver for NativeEngine {
     async fn probe(&self) -> RuntimeProfile {
+        let _probe_guard = self.inner.probe_lock.lock().await;
+        let memory_recovered = self.inner.cfg.checkpoints.is_some()
+            && matches!(
+                tokio::time::timeout(
+                    Duration::from_secs(90),
+                    self.collect_interrupted_memory_probes(),
+                )
+                .await,
+                Ok(Ok(()))
+            );
         let mut result = profile(&self.inner.cfg);
         let id = Uuid::new_v4();
         let now = Utc::now();
@@ -1427,6 +1451,24 @@ impl RuntimeDriver for NativeEngine {
                 Capability::Pause,
                 Capability::NetworkIsolation,
             ]);
+            if self.inner.cfg.checkpoints.is_some() && memory_recovered {
+                match self.probe_memory().await {
+                    Ok(()) => {
+                        result.capabilities.insert(Capability::MemorySnapshot);
+                    }
+                    Err(_) => {
+                        result.reason = Some(
+                            "basic native lifecycle verified; actual memory continuation or its collection is unconfirmed"
+                                .into(),
+                        );
+                    }
+                }
+            } else if self.inner.cfg.checkpoints.is_some() {
+                result.reason = Some(
+                    "basic native lifecycle verified; an interrupted memory probe still requires collection"
+                        .into(),
+                );
+            }
         } else {
             let lock = self.vm_lock(id).await;
             let _guard = lock.lock().await;

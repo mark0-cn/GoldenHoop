@@ -23,7 +23,7 @@ def recovery_program(nonce, workspace='/workspace'):
             "print('once',end='')")
 
 
-def suite(control, cli, native, boot, fixture, manager_recovery=False):
+def suite(control, cli, native, boot, fixture, manager_recovery=False, memory_contract=False):
     report = {'result': 'failed', 'cleanup': 'unknown', 'cases': [], 'observations': {},
               'scope': 'basic native public lifecycle only; full M4 remains unaccepted'}
     database = fixture / 'public.db'
@@ -40,6 +40,7 @@ def suite(control, cli, native, boot, fixture, manager_recovery=False):
     sandboxes = []
     artifact_id = None
     manager = None
+    memory_snapshots = []
 
     def event_lines(name, event):
         values = []
@@ -66,7 +67,7 @@ def suite(control, cli, native, boot, fixture, manager_recovery=False):
         with logs[name].open('ab') as output:
             processes[name] = subprocess.Popen(args, stdin=subprocess.DEVNULL,
                                                stdout=output, stderr=subprocess.STDOUT, env=env)
-        until = time.monotonic() + 180
+        until = time.monotonic() + (720 if memory_contract else 180)
         while len(event_lines(name, event)) <= before:
             assert processes[name].poll() is None, f'public {name} exited before readiness'
             assert time.monotonic() < until, f'public {name} readiness deadline'
@@ -123,6 +124,8 @@ def suite(control, cli, native, boot, fixture, manager_recovery=False):
                'max_resources': {'cpu_millis': 2000, 'memory_bytes': 512 * 1024**2, 'pids': 256},
                'capacity': {'cpu_millis': 2000, 'memory_bytes': 2 * 1024**3, 'max_vms': 2},
                'max_ttl_seconds': 300}
+        if memory_contract:
+            cfg['checkpoints'] = {'max_bytes': 4 * 1024**3, 'max_checkpoints': 2}
         config.write_text(json.dumps(cfg)); config.chmod(0o600)
         manager = Manager(native, config, cfg)
         manager.start()
@@ -132,9 +135,18 @@ def suite(control, cli, native, boot, fixture, manager_recovery=False):
         assert len(profiles) == 1 and profiles[0]['id'] == 'local-firecracker', profiles
         assert profiles[0]['availability'] == 'available', profiles
         expected = {'commands', 'files', 'pause', 'network_isolation', 'artifacts'}
-        assert set(profiles[0]['capabilities']) == expected, profiles
+        if memory_contract:
+            expected.add('memory_snapshot')
+        assert set(profiles[0]['capabilities']) == expected, (profiles, [json.loads(path.read_text()) for path in (root / 'memory-probes').glob('*.json')])
         report['observations']['profiles'] = profiles
         report['cases'].append('native_only_worker_probes_real_KVM_with_no_Docker_profiles_or_connection')
+        if memory_contract:
+            from firecracker_memory_public_contract import exercise
+            exercise(client, endpoint, token, cli, native, config, fixture, root,
+                     manager, start, stop, terminate, report, sandboxes, memory_snapshots)
+            report['scope'] = 'actual native public memory capture and single-use retained execution restoration; full M4-M6 remain unaccepted'
+            report['result'] = 'passed'
+            return report
 
         before = client.list()['items']
         for capability in ['memory_snapshot', 'rootfs_snapshot', 'volume_snapshot', 'network_policy', 'secret_injection', 'isolated_sessions', 'pty']:
@@ -270,6 +282,21 @@ def suite(control, cli, native, boot, fixture, manager_recovery=False):
         cleanup_errors = []
         collection_attempt_errors = []
         records = []
+        if memory_contract and client:
+            # Use public desired state while the worker is still alive. This
+            # also closes an admitted target that never acquired a VM journal.
+            for sid in sandboxes:
+                try:
+                    terminate(sid)
+                except Exception as error:
+                    collection_attempt_errors.append(f'public target collection: {type(error).__name__}: {error}')
+            for snapshot in memory_snapshots:
+                try:
+                    complete(client.delete_snapshot(snapshot, 'finally-' + snapshot))
+                    value = client.snapshot(snapshot)
+                    assert value['state'] == 'collected' and value['cleanup'] == 'complete', value
+                except Exception as error:
+                    collection_attempt_errors.append(f'public snapshot collection: {type(error).__name__}: {error}')
         for name in ['worker', 'api']:
             try:
                 stop(name)
@@ -334,6 +361,41 @@ def suite(control, cli, native, boot, fixture, manager_recovery=False):
                         for process in after['processes'].values()),after
                 except Exception as error:
                     cleanup_errors.append(f'final drain observation: {type(error).__name__}: {error}')
+        if memory_contract and manager:
+            # Shutdown aborts client calls, drains capture producers and collects
+            # every native generation. Re-inventory afterward: an interrupted
+            # probe may have published a journal after the earlier inventory.
+            final_records, captures = [], []
+            for path in sorted((root / 'records').glob('*.json')):
+                try:
+                    value = json.loads(path.read_bytes())
+                    assert value['owner']['installation_id'] == installation
+                    after = manager.observe(value)
+                    assert value['phase'] == 'collected' and not any(after['paths'].values()), after
+                    assert all(not process['present'] or process.get('identity_start_matches') is False
+                               for process in after['processes'].values()), after
+                    final_records.append({'owner': value['owner'], **after})
+                except Exception as error:
+                    cleanup_errors.append(f'final memory VM observation: {type(error).__name__}: {error}')
+            for path in sorted((root / 'checkpoints').glob('capture-*.json')):
+                try:
+                    capture = json.loads(path.read_bytes())['intent']['source']['capture']
+                    collect_config = fixture / f'collect-memory-{uuid.UUID(capture)}.json'
+                    collect_config.write_text(json.dumps({'root': str(root / 'checkpoints'),
+                        'installation': installation, 'capture': capture, 'policy': manager.cfg['checkpoints']}))
+                    collect_config.chmod(0o400)
+                    result = subprocess.run([str(native), 'checkpoint-collect', '--config', str(collect_config)],
+                                            capture_output=True, timeout=45)
+                    assert result.returncode == 0, result.stderr.decode(errors='replace')[-2000:]
+                    value = json.loads(result.stdout)
+                    assert value['objects_absent'] and value['reserved_bytes'] == 0, value
+                    assert all(not os.path.lexists(root / 'checkpoints' / f'capture-{capture}-{role}.bin')
+                               for role in ['state', 'memory', 'disk'])
+                    captures.append(value)
+                except Exception as error:
+                    cleanup_errors.append(f'final checkpoint collection: {type(error).__name__}: {error}')
+            report['observations']['records_after_final_drain'] = final_records
+            report['observations']['checkpoints_after_final_collection'] = captures
         if collection_attempt_errors:
             report['collection_attempt_errors']=collection_attempt_errors
         report['observations']['service_log_tails'] = {name: path.read_text(errors='replace')[-5000:]

@@ -74,6 +74,9 @@ use utoipa::OpenApi;
     SnapshotState,
     SnapshotCreated,
     SnapshotPage,
+    RestoreSnapshot,
+    RestoredExecution,
+    SnapshotRestored,
     Operation,
     OperationState
 )))]

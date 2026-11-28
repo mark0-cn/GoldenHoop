@@ -6,9 +6,10 @@ also requires positive collection of that restoration target.
 
 The gateway, Rust/Python clients and CLI expose snapshot admission, stored reads,
 pagination and deletion intent. Memory capture still requires a currently
-advertised and available MemorySnapshot capability. Native registration keeps
-that capability off until actual public restoration and profile acceptance are
-complete. Rootfs/volume capture, templates, combined
+advertised and available MemorySnapshot capability. Native registration enables
+it only after the configured [actual continuation probe](native-memory-capability.md)
+confirms retained RAM/execution state and positive resource/object collection.
+The public KVM workflow is a separate release gate. Rootfs/volume capture, templates, combined
 M4 and complete M5-M6 remain required in [roadmap.md](roadmap.md).
 
 ## Routes and source authorization

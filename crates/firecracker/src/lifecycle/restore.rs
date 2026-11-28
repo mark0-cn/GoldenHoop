@@ -7,6 +7,7 @@ use crate::checkpoint::{
         restore::{RestoreAdmission, RestoreIntent, RestoreSession},
     },
 };
+use goldenhoop_runtime::RuntimeHandle;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -15,6 +16,10 @@ pub struct ManagedRestoreRequest {
     pub request: CreateSandbox,
     pub reference: CheckpointReference,
     pub restoration: Uuid,
+    /// Public restoration binds the exact captured source generation. Legacy
+    /// private requests remain readable, but never acquire this stronger proof.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_source: Option<RuntimeHandle>,
 }
 impl ManagedRestoreRequest {
     pub(crate) fn digest(&self) -> Result<String> {
@@ -35,6 +40,17 @@ impl ManagedRestoreRequest {
             self.sandbox.created_at,
             self.sandbox.expires_at,
         ))?);
+        if let Some(source) = &self.expected_source {
+            if source.sandbox_id.is_nil()
+                || source.sandbox_id == self.sandbox.id
+                || source.profile != PROFILE
+                || source.backend_ref.is_empty()
+            {
+                return Err(invalid("native expected restoration source differs").into());
+            }
+            hash.update(b"\0expected-source.v1\0");
+            hash.update(serde_json::to_vec(source)?);
+        }
         Ok(format!("{:x}", hash.finalize()))
     }
 }
@@ -43,11 +59,31 @@ impl ManagedRestoreRequest {
 #[serde(deny_unknown_fields)]
 pub(crate) struct RestoreBinding {
     pub intent: RestoreIntent,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_source: Option<RuntimeHandle>,
 }
 impl RestoreBinding {
     pub(crate) fn validate(&self, cfg: &DriverConfig, record: &VmJournal) -> Result<()> {
         let intent = &self.intent;
         let runtime = &intent.runtime;
+        if let Some(source) = &self.expected_source {
+            let generation = source
+                .backend_ref
+                .rsplit(':')
+                .next()
+                .and_then(|value| Uuid::parse_str(value).ok())
+                .ok_or_else(|| invalid("native restore expected source generation is missing"))?;
+            if generation.is_nil()
+                || source.sandbox_id.is_nil()
+                || source.sandbox_id == record.owner.sandbox_id
+                || source
+                    != &driver::native_handle(cfg.installation_id, source.sandbox_id, generation)
+            {
+                return Err(
+                    invalid("native restore expected source journal binding differs").into(),
+                );
+            }
+        }
         if cfg.checkpoints.is_none()
             || intent.reference.installation != cfg.installation_id
             || intent.reference.capture.is_nil()
@@ -301,10 +337,14 @@ mod tests {
                     manifest_sha256: "a".repeat(64),
                 },
                 restoration: Uuid::new_v4(),
+                expected_source: expired.then(|| {
+                    driver::native_handle(cfg.installation_id, Uuid::new_v4(), Uuid::new_v4())
+                }),
             };
             let generation = Uuid::new_v4();
             let paths = cfg.paths(generation).unwrap();
             let binding = RestoreBinding {
+                expected_source: operation.expected_source.clone(),
                 intent: RestoreIntent {
                     reference: operation.reference.clone(),
                     runtime: crate::checkpoint::CheckpointRuntime {
@@ -365,6 +405,26 @@ mod tests {
             assert_eq!(handle.sandbox_id, operation.sandbox.id);
             assert!(handle.backend_ref.ends_with(&generation.to_string()));
             let mut changed = operation.clone();
+            changed.expected_source = Some(driver::native_handle(
+                cfg.installation_id,
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+            ));
+            assert_ne!(changed.digest().unwrap(), operation.digest().unwrap());
+            assert_eq!(
+                engine.checkpoint_restore(&changed).await.unwrap_err().code,
+                ErrorCode::Conflict
+            );
+            assert_eq!(
+                engine
+                    .checkpoint_restore_collect(&changed)
+                    .await
+                    .unwrap_err()
+                    .code,
+                ErrorCode::Conflict
+            );
+            assert_eq!(std::fs::read(&path).unwrap(), original);
+            changed = operation.clone();
             changed.restoration = Uuid::new_v4();
             assert_eq!(
                 engine.checkpoint_restore(&changed).await.unwrap_err().code,
