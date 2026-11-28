@@ -72,12 +72,13 @@ def exercise(client, endpoint, token, cli, native, config, fixture, root,
     probes = [json.loads(path.read_text()) for path in (root / 'memory-probes').glob('*.json')]
     assert len(probes) == 1 and probes[0]['checked'] and probes[0]['collected'], probes
     proof = probes[0]
+    observed['capability_probe'] = {'receipt': proof}
     for sid in [proof['source']['id'], proof['target']['id']]:
         value = record(sid)
         assert value['phase'] == 'collected' and not any(manager.observe(value)['paths'].values()), value
-    proof_status = native_call({'operation': 'checkpoint_inspect', 'capture': proof['capture']})
+    proof_status = native_call({'operation': 'checkpoint_collect', 'capture': proof['capture']})
+    observed['capability_probe']['checkpoint'] = proof_status
     assert proof_status['objects_absent'] and proof_status['reserved_bytes'] == 0, proof_status
-    observed['capability_probe'] = {'receipt': proof, 'checkpoint': proof_status}
     report['cases'].append('memory_capability_requires_actual_RAM_continuation_and_positive_probe_VM_and_object_collection')
 
     created = client.create(original, 'memory-source'); sid = created['sandbox']['id']; sandboxes.append(sid)
@@ -223,7 +224,7 @@ def exercise(client, endpoint, token, cli, native, config, fixture, root,
     complete(client.delete_snapshot(snapshot, 'public-delete'))
     deleted = client.snapshot(snapshot)
     assert deleted['state'] == 'collected' and deleted['cleanup'] == 'complete', deleted
-    closed = native_call({'operation': 'checkpoint_inspect', 'capture': snapshot})
+    closed = native_call({'operation': 'checkpoint_collect', 'capture': snapshot})
     assert closed['objects_absent'] and closed['reserved_bytes'] == 0, closed
     with Client(endpoint, global_owner) as creator:
         replay = creator.restore_snapshot(snapshot, request, 'public-restore')
