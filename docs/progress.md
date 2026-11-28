@@ -52,6 +52,12 @@ inspection orchestration, fresh independent cold boots, public rootfs operations
 volumes, immutable templates, remaining memory coverage and combined M4
 acceptance remain required, together with complete M5-M6.
 
+The accepted guest-barrier increment is fast-forwarded to main at87afb4b. Its
+owned working copy is [collected](evidence/m4-rootfs-capture-worktree-collection.json)
+only after all28 changed files were byte-exact against published main. Both the
+directory and Git worktree registration are positively absent; source, evidence,
+the candidate branch and useful caches remain.
+
 [Actual runsc46124741317](https://github.com/mark0-cn/GoldenHoop/actions/runs/46124741317)
 accepts the private read-only rootfs inspector at8a776b9: all18 groups pass with377
 byte-verified inputs and Complete collection. The separate trusted transport
