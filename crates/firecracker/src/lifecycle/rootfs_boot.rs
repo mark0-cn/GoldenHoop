@@ -106,7 +106,6 @@ impl RootfsBootBinding {
             || self.target.path() != cfg.paths(record.owner.generation)?.root
             || record.selected_image.is_some()
             || record.restore.is_some()
-            || record.resources.pids != self.manifest.intent.boot.workload_pids
             || record.artifacts != cfg.rootfs_boot_artifacts(self)?
         {
             return Err(

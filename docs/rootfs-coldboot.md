@@ -9,6 +9,9 @@ The private manager `rootfs_boot` request binds an immutable RootfsReference,
 operation, target sandbox, resources and absolute lifetime. It can also bind the
 original source handle. Ordinary boot, prepared-image input and single-use memory
 restoration remain separate kinds. Existing journals omit the new optional field.
+The inspected guest file's default task limit is a pinned file value. The trusted
+host chooses each target's admitted limit through its kernel boot argument and
+checks the actual guest/cgroups; that limit may differ from the file default.
 
 The manager validates Ready metadata and the pinned kernel/VMM/guest contract,
 writes the target journal, then reserves a permanent per-target source reference.

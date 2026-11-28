@@ -169,6 +169,98 @@ fn root() -> bool {
 }
 
 #[test]
+fn native_rootfs_boot_keeps_file_default_pids_separate_from_target_limits() {
+    if !root() {
+        return;
+    }
+    use crate::lifecycle::{DriverConfig, RootfsBootBinding, VmJournal};
+    use crate::machine::{Artifact, BootInput, RootfsCapturePolicy};
+    use goldenhoop_protocol::ResourceLimits;
+    let fixture = Fixture::new();
+    let directory = tempfile::Builder::new()
+        .prefix("ghb-")
+        .tempdir_in("/var/lib")
+        .unwrap();
+    let vm = directory.path().join("vm");
+    std::fs::create_dir(&vm).unwrap();
+    std::fs::set_permissions(&vm, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let manifest = fixture.manifest.clone();
+    let boot = &manifest.intent.boot;
+    let asset = |sha: &str, size| Artifact {
+        path: fixture.source.clone(),
+        sha256: sha.into(),
+        size,
+    };
+    let cfg = DriverConfig {
+        installation_id: manifest.intent.source.installation,
+        data_root: directory.path().into(),
+        artifacts: BootInput {
+            firecracker: asset(&boot.firecracker_sha256, 512),
+            jailer: asset(&boot.jailer_sha256, 512),
+            kernel: asset(&boot.kernel.sha256, boot.kernel.size_bytes),
+            rootfs: asset(&manifest.disk.sha256, manifest.disk.size_bytes),
+        },
+        supervisor: asset(&boot.firecracker_sha256, 512),
+        image: format!("sha256:{}", manifest.disk.sha256),
+        prepared_images: None,
+        checkpoints: None,
+        rootfs: Some(RootfsCapturePolicy {
+            store: RootfsStorePolicy {
+                max_bytes: 128 * MIB,
+                max_captures: 2,
+            },
+            inventory: fixture.inventory.clone(),
+            guest: RootfsGuestConfig {
+                control_port: boot.control_port,
+                pids: boot.workload_pids,
+            },
+            guest_config: boot.guest_config.clone(),
+            inspector_image: None,
+        }),
+        max_resources: ResourceLimits {
+            cpu_millis: 1000,
+            memory_bytes: 256 * MIB,
+            pids: 256,
+        },
+        capacity: Default::default(),
+        max_ttl_seconds: 300,
+    };
+    let generation = Uuid::new_v4();
+    let sandbox = Uuid::new_v4();
+    let binding = RootfsBootBinding {
+        target: RootfsBootTarget::observe(
+            manifest.reference().unwrap(),
+            Uuid::new_v4(),
+            sandbox,
+            generation,
+            "e".repeat(64),
+            cfg.paths(generation).unwrap().root,
+        )
+        .unwrap(),
+        manifest: manifest.clone(),
+    };
+    let record:VmJournal=serde_json::from_value(serde_json::json!({
+        "format":1,"owner":{"installation_id":cfg.installation_id,"sandbox_id":sandbox,"generation":generation,"request_sha256":"e".repeat(64),
+            "expires_at":chrono::Utc::now()+chrono::Duration::seconds(60),"host_boot_id":crate::lifecycle::boot_id().unwrap(),"boot_deadline_ns":crate::lifecycle::boottime_ns().unwrap()+60_000_000_000u64},
+        "artifacts":cfg.rootfs_boot_artifacts(&binding).unwrap(),"rootfs_boot":binding.clone(),
+        "resources":{"cpu_millis":500,"memory_bytes":256*MIB,"pids":32},"supervisor":null,
+        "supervisor_artifact":cfg.supervisor,"original_cgroup":"/sys/fs/cgroup","process":null,"phase":"reserved","ever_ready":false,"error":null
+    })).unwrap();
+    assert_eq!(binding.manifest.intent.boot.workload_pids, 256);
+    assert_eq!(record.resources.pids, 32);
+    binding.validate(&cfg, &record).unwrap();
+    let mut changed = cfg.clone();
+    changed.rootfs.as_mut().unwrap().guest.pids = 512;
+    assert!(binding.validate(&changed, &record).is_err());
+    let mut changed = cfg;
+    changed.rootfs.as_mut().unwrap().guest_config.sha256 = "f".repeat(64);
+    assert!(binding.validate(&changed, &record).is_err());
+    let path = directory.path().to_owned();
+    directory.close().unwrap();
+    assert!(!path.exists());
+    fixture.close();
+}
+#[test]
 fn two_durable_boot_targets_fence_gc_until_both_independent_copies_are_acknowledged() {
     if !root() {
         return;

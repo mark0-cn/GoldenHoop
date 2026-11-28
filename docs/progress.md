@@ -18,6 +18,27 @@ strict workspace/all-target clippy,333 Rust and36 SDK tests; [final Linux checks
 pass strict native/images all-target clippy and21 focused tests. Both bind the
 same408 runtime inputs. The final check image is positively
 [collected](evidence/m4-rootfs-coldboot-final-image-collection.json).
+The [first actual run46150669306](evidence/m4-rootfs-coldboot-46150669306-archive.json)
+retains21 completed groups and409 verified inputs, then refuses the first target
+before its VM allocation: the protected guest file defaults to256 tasks, while
+the original source and requested target use32 through the trusted kernel boot
+argument. The draft incorrectly required those independent values to match.
+All owned VM/provider/disk/quota/fixture collection is Complete. Admission now
+keeps file integrity/boot pins separate from target resource limits; the existing
+host admission, kernel argument and observed guest/cgroup checks still enforce
+the target's limit. A new local regression checks32 against the unchanged256
+file default and still rejects changed protected file/config pins. This Rust
+correction needs new source-bound local, full CI and actual KVM gates.
+[Corrected Windows checks](evidence/m4-rootfs-coldboot-windows-limits.json) pass
+format, strict workspace/all-target clippy,333 Rust and36 SDK tests. [Corrected
+Linux checks](evidence/m4-rootfs-coldboot-linux-limits.json) pass strict all-target
+native/images clippy and22 focused tests on the same408 runtime inputs. The exact
+check image is [collected](evidence/m4-rootfs-coldboot-limits-image-collection.json).
+The [PID-default diagnosis](evidence/m4-rootfs-coldboot-pid-default-diagnosis.json)
+binds the actual failed report and unchanged kernel/guest enforcement source.
+The [pinned OpenSandbox comparison](evidence/m4-rootfs-coldboot-upstream-snapshot-reference.json)
+separates persistent artifact/restore configuration from requested target limits;
+GoldenHoop validates its own kernel and guest behavior independently.
 
 The private M4 durable Rust isolated-inspector parent and `rootfs_validate` are
 accepted on frozen sourced82fa05. [Actual KVM/runsc46147252006](evidence/m4-rootfs-inspector-parent-46147252006-archive.json)

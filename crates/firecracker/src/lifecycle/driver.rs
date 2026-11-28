@@ -956,14 +956,10 @@ impl NativeEngine {
             )
             .into());
         }
-        if let Some(binding) = &rootfs_boot
-            && (restore.is_some()
-                || input.is_some()
-                || request.resources.pids != binding.manifest.intent.boot.workload_pids)
-        {
+        if rootfs_boot.is_some() && (restore.is_some() || input.is_some()) {
             return Err(ApiError::new(
                 ErrorCode::InvalidRequest,
-                "rootfs target resources or boot kind differ",
+                "rootfs boot cannot mix prepared input or memory restoration",
             )
             .into());
         }
