@@ -13,6 +13,31 @@ import httpx
 from goldenhoop import ApiError, Client, Command
 
 
+def check_reconnection(previous, current, before, after, kernel):
+    assert current['ready'] and previous['ready']
+    assert current['installation_id'] == previous['installation_id'] == after['owner']['installation_id']
+    assert current['epoch'] != previous['epoch'] and current['process'] != previous['process']
+    assert current['config_sha256'] == previous['config_sha256']
+    assert current['process']['boot_id'] == previous['process']['boot_id'] == after['owner']['host_boot_id']
+    recovery = current['recovery']
+    assert recovery['previous_epoch'] == previous['epoch'] and recovery['previous_process'] == previous['process']
+    for field in ['owner', 'restore', 'process', 'supervisor']:
+        assert after[field] == before[field], field
+    assert after['phase'] == 'running', after['phase']
+    entries = [entry for entry in recovery['generations']
+               if entry['sandbox_id'] == after['owner']['sandbox_id'] and entry['generation'] == after['owner']['generation']]
+    assert len(entries) == 1 and entries[0]['authenticated'] and entries[0]['observed_state'] == 'running', entries
+    assert len(kernel['paths']) == 3 and all(kernel['paths'].values()), kernel
+    suffix = uuid.UUID(current['installation_id']).hex + '-' + uuid.UUID(after['owner']['generation']).hex
+    for role, prefix in [('supervisor', 'ghs-'), ('process', 'ghv-')]:
+        value = kernel['processes'][role]
+        assert value['present'] and value['identity_start_matches'] and value['state'] not in ['Z', 'X', 'x'], value
+        assert '0::/' + prefix + suffix in value['cgroup'].splitlines(), value
+    # A surviving supervisor can be reparented after its original manager dies.
+    # It remains the original authenticated parent of this same VMM.
+    assert kernel['processes']['process']['parent_pid'] == after['supervisor']['pid'], kernel
+
+
 def exercise(client, endpoint, token, cli, native, config, fixture, root,
              manager, start, stop, terminate, report, sandboxes, snapshots):
     observed = report['observations']['public_memory'] = {}
@@ -181,6 +206,7 @@ def exercise(client, endpoint, token, cli, native, config, fixture, root,
     target_native = record(target)
     assert target_native['restore']['expected_source'] == source_handle
     assert target_native['owner']['generation'] != source_native['owner']['generation']
+    manager.assert_parent(target_native)
     for path in [f'sandboxes/{target}', f'sandboxes/{target}/restoration', f'operations/{reply["operation"]["id"]}', f'executions/{new}']:
         denied(source_owner, 'GET', path)
     denied(source_owner, 'POST', f'executions/{new}/cancel')
@@ -195,11 +221,15 @@ def exercise(client, endpoint, token, cli, native, config, fixture, root,
 
     # The original retained job remains alive through manager SIGKILL and worker
     # reconnect. Their native generation, supervisor and VMM must be unchanged.
-    manager.hard_kill(); stop('worker', kill=True); manager.start(); start('worker')
+    death = manager.hard_kill()
+    observed['manager_death'] = death
+    stop('worker', kill=True); manager.start(); start('worker')
     after_restart = record(target)
-    for field in ['owner', 'restore', 'process', 'supervisor']:
-        assert after_restart[field] == target_native[field], field
-    manager.assert_parent(after_restart)
+    observed['manager_after_restart'] = manager.owner
+    observed['target_after_restart'] = after_restart
+    observed['target_kernel_after_restart'] = manager.observe(after_restart)
+    check_reconnection(death['owner'], manager.owner, target_native, after_restart,
+                       observed['target_kernel_after_restart'])
     probes_after = [json.loads(path.read_text()) for path in (root / 'memory-probes').glob('*.json')]
     assert len(probes_after) == 1 and probes_after[0]['id'] == proof['id'], probes_after
     assert 'memory_snapshot' in client.profiles()[0]['capabilities']

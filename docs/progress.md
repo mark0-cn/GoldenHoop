@@ -30,10 +30,25 @@ later public flow waits for a second ordinary command to run concurrently with
 the first, contrary to the existing per-sandbox serialization contract. The
 [corrected harness](evidence/m4-memory-public-serialized-command-validation.json)
 uses separate source/restore pairs for RAM success and retained cancellation.
-All399 source inputs match and collection is Complete; the complete public KVM
-replay remains required before main promotion. Runtime inputs remain byte-for-byte
-identical to the passing392-input CI.
+All399 source inputs match and collection is Complete. The next actual
+[run46115453629](https://github.com/mark0-cn/GoldenHoop/actions/runs/46115453629)
+passes public capture/source collection, foreign-generation refusal, SDK/CLI
+restoration and exact target grants. After real manager SIGKILL, authenticated
+Running recovery retains the same target/supervisor/VMM; the harness incorrectly
+requires that surviving supervisor to be a direct child of its new manager.
+The [reconnection correction](evidence/m4-memory-public-reconnection-validation.json)
+keeps fresh-create parent checks and instead requires the prior-manager/config/
+boot recovery chain, unchanged target identities, authenticated Running recovery,
+live original kernel processes, exact cgroups/paths and original VMM parenthood.
+Ten pure-checker negative controls pass; their synthetic kernel portions remain
+distinct from the required new KVM run. All399 inputs match and collection is
+Complete. The full public gate remains pending before main promotion. Runtime
+inputs remain byte-for-byte identical to the passing392-input CI.
 Rootfs/volume snapshots, templates, combined M4 and complete M5-M6 remain open.
+The next [rootfs and immutable-template contract](native-rootfs-templates.md)
+records the pinned OpenSandbox persistence/readiness comparison and required
+cold-boot, independent-disk, version/reference and failure-recovery evidence. It
+is planned work and adds no advertised capability.
 The [inspection diagnosis](evidence/m4-memory-probe-inspection-diagnosis.json)
 separates the deterministic local defect from the older hardware reports whose
 exact failed step was not recorded.
