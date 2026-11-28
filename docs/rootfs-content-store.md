@@ -1,7 +1,10 @@
 # Private independent rootfs content
 
 The Rust `rootfs` module implements a separate format1 ext4 manifest and local
-disk-content producer/store. This candidate has not yet been connected to the
+disk-content producer/store. It passes source-bound
+[component acceptance](evidence/m4-rootfs-store-acceptance-summary.json), with
+actual local file/process checks and full Windows/Ubuntu/static musl CI. It
+has not yet been connected to the
 native manager's capture coordinator, actual isolated inspection transport,
 fresh cold boots, or public REST/SDK/CLI operations. It grants no public rootfs
 capability. The complete requirements in

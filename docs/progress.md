@@ -1,6 +1,6 @@
 # Progress
 
-The next M4 candidate adds a separate Rust rootfs manifest, independent sparse
+The private M4 disk-content/store increment adds a separate Rust rootfs manifest, independent sparse
 disk production and persistent content store. Capture identity, boot/protected
 assets, source image, inspector inventory, logical quota and original
 producer/VMM identities are recorded before effects. A disk inode receipt is
@@ -21,7 +21,15 @@ strict workspace/all-target clippy,333 Rust tests and36 Python SDK tests. Window
 and focused Linux bind the same401 current runtime inputs. An intermediate
 Windows check passed its tests but was invalidated by the Linux capture-ID
 binding correction; the unchanged-source follow-up is the accepted local check.
-Full CI remains pending.
+[Full CI46133505657](https://github.com/mark0-cn/GoldenHoop/actions/runs/46133505657)
+passes Windows/Ubuntu workspace format, strict all-target clippy, tests/SDK
+contracts and the Linux static musl checks, with all401 inputs verified in
+[the archive](evidence/m4-rootfs-store-ci-46133505657.json). Its826 Rust and72
+Python passes are aggregate counts across jobs. The
+[component acceptance](evidence/m4-rootfs-store-acceptance-summary.json) binds
+the final local checks, full CI, upstream review and exact image/container
+collection. The active rootfs working copy continues into capture/coordinator
+integration, retaining its useful workspace compilation cache.
 Synthetic guest/inspector receipts in these file/process tests are not actual
 KVM/runsc evidence. Native manager capture/inspection orchestration, new cold
 boots, public rootfs operations, volumes/templates, remaining memory coverage
