@@ -43,6 +43,11 @@ acceptance commit1838637 on main after both source-bound gates passed. Local and
 published main are byte-identical for all403 runtime inputs. The next isolated
 Rust inspector-parent implementation continues in its own active working copy;
 its draft checks do not extend this component's accepted scope.
+The completed producer working copy is now [collected](evidence/m4-rootfs-producer-worktree-collection.json):
+all3700 tracked files remain in the identical committed tree on main, with333
+checkout-only CRLF/LF differences explicitly checked. Its directory and Git
+worktree registration are absent. The active inspector copy and shared build
+caches are retained; no unrelated Docker or user resources were removed.
 The earlier [CI46137560090](evidence/m4-rootfs-producer-ci-46137560090.json)
 remains distinct pre-correction evidence. Native rootfs public
 capabilities, product isolated-inspector transport, cold boot, volumes/templates
