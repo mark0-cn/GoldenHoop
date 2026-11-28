@@ -273,70 +273,109 @@ impl InspectionIntent {
         let actual_mounts = actual.mounts.as_deref().unwrap_or_default();
         let requested = mounts(self, inspector);
         let observed_mounts = host.mounts.as_deref().unwrap_or_default();
-        if recorded_id.is_some_and(|v| v != id)
-            || actual.image.as_deref() != Some(&self.image)
-            || actual.name.as_deref() != Some(format!("/{}", self.resource(part)).as_str())
-            || actual.restart_count.unwrap_or(0) != 0
-            || config.user != expected.user
-            || config.hostname != expected.hostname
-            || config.entrypoint != expected.entrypoint
-            || config.cmd != expected.cmd
-            || config.tty == Some(true)
-            || config.healthcheck.is_some()
-            || config.open_stdin != Some(inspector)
-            || config.stdin_once == Some(true)
-            || !config.labels.as_ref().is_some_and(|v| {
-                self.labels(part)
-                    .is_ok_and(|wanted| wanted.iter().all(|(k, x)| v.get(k) == Some(x)))
-            })
-            || host.runtime != wanted.runtime
-            || host.network_mode != wanted.network_mode
-            || host.readonly_rootfs != Some(true)
-            || host.privileged == Some(true)
-            || host.ipc_mode != wanted.ipc_mode
-            || host.pid_mode.as_deref().is_some_and(|v| !v.is_empty())
-            || host.uts_mode.as_deref().is_some_and(|v| !v.is_empty())
-            || host.binds.as_ref().is_some_and(|v| !v.is_empty())
-            || host.tmpfs.as_ref().is_some_and(|v| !v.is_empty())
-            || host.devices.as_ref().is_some_and(|v| !v.is_empty())
-            || host.device_requests.as_ref().is_some_and(|v| !v.is_empty())
-            || caps(&host.cap_add) != caps(&wanted.cap_add)
-            || host.cap_drop.as_deref() != Some(&["ALL".into()])
-            || !host.security_opt.as_ref().is_some_and(|v| {
-                v.iter()
-                    .any(|v| v == "no-new-privileges" || v == "no-new-privileges:true")
-            })
-            || host.memory != wanted.memory
-            || host.memory_swap != wanted.memory_swap
-            || host.pids_limit != wanted.pids_limit
-            || host.cpu_quota != wanted.cpu_quota
-            || host.cpu_period != wanted.cpu_period
-            || host.nano_cpus.is_some_and(|v| v != 0)
-            || actual_mounts.len() != requested.len()
-            || observed_mounts.len() != requested.len()
-            || !requested.iter().all(|m| {
-                actual_mounts.iter().any(|v| {
-                    v.typ.as_deref() == Some("volume")
-                        && v.name == m.source
-                        && v.destination == m.target
-                        && v.rw == Some(m.read_only != Some(true))
-                })
-            })
-            || !requested.iter().all(|m| {
-                observed_mounts.iter().any(|v| {
-                    v.typ == m.typ
-                        && v.source == m.source
-                        && v.target == m.target
-                        && v.read_only == m.read_only
-                        && v.volume_options
-                            .as_ref()
-                            .is_some_and(|o| o.no_copy == Some(true))
-                })
-            })
-        {
-            return Err(invalid(
-                "rootfs inspector immutable object or isolated placement differs",
-            ));
+        // Moby omits Mount.ReadOnly=false and serializes an empty Cmd as null.
+        // Normalize only those defaults; required read-only mounts stay true.
+        let checks = [
+            ("recorded_id", !recorded_id.is_some_and(|v| v != id)),
+            ("image", actual.image.as_deref() == Some(&self.image)),
+            (
+                "name",
+                actual.name.as_deref() == Some(format!("/{}", self.resource(part)).as_str()),
+            ),
+            ("restart_count", actual.restart_count.unwrap_or(0) == 0),
+            ("user", config.user == expected.user),
+            ("hostname", config.hostname == expected.hostname),
+            ("entrypoint", config.entrypoint == expected.entrypoint),
+            (
+                "cmd",
+                config.cmd.as_deref().unwrap_or_default()
+                    == expected.cmd.as_deref().unwrap_or_default(),
+            ),
+            ("tty", config.tty != Some(true)),
+            ("healthcheck", config.healthcheck.is_none()),
+            ("open_stdin", config.open_stdin == Some(inspector)),
+            ("stdin_once", config.stdin_once != Some(true)),
+            (
+                "labels",
+                config.labels.as_ref().is_some_and(|v| {
+                    self.labels(part)
+                        .is_ok_and(|wanted| wanted.iter().all(|(k, x)| v.get(k) == Some(x)))
+                }),
+            ),
+            ("runtime", host.runtime == wanted.runtime),
+            ("network_mode", host.network_mode == wanted.network_mode),
+            ("readonly_rootfs", host.readonly_rootfs == Some(true)),
+            ("privileged", host.privileged != Some(true)),
+            ("ipc_mode", host.ipc_mode == wanted.ipc_mode),
+            (
+                "pid_mode",
+                !host.pid_mode.as_deref().is_some_and(|v| !v.is_empty()),
+            ),
+            (
+                "uts_mode",
+                !host.uts_mode.as_deref().is_some_and(|v| !v.is_empty()),
+            ),
+            ("binds", !host.binds.as_ref().is_some_and(|v| !v.is_empty())),
+            ("tmpfs", !host.tmpfs.as_ref().is_some_and(|v| !v.is_empty())),
+            (
+                "devices",
+                !host.devices.as_ref().is_some_and(|v| !v.is_empty()),
+            ),
+            (
+                "device_requests",
+                !host.device_requests.as_ref().is_some_and(|v| !v.is_empty()),
+            ),
+            ("cap_add", caps(&host.cap_add) == caps(&wanted.cap_add)),
+            (
+                "cap_drop",
+                host.cap_drop.as_deref() == Some(&["ALL".into()]),
+            ),
+            (
+                "security_opt",
+                host.security_opt.as_ref().is_some_and(|v| {
+                    v.iter()
+                        .any(|v| v == "no-new-privileges" || v == "no-new-privileges:true")
+                }),
+            ),
+            ("memory", host.memory == wanted.memory),
+            ("memory_swap", host.memory_swap == wanted.memory_swap),
+            ("pids_limit", host.pids_limit == wanted.pids_limit),
+            ("cpu_quota", host.cpu_quota == wanted.cpu_quota),
+            ("cpu_period", host.cpu_period == wanted.cpu_period),
+            ("nano_cpus", !host.nano_cpus.is_some_and(|v| v != 0)),
+            (
+                "mount_count",
+                actual_mounts.len() == requested.len() && observed_mounts.len() == requested.len(),
+            ),
+            (
+                "mounted_volumes",
+                requested.iter().all(|m| {
+                    actual_mounts.iter().any(|v| {
+                        v.typ.as_deref() == Some("volume")
+                            && v.name == m.source
+                            && v.destination == m.target
+                            && v.rw == Some(m.read_only != Some(true))
+                    })
+                }),
+            ),
+            (
+                "requested_mounts",
+                requested.iter().all(|m| {
+                    observed_mounts
+                        .iter()
+                        .any(|v| crate::prepare::same_mount(v, m))
+                }),
+            ),
+        ];
+        let different = checks
+            .into_iter()
+            .filter_map(|(field, matches)| (!matches).then_some(field))
+            .collect::<Vec<_>>();
+        if !different.is_empty() {
+            return Err(invalid(&format!(
+                "rootfs inspector immutable object or isolated placement differs: {}",
+                different.join(", ")
+            )));
         }
         Ok(id.into())
     }
@@ -553,5 +592,136 @@ impl InspectionState {
             .ok_or_else(|| invalid("rootfs inspector output absent"))?;
         self.intent.validate_report(result)?;
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use goldenhoop_image_builder::RootfsGuestConfig;
+
+    fn fixture(inspector: bool) -> (InspectionIntent, ContainerInspectResponse) {
+        let asset = Content {
+            sha256: "a".repeat(64),
+            size_bytes: 512,
+        };
+        let intent = InspectionIntent {
+            installation_id: Uuid::new_v4(),
+            capture_id: Uuid::new_v4(),
+            image: format!("sha256:{}", "b".repeat(64)),
+            inventory: RootfsInspectionInventory {
+                format: 1,
+                builder_version: env!("CARGO_PKG_VERSION").into(),
+                agent: asset.clone(),
+                init: asset.clone(),
+                e2fsck: asset.clone(),
+                debugfs: asset.clone(),
+            },
+            request: RootfsInspectionRequest {
+                generation: Uuid::new_v4(),
+                disk: Content {
+                    sha256: "d".repeat(64),
+                    size_bytes: 64 * 1024 * 1024,
+                },
+                agent: asset.clone(),
+                init: asset.clone(),
+                guest: RootfsGuestConfig::default(),
+            },
+            guest_config: asset,
+        };
+        let body = intent.container(inspector).unwrap();
+        let mut config = serde_json::to_value(&body).unwrap();
+        config.as_object_mut().unwrap().remove("HostConfig");
+        if !inspector {
+            config["Cmd"] = serde_json::Value::Null;
+        }
+        let mut host = serde_json::to_value(&body.host_config).unwrap();
+        for mount in host["Mounts"].as_array_mut().unwrap() {
+            if mount["ReadOnly"] == false {
+                mount.as_object_mut().unwrap().remove("ReadOnly");
+            }
+        }
+        let mounted = mounts(&intent, inspector)
+            .iter()
+            .map(|mount| {
+                serde_json::json!({
+                    "Type": "volume", "Name": mount.source, "Destination": mount.target,
+                    "RW": mount.read_only != Some(true),
+                })
+            })
+            .collect::<Vec<_>>();
+        let part = if inspector {
+            InspectionPart::Inspector
+        } else {
+            InspectionPart::Seeder
+        };
+        let actual = serde_json::from_value(serde_json::json!({
+            "Id": "c".repeat(64), "Image": intent.image, "Name": format!("/{}", intent.resource(part)),
+            "RestartCount": 0, "Config": config, "HostConfig": host, "Mounts": mounted,
+        })).unwrap();
+        (intent, actual)
+    }
+
+    #[test]
+    fn rootfs_seeder_accepts_moby_omitted_false_and_null_empty_command() {
+        let (intent, mut actual) = fixture(false);
+        intent.validate_container(&actual, false, None).unwrap();
+        actual.config.as_mut().unwrap().cmd = Some(vec!["injected".into()]);
+        assert!(
+            intent
+                .validate_container(&actual, false, None)
+                .unwrap_err()
+                .to_string()
+                .ends_with(": cmd")
+        );
+    }
+
+    #[test]
+    fn rootfs_inspector_still_requires_readonly_input_and_runsc() {
+        let (intent, actual) = fixture(true);
+        intent.validate_container(&actual, true, None).unwrap();
+        for read_only in [None, Some(false)] {
+            let mut bad = actual.clone();
+            bad.host_config.as_mut().unwrap().mounts.as_mut().unwrap()[0].read_only = read_only;
+            assert!(intent.validate_container(&bad, true, None).is_err());
+        }
+        let mut bad = actual.clone();
+        bad.host_config.as_mut().unwrap().runtime = Some("runc".into());
+        assert!(
+            intent
+                .validate_container(&bad, true, None)
+                .unwrap_err()
+                .to_string()
+                .ends_with(": runtime")
+        );
+        let mut bad = actual;
+        bad.mounts.as_mut().unwrap()[0].rw = Some(true);
+        assert!(
+            intent
+                .validate_container(&bad, true, None)
+                .unwrap_err()
+                .to_string()
+                .ends_with(": mounted_volumes")
+        );
+    }
+
+    #[test]
+    fn rootfs_inspector_refuses_extra_host_mount_options() {
+        let (intent, mut actual) = fixture(true);
+        actual
+            .host_config
+            .as_mut()
+            .unwrap()
+            .mounts
+            .as_mut()
+            .unwrap()[0]
+            .bind_options = Some(MountBindOptions::default());
+        assert!(
+            intent
+                .validate_container(&actual, true, None)
+                .unwrap_err()
+                .to_string()
+                .ends_with(": requested_mounts")
+        );
     }
 }

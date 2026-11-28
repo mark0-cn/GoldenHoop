@@ -326,6 +326,12 @@ def suite(binary, boot, fixture, guest_barrier=False, guest_authority=False, man
                 report['observations']['rootfs_final_collection'] = collect_owned(cfg, manager, call, record)
             except Exception as error:
                 cleanup_errors.append('rootfs inspector collection: '+str(error))
+                report['observations']['rootfs_final_collection'] = dict(result='failed', error=str(error))
+                try:
+                    from firecracker_rootfs_inspector_parent_contract import observe_owned
+                    report['observations']['rootfs_final_collection']['remaining_provider_resources'] = observe_owned(cfg)
+                except Exception as observation_error:
+                    report['observations']['rootfs_final_collection']['observation_error'] = str(observation_error)
         manager_drained = False
         try:
             stop_error = manager.close()
@@ -347,6 +353,10 @@ def suite(binary, boot, fixture, guest_barrier=False, guest_authority=False, man
         try:
             assert manager_drained, 'production manager drain was not confirmed'
             assert report['observations']['manager']['process_collected']
+            if rootfs_inspector_parent:
+                rootfs_collection = report['observations'].get('rootfs_final_collection', {})
+                assert rootfs_collection.get('result') == 'passed', 'rootfs disk/provider collection was not confirmed'
+                assert rootfs_collection.get('original_provider_containers_and_volumes_absent') is True
             assert not original_group or not os.path.lexists(original_group)
             final_records = [json.loads(path.read_bytes()) for path in sorted((root/'records').glob('*.json'))]
             assert {v['owner']['sandbox_id'] for v in final_records} == {v['owner']['sandbox_id'] for v in records}

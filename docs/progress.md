@@ -45,8 +45,30 @@ Inspector completion likewise waits for final Ready after I/O settlement when
 a result was acknowledged. [Failed-run collection](evidence/m4-rootfs-inspector-parent-46143754573-archive.json)
 is Complete, including source disks, native processes/cgroups and provider resources.
 This harness-only correction leaves all405 compiled runtime inputs unchanged;
-the source-verified full CI remains applicable. Corrected actual runsc acceptance
-is pending.
+the source-verified full CI remains applicable to that harness-only correction.
+The [second actual run46145448266](evidence/m4-rootfs-inspector-parent-46145448266-actual.json)
+passes source recovery/capture but rejects its never-started seeder's Docker
+configuration before upload or inspector launch. The report's legacy Complete
+cleanup flag is incorrect for provider resources: native VM collection succeeded,
+but inspector container/volume reconciliation failed and provider absence was not
+established. Preserve that raw failed evidence and the
+[corrected assessment](evidence/m4-rootfs-inspector-parent-upstream-docker-defaults.json).
+An [actual local never-started fixture](evidence/m4-rootfs-inspector-parent-docker-defaults-probe.json)
+reproduces Moby's omitted false mount ReadOnly and null empty Cmd, then positively
+collects its exact container/volume. The validator now normalizes those equivalent
+defaults, reuses the prepared-image mount checks and reports differing field names.
+Three regression tests retain rejection of writable inspector input, runc fallback,
+injected commands and extra host mount options. Final collection now also requires
+positive rootfs disk/container/volume proof; failure retains the owned fixture and
+actual provider configuration. The Rust correction requires new source-bound local,
+full CI and actual runsc/KVM gates; the earlier CI does not cover it.
+The [corrected Windows checks](evidence/m4-rootfs-inspector-parent-windows-defaults.json)
+pass format, strict workspace/all-target clippy,333 Rust and36 SDK tests. The
+[corrected Linux checks](evidence/m4-rootfs-inspector-parent-linux-defaults.json)
+pass strict native/images all-target clippy and19 focused tests, including the
+three Docker boundary regressions. Both bind the same405 runtime inputs. The
+exact local check image is positively
+[collected](evidence/m4-rootfs-inspector-parent-defaults-image-collection.json).
 No new public capability, cold boot, template or complete M4-M6
 support is registered by this draft.
 

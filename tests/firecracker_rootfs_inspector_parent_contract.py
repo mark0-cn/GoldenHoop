@@ -34,6 +34,7 @@ def exercise(handle, primary, cfg, manager, call, rpc, record, report):
         while True:
             value = status(capture)
             job = meta(capture).get('inspection_job')
+            seen.setdefault('last_poll', {})[capture] = dict(status=value, journal=job)
             if job and job['phase'] == 'collected' and value['producer_settled']:
                 # I/O settlement precedes the final Ready acknowledgement.
                 # An acknowledged result must finish that publication too.
@@ -125,6 +126,27 @@ def exercise(handle, primary, cfg, manager, call, rpc, record, report):
     assert seen['interrupted_disk_absent']
     report['cases'].append('SIGKILL_actual_inspector_producer_reconciles_original_daemon_objects_and_host_receipt_without_replaying_authorization_or_adopting_unacknowledged_output')
     report['cases'].append('original_live_source_and_independent_ready_content_survive_inspector_producer_death_and_exact_secondary_disk_collection')
+
+
+def observe_owned(cfg):
+    """Retain actual owned provider configuration even when reconciliation fails."""
+    labels = ['--filter', 'label=dev.goldenhoop.installation='+cfg['installation_id'],
+              '--filter', 'label=dev.goldenhoop.role=rootfs-inspection']
+    containers = []
+    for cid in docker('ps', '-aq', '--no-trunc', *labels).decode().splitlines():
+        value = json.loads(docker('inspect', cid))[0]
+        assert value['Id'] == cid
+        assert value['Config']['Labels']['dev.goldenhoop.installation'] == cfg['installation_id']
+        assert value['Config']['Labels']['dev.goldenhoop.role'] == 'rootfs-inspection'
+        containers.append(value)
+    volumes = []
+    for name in docker('volume', 'ls', '-q', *labels).decode().splitlines():
+        value = json.loads(docker('volume', 'inspect', name))[0]
+        assert value['Name'] == name
+        assert value['Labels']['dev.goldenhoop.installation'] == cfg['installation_id']
+        assert value['Labels']['dev.goldenhoop.role'] == 'rootfs-inspection'
+        volumes.append(value)
+    return dict(containers=containers, volumes=volumes, original_provider_containers_and_volumes_absent=not containers and not volumes)
 
 
 def collect_owned(cfg, manager, call, record):

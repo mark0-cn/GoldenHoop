@@ -199,7 +199,7 @@ fn mounts(job: &ImageJob, builder: bool) -> Vec<Mount> {
     }
 }
 
-fn same_mount(actual: &Mount, expected: &Mount) -> bool {
+pub(crate) fn same_mount(actual: &Mount, expected: &Mount) -> bool {
     actual.typ == expected.typ
         && actual.source == expected.source
         && actual.target == expected.target
