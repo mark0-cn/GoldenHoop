@@ -16,6 +16,14 @@ producer after an acknowledged result; that branch still requires actual fault
 coverage. Fresh cold boots/public rootfs/templates/volumes and complete M4-M6
 remain pending.
 
+The [main promotion](evidence/m4-rootfs-inspector-parent-main-promotion.json)
+fast-forwards5ff94b4 after both frozen-source gates. The completed inspector
+worktree is [collected](evidence/m4-rootfs-inspector-parent-worktree-collection.json):
+all3736 tracked files remain in the identical committed tree/main, with333
+CRLF/LF-only checkout differences verified; its directory and Git registration
+are absent. The owned local containers, images and volumes are also absent.
+The active cold-boot worktree and useful shared caches remain.
+
 The original operation is persisted in the captured disk's
 record under the existing exclusive object lock, with immutable provider/host,
 request, producer, container and host-process identities. The parent uses a
