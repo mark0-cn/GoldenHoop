@@ -5,10 +5,13 @@ mod descriptor;
 mod driver;
 mod image;
 mod restore;
+mod rootfs_boot;
 pub use image::PreparedImagePolicy;
 pub use image::inherited_input;
 pub use restore::ManagedRestoreRequest;
 pub(crate) use restore::{CollectedNativeRestore, RestoreBinding};
+pub use rootfs_boot::RootfsBootRequest;
+pub(crate) use rootfs_boot::{CollectedRootfsBoot, RootfsBootBinding};
 mod manager;
 pub(crate) mod metadata;
 mod snapshots;
@@ -195,6 +198,8 @@ pub(crate) struct VmJournal {
     pub artifacts: BootInput,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selected_image: Option<goldenhoop_images::ReadyImageInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rootfs_boot: Option<RootfsBootBinding>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile_probe_context_sha256: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -496,6 +501,9 @@ pub enum DriverCall {
         handle: goldenhoop_runtime::RuntimeHandle,
         capture: Uuid,
     },
+    RootfsBoot {
+        boot: Box<RootfsBootRequest>,
+    },
     CheckpointCapture {
         handle: goldenhoop_runtime::RuntimeHandle,
         capture: Uuid,
@@ -575,6 +583,9 @@ pub async fn run_driver_call(config: PathBuf, request: PathBuf) -> Result<serde_
             }
             DriverCall::RootfsCollect { handle, capture } => {
                 driver.rootfs_read(&handle, capture, true).await?
+            }
+            DriverCall::RootfsBoot { boot } => {
+                serde_json::to_value(driver.rootfs_boot(&boot).await?).unwrap()
             }
             DriverCall::CheckpointCapture { handle, capture } => {
                 driver.checkpoint_capture(&handle, capture).await?

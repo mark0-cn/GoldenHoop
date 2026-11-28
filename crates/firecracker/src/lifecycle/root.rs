@@ -43,6 +43,25 @@ pub(crate) struct CollectedDirectory {
     parent_birth: (u64, u32),
 }
 impl Receipt {
+    pub(crate) fn binding_matches(
+        &self,
+        path: &Path,
+        generation: Uuid,
+        producer: &ProcessIdentity,
+    ) -> bool {
+        self.format == 1
+            && self.path == path
+            && self.generation == generation
+            && !generation.is_nil()
+            && !self.nonce.is_nil()
+            && self.producer == *producer
+            && producer.uid == 0
+            && self.inode.device_inode().1 != 0
+            && self.parent.device_inode().1 != 0
+            && self.birth_nanoseconds < 1_000_000_000
+            && self.pid_namespace_inode != 0
+            && self.cgroup_namespace.is_some_and(|(_, inode)| inode != 0)
+    }
     pub(crate) fn confirm_collected(
         &self,
         path: &Path,

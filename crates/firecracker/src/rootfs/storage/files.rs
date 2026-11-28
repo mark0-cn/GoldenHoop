@@ -367,6 +367,8 @@ impl Directory {
                 {
                     return Err(invalid("pending rootfs lock identity differs").into());
                 }
+            } else if name.starts_with("boot-") && name.ends_with(".json") {
+                super::boots::validate_pending(self, name, bytes)?;
             } else {
                 let record: Record = serde_json::from_slice(bytes)?;
                 record.validate(self)?;

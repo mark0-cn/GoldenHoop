@@ -46,8 +46,14 @@ impl NativeEngine {
         &self,
         request: &ManagedRestoreRequest,
     ) -> std::result::Result<RuntimeHandle, ApiError> {
-        self.create_with_input(&request.sandbox, &request.request, None, Some(request))
-            .await
+        self.create_with_input(
+            &request.sandbox,
+            &request.request,
+            None,
+            Some(request),
+            None,
+        )
+        .await
     }
 
     pub(super) async fn restore_binding(

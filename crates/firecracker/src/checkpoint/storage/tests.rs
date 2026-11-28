@@ -720,6 +720,7 @@ fn real_native_collection_closes_lost_writer_ack_only_with_original_collected_re
         },
         artifacts: cfg.artifacts.clone(),
         selected_image: None,
+        rootfs_boot: None,
         profile_probe_context_sha256: None,
         capture_hold: None,
         rootfs_hold: None,

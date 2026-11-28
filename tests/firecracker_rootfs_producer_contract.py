@@ -51,7 +51,7 @@ def policy(image, owner, disk_bytes, inspector_parent=False):
 
 
 def exercise(handle, initial, runtime, cfg, manager, call, rpc, record, report,
-             inspector_image, inspector_owner, source_commit, fixture, inspector_parent=False):
+             inspector_image, inspector_owner, source_commit, fixture, inspector_parent=False, coldboot=False):
     root = Path(cfg['data_root'])/'rootfs'
     generation = initial['owner']['generation']
     seen = report['observations']['rootfs_producer'] = dict(generation=generation)
@@ -193,6 +193,10 @@ def exercise(handle, initial, runtime, cfg, manager, call, rpc, record, report,
     assert later > isolated['observations']['captured_counter'] and digest(disk) == data['manifest']['disk']
     seen['continued_counter'] = dict(captured=isolated['observations']['captured_counter'], later=later, execution=execution)
     report['cases'].append('Rust_published_disk_is_clean_and_pinned_assets_and_copied_counter_pass_actual_runsc_inspection')
+
+    if coldboot:
+        from firecracker_rootfs_coldboot_contract import exercise as boot_exercise
+        boot_exercise(handle,capture,counter,isolated['observations']['captured_counter'],execution,cfg,call,rpc,record,report)
 
     rpc(handle, dict(method='cancel', id=execution), 'execution')
     deadline = time.monotonic()+20

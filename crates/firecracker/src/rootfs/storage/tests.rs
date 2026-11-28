@@ -169,6 +169,172 @@ fn root() -> bool {
 }
 
 #[test]
+fn two_durable_boot_targets_fence_gc_until_both_independent_copies_are_acknowledged() {
+    if !root() {
+        return;
+    }
+    let fixture = Fixture::new();
+    let store = fixture.store();
+    let mut producer = fixture.session(&store);
+    let reference = producer
+        .capture(
+            File::open(&fixture.source).unwrap(),
+            0,
+            fixture.manifest.barrier.clone(),
+        )
+        .unwrap();
+    producer.confirm_source_resumed(fixture.resumed()).unwrap();
+    producer
+        .confirm_inspection_report(
+            fixture.report(producer.manifest().unwrap()),
+            fixture.inventory.clone(),
+        )
+        .unwrap();
+    drop(producer);
+    let parent = fixture.path.join("vm");
+    std::fs::create_dir(&parent).unwrap();
+    std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let target = || {
+        let generation = Uuid::new_v4();
+        RootfsBootTarget::observe(
+            reference.clone(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            generation,
+            "e".repeat(64),
+            parent.join(&generation.simple().to_string()[..12]),
+        )
+        .unwrap()
+    };
+    let first = target();
+    let second = target();
+    let boot = &fixture.manifest.intent.boot;
+    store.reserve_boot(first.clone(), boot).unwrap();
+    store.reserve_boot(second.clone(), boot).unwrap();
+    store.reserve_boot(first.clone(), boot).unwrap();
+    let mut changed = first.clone();
+    changed.request_sha256 = "f".repeat(64);
+    assert!(store.reserve_boot(changed, boot).is_err());
+    assert!(store.collect(reference.capture).is_err());
+    let first_reader = store.boot_reader(&first, boot).unwrap();
+    let second_reader = store.boot_reader(&second, boot).unwrap();
+    store.dispatch_boot(&first).unwrap();
+    store.dispatch_boot(&second).unwrap();
+    assert!(store.dispatch_boot(&first).is_err());
+    let copy = |target: &RootfsBootTarget, reader: &RootfsReadLease| {
+        let root = crate::lifecycle::root::Root::create(target.path(), target.generation).unwrap();
+        let disk = target.disk_path();
+        std::fs::create_dir_all(disk.parent().unwrap()).unwrap();
+        crate::fileio::copy(
+            reader.file().try_clone().unwrap(),
+            &disk,
+            &reader.manifest.disk.sha256,
+            reader.manifest.disk.size_bytes,
+            0o600,
+        )
+        .unwrap();
+        store
+            .confirm_boot_materialized(target, reader, &root)
+            .unwrap();
+        root
+    };
+    let first_root = copy(&first, &first_reader);
+    drop(first_reader);
+    assert!(store.collect(reference.capture).is_err());
+    drop(second_reader);
+    // The durable second reference survives losing every live source reader.
+    assert!(store.collect(reference.capture).is_err());
+    let second_reader = store.boot_reader(&second, boot).unwrap();
+    let second_root = copy(&second, &second_reader);
+    drop(second_reader);
+    store.collect(reference.capture).unwrap();
+    assert_eq!(store.reserved_bytes().unwrap(), 0);
+    let original = crate::fileio::digest(File::open(second.disk_path()).unwrap()).unwrap();
+    let mut writer = OpenOptions::new()
+        .write(true)
+        .open(first.disk_path())
+        .unwrap();
+    writer.write_all(b"changed independent target").unwrap();
+    writer.sync_all().unwrap();
+    drop(writer);
+    assert_eq!(
+        crate::fileio::digest(File::open(second.disk_path()).unwrap()).unwrap(),
+        original
+    );
+    assert_ne!(
+        std::fs::metadata(first.disk_path()).unwrap().ino(),
+        std::fs::metadata(second.disk_path()).unwrap().ino()
+    );
+    assert!(store.boot_reader(&first, boot).is_err());
+    first_root.remove_all().unwrap();
+    second_root.remove_all().unwrap();
+    assert!(!first.path().exists() && !second.path().exists());
+    fixture.close();
+}
+#[test]
+fn inherited_reader_handoff_preserves_original_object_and_independent_receiver_offsets() {
+    if !root() {
+        return;
+    }
+    let fixture = Fixture::new();
+    let store = fixture.store();
+    let mut producer = fixture.session(&store);
+    let reference = producer
+        .capture(
+            File::open(&fixture.source).unwrap(),
+            0,
+            fixture.manifest.barrier.clone(),
+        )
+        .unwrap();
+    producer.confirm_source_resumed(fixture.resumed()).unwrap();
+    producer
+        .confirm_inspection_report(
+            fixture.report(producer.manifest().unwrap()),
+            fixture.inventory.clone(),
+        )
+        .unwrap();
+    drop(producer);
+    let sender = store
+        .read(&reference, &fixture.manifest.intent.boot)
+        .unwrap();
+    let first_descriptor = sender.supervisor_lock().unwrap();
+    let second_descriptor = sender.supervisor_lock().unwrap();
+    let foreign = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(fixture.path.join("foreign.lock"))
+        .unwrap();
+    assert!(
+        store
+            .read_inherited(&reference, &fixture.manifest.intent.boot, foreign)
+            .is_err()
+    );
+    drop(sender);
+    assert!(store.collect(reference.capture).is_err());
+    let first = store
+        .read_inherited(&reference, &fixture.manifest.intent.boot, first_descriptor)
+        .unwrap();
+    let second = store
+        .read_inherited(&reference, &fixture.manifest.intent.boot, second_descriptor)
+        .unwrap();
+    let mut first_file = first.file().try_clone().unwrap();
+    let mut second_file = second.file().try_clone().unwrap();
+    let mut bytes = [0u8; 8];
+    first_file.read_exact(&mut bytes).unwrap();
+    assert_eq!(first_file.stream_position().unwrap(), 8);
+    assert_eq!(second_file.stream_position().unwrap(), 0);
+    drop(first_file);
+    drop(second_file);
+    drop(first);
+    assert!(store.collect(reference.capture).is_err());
+    drop(second);
+    store.collect(reference.capture).unwrap();
+    assert_eq!(store.reserved_bytes().unwrap(), 0);
+    fixture.close();
+}
+#[test]
 fn original_inspector_journal_fences_gc_and_foreign_provider_or_self_report_cannot_publish_ready() {
     if !root() {
         return;

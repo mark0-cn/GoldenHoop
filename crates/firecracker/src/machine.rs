@@ -192,6 +192,10 @@ pub(crate) struct Machine {
     resources: goldenhoop_protocol::ResourceLimits,
     recovered: bool,
     rootfs_input: Option<File>,
+    rootfs_boot_lease: Option<(
+        crate::rootfs::storage::RootfsStore,
+        crate::rootfs::storage::RootfsReadLease,
+    )>,
 }
 
 impl Machine {
@@ -227,6 +231,7 @@ impl Machine {
             },
             recovered: false,
             rootfs_input: None,
+            rootfs_boot_lease: None,
         }
     }
 
@@ -259,6 +264,30 @@ impl Machine {
             );
         }
         self.rootfs_input = Some(file);
+        Ok(())
+    }
+    pub(crate) fn rootfs_boot_input(
+        &mut self,
+        store: crate::rootfs::storage::RootfsStore,
+        lease: crate::rootfs::storage::RootfsReadLease,
+    ) -> Result<()> {
+        let binding = self
+            .record()
+            .rootfs_boot
+            .as_ref()
+            .ok_or_else(|| invalid("native rootfs binding absent"))?;
+        if self.recovered
+            || self.rootfs_input.is_some()
+            || self.rootfs_boot_lease.is_some()
+            || self.record().selected_image.is_some()
+            || self.record().restore.is_some()
+            || binding.manifest.reference().map_err(invalid)?
+                != lease.manifest.reference().map_err(invalid)?
+        {
+            return Err(invalid("rootfs source lease does not match a fresh native target").into());
+        }
+        self.rootfs_input = Some(lease.file().try_clone()?);
+        self.rootfs_boot_lease = Some((store, lease));
         Ok(())
     }
     pub(crate) fn record_error(&mut self, message: String) -> Result<()> {
@@ -519,10 +548,9 @@ impl Machine {
             );
         }
         self.check_expiry()?;
-        let selected = self
-            .persistent
-            .as_ref()
-            .is_some_and(|(_, record)| record.selected_image.is_some());
+        let selected = self.persistent.as_ref().is_some_and(|(_, record)| {
+            record.selected_image.is_some() || record.rootfs_boot.is_some()
+        });
         if selected != self.rootfs_input.is_some() || managed_restore && selected {
             return Err(invalid("fresh selected disk requires exactly its inherited input").into());
         }
@@ -573,6 +601,18 @@ impl Machine {
             )?;
         } else {
             copy_artifact(&input.rootfs, &self.jail.join("rootfs.ext4"), 0o600)?;
+        }
+        if let Some((store, lease)) = self.rootfs_boot_lease.take() {
+            let binding = self
+                .record()
+                .rootfs_boot
+                .as_ref()
+                .expect("bound rootfs input");
+            store.confirm_boot_materialized(
+                &binding.target,
+                &lease,
+                self.root_handle.as_ref().expect("acknowledged target root"),
+            )?;
         }
         self.check_expiry()?;
         let rootfs = File::open(self.jail.join("rootfs.ext4"))?;

@@ -137,7 +137,9 @@ fn unavailable() -> ApiError {
 fn deadline(call: &DriverCall) -> Duration {
     Duration::from_secs(match call {
         DriverCall::Probe => 660,
-        DriverCall::Create { .. } | DriverCall::CheckpointRestore { .. } => 150,
+        DriverCall::Create { .. }
+        | DriverCall::CheckpointRestore { .. }
+        | DriverCall::RootfsBoot { .. } => 150,
         DriverCall::Remove { .. } | DriverCall::CheckpointRestoreCollect { .. } => 45,
         DriverCall::Reap => 240,
         _ => 20,
@@ -304,6 +306,15 @@ impl FirecrackerDriver {
     ) -> std::result::Result<RuntimeHandle, ApiError> {
         self.call(DriverCall::CheckpointRestore {
             restore: Box::new(restore.clone()),
+        })
+        .await
+    }
+    pub async fn rootfs_boot(
+        &self,
+        boot: &RootfsBootRequest,
+    ) -> std::result::Result<RuntimeHandle, ApiError> {
+        self.call(DriverCall::RootfsBoot {
+            boot: Box::new(boot.clone()),
         })
         .await
     }
@@ -633,6 +644,7 @@ async fn dispatch(
         DriverCall::RootfsCollect { handle, capture } => {
             Ok(engine.rootfs_read(&handle, capture, true).await?)
         }
+        DriverCall::RootfsBoot { boot } => serde_json::to_value(engine.rootfs_boot(&boot).await?),
         DriverCall::CheckpointCapture { handle, capture } => {
             Ok(engine.checkpoint_capture(&handle, capture).await?)
         }

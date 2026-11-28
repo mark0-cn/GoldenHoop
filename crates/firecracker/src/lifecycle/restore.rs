@@ -379,6 +379,7 @@ mod tests {
                 },
                 artifacts: cfg.artifacts.clone(),
                 selected_image: None,
+                rootfs_boot: None,
                 profile_probe_context_sha256: None,
                 capture_hold: None,
                 rootfs_hold: None,

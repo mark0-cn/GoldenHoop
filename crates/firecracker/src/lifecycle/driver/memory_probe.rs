@@ -559,7 +559,7 @@ impl NativeEngine {
         let restore = probe.restore_request()?;
         probe.at(cfg, ProbeStep::TargetRestore)?;
         let target = self
-            .create_with_input_observed(&probe.target, &probe.request, None, Some(&restore))
+            .create_with_input_observed(&probe.target, &probe.request, None, Some(&restore), None)
             .await?;
         probe.at(cfg, ProbeStep::TargetVerify)?;
         if target.sandbox_id != probe.target.id
@@ -746,7 +746,13 @@ mod tests {
         });
         let restore = missing.restore_request().unwrap();
         let observed = reopened
-            .create_with_input_observed(&missing.target, &missing.request, None, Some(&restore))
+            .create_with_input_observed(
+                &missing.target,
+                &missing.request,
+                None,
+                Some(&restore),
+                None,
+            )
             .await
             .unwrap_err();
         let public = reopened.checkpoint_restore(&restore).await.unwrap_err();

@@ -59,6 +59,7 @@ fn fixture() -> (tempfile::TempDir, DriverConfig, VmJournal) {
         },
         artifacts: cfg.artifacts.clone(),
         selected_image: None,
+        rootfs_boot: None,
         capture_hold: None,
         rootfs_hold: None,
         restore: None,

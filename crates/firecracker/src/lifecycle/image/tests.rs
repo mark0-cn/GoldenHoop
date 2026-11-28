@@ -124,6 +124,7 @@ fn recovery_binds_the_selected_manifest_and_owned_destination_without_an_image_j
         },
         artifacts: cfg.selected_artifacts(generation, &info).unwrap(),
         selected_image: Some(info),
+        rootfs_boot: None,
         capture_hold: None,
         rootfs_hold: None,
         restore: None,

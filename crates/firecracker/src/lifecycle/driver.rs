@@ -17,6 +17,7 @@ mod memory_probe;
 mod restore_closure;
 mod restores;
 mod rootfs;
+mod rootfs_boot;
 
 struct Inner {
     cfg: DriverConfig,
@@ -166,8 +167,14 @@ impl NativeEngine {
                     .cloned()
                     .unwrap_or_else(|| unavailable(error))
             })?;
-        self.create_with_input(sandbox, request, Some(image::Input { info, file }), None)
-            .await
+        self.create_with_input(
+            sandbox,
+            request,
+            Some(image::Input { info, file }),
+            None,
+            None,
+        )
+        .await
     }
     async fn create_with_input(
         &self,
@@ -175,8 +182,9 @@ impl NativeEngine {
         request: &CreateSandbox,
         input: Option<image::Input>,
         restore_request: Option<&ManagedRestoreRequest>,
+        rootfs_request: Option<&RootfsBootRequest>,
     ) -> std::result::Result<RuntimeHandle, ApiError> {
-        self.create_with_input_observed(sandbox, request, input, restore_request)
+        self.create_with_input_observed(sandbox, request, input, restore_request, rootfs_request)
             .await
             .map_err(|error| {
                 error
@@ -191,6 +199,7 @@ impl NativeEngine {
         request: &CreateSandbox,
         input: Option<image::Input>,
         restore_request: Option<&ManagedRestoreRequest>,
+        rootfs_request: Option<&RootfsBootRequest>,
     ) -> Result<RuntimeHandle> {
         let lock = self.vm_lock(sandbox.id).await;
         let _guard = lock.lock().await;
@@ -200,12 +209,25 @@ impl NativeEngine {
                 Some(request) => Some(self.restore_binding(request).await?),
                 None => None,
             };
-            self.create_owned(sandbox, request, input, restore).await
+            if rootfs_request.is_some() && (restore.is_some() || input.is_some()) {
+                return Err(invalid(
+                    "native rootfs boot cannot mix image inputs or memory restoration",
+                )
+                .into());
+            }
+            let rootfs = rootfs_request
+                .map(|request| self.rootfs_boot_binding(request))
+                .transpose()?;
+            self.create_owned(sandbox, request, input, restore, rootfs)
+                .await
         }
         .await;
         let digest = match restore_request {
             Some(request) => request.digest(),
-            None => request_digest(request),
+            None => match rootfs_request {
+                Some(request) => request.digest(),
+                None => request_digest(request),
+            },
         };
         if result.is_err()
             && let Ok(mut record) = self.load(sandbox.id)
@@ -522,6 +544,12 @@ impl NativeEngine {
         record: &VmJournal,
         input: Option<File>,
     ) -> Result<tokio::process::Child> {
+        if let Some(binding) = &record.rootfs_boot {
+            self.inner
+                .cfg
+                .rootfs_store()?
+                .dispatch_boot(&binding.target)?;
+        }
         let group = self
             .inner
             .cfg
@@ -743,9 +771,11 @@ impl NativeEngine {
         request: &CreateSandbox,
         mut input: Option<image::Input>,
         restore: Option<RestoreBinding>,
+        rootfs_boot: Option<RootfsBootBinding>,
     ) -> Result<RuntimeHandle> {
         let cfg = &self.inner.cfg;
-        let original_restore = restore.is_some() && cfg.record_path(sandbox.id).try_exists()?;
+        let original_restore = (restore.is_some() || rootfs_boot.is_some())
+            && cfg.record_path(sandbox.id).try_exists()?;
         if request.profile != PROFILE
             || sandbox.profile != PROFILE
             || request.image != sandbox.image
@@ -812,11 +842,27 @@ impl NativeEngine {
                 expected_source: restore.expected_source.clone(),
             }
             .digest()?,
-            None => request_digest(request)?,
+            None => match &rootfs_boot {
+                Some(binding) => binding.target.request_sha256.clone(),
+                None => request_digest(request)?,
+            },
         };
         let path = cfg.record_path(sandbox.id);
         if path.try_exists()? {
             let mut record = self.load(sandbox.id)?;
+            if record.rootfs_boot.is_some() != rootfs_boot.is_some()
+                || record
+                    .rootfs_boot
+                    .as_ref()
+                    .zip(rootfs_boot.as_ref())
+                    .is_some_and(|(a, b)| !a.same(b).unwrap_or(false))
+            {
+                return Err(ApiError::new(
+                    ErrorCode::Conflict,
+                    "native rootfs target boot intent differs",
+                )
+                .into());
+            }
             if record.restore.is_some() != restore.is_some()
                 || record
                     .restore
@@ -852,7 +898,11 @@ impl NativeEngine {
                 .into());
             }
             if record.phase == "collected" || record.phase == "vm_collected" {
-                if restore.is_some() {
+                if rootfs_boot.is_some() && !record.ever_ready {
+                    return Err(ApiError::new(ErrorCode::InvalidState,
+                        "rootfs target closed without acknowledged readiness; its identity remains spent").into());
+                }
+                if restore.is_some() || rootfs_boot.is_some() {
                     return Ok(self.handle(&record));
                 }
                 return Err(ApiError::new(
@@ -879,8 +929,12 @@ impl NativeEngine {
                         supervisor::collect_supervisor_cgroup(cfg, &record)?;
                     }
                     self.prepare_supervisor_group(&mut record)?;
-                    let child =
-                        self.spawn_supervisor(&record, input.take().map(|input| input.file))?;
+                    let descriptor = if let Some(binding) = &rootfs_boot {
+                        Some(self.rootfs_supervisor_input(binding).await?)
+                    } else {
+                        input.take().map(|input| input.file)
+                    };
+                    let child = self.spawn_supervisor(&record, descriptor)?;
                     return self.wait_ready(sandbox.id, Some(child)).await;
                 }
             }
@@ -899,6 +953,17 @@ impl NativeEngine {
             return Err(ApiError::new(
                 ErrorCode::InvalidRequest,
                 "native new image requires a verified private input",
+            )
+            .into());
+        }
+        if let Some(binding) = &rootfs_boot
+            && (restore.is_some()
+                || input.is_some()
+                || request.resources.pids != binding.manifest.intent.boot.workload_pids)
+        {
+            return Err(ApiError::new(
+                ErrorCode::InvalidRequest,
+                "rootfs target resources or boot kind differ",
             )
             .into());
         }
@@ -929,11 +994,21 @@ impl NativeEngine {
         let disk_bytes = input
             .as_ref()
             .map(|input| input.info.manifest.disk.size_bytes)
+            .or_else(|| {
+                rootfs_boot
+                    .as_ref()
+                    .map(|binding| binding.manifest.disk.size_bytes)
+            })
             .unwrap_or(cfg.artifacts.rootfs.size);
         self.admit(&request.resources, disk_bytes)?;
         let generation = restore
             .as_ref()
             .map(|r| r.intent.generation)
+            .or_else(|| {
+                rootfs_boot
+                    .as_ref()
+                    .map(|binding| binding.target.generation)
+            })
             .unwrap_or_else(Uuid::new_v4);
         let paths = cfg.paths(generation)?;
         if paths.root.try_exists()?
@@ -959,9 +1034,13 @@ impl NativeEngine {
             },
             artifacts: match &input {
                 Some(input) => cfg.selected_artifacts(generation, &input.info)?,
-                None => cfg.artifacts.clone(),
+                None => match &rootfs_boot {
+                    Some(binding) => cfg.rootfs_boot_artifacts(binding)?,
+                    None => cfg.artifacts.clone(),
+                },
             },
             selected_image: input.as_ref().map(|input| input.info.clone()),
+            rootfs_boot,
             capture_hold: None,
             rootfs_hold: None,
             restore,
@@ -984,10 +1063,16 @@ impl NativeEngine {
         };
         record.validate(cfg, sandbox.id)?;
         atomic_json(&path, &record)?;
-        let launch = (|| -> Result<_> {
+        let launch = async {
+            let descriptor = if let Some(binding) = &record.rootfs_boot {
+                Some(self.rootfs_supervisor_input(binding).await?)
+            } else {
+                input.take().map(|input| input.file)
+            };
             self.prepare_supervisor_group(&mut record)?;
-            self.spawn_supervisor(&record, input.take().map(|input| input.file))
-        })();
+            self.spawn_supervisor(&record, descriptor)
+        }
+        .await;
         drop(admission);
         match launch {
             Ok(child) => self.wait_ready(sandbox.id, Some(child)).await,
@@ -1137,6 +1222,7 @@ impl NativeEngine {
                         &self.inner.cfg.record_path(record.owner.sandbox_id),
                         &updated,
                     )?;
+                    self.close_collected_rootfs_boot(&updated).await?;
                     self.inner
                         .children
                         .lock()
@@ -1504,7 +1590,8 @@ impl RuntimeDriver for NativeEngine {
         sandbox: &Sandbox,
         request: &CreateSandbox,
     ) -> std::result::Result<RuntimeHandle, ApiError> {
-        self.create_with_input(sandbox, request, None, None).await
+        self.create_with_input(sandbox, request, None, None, None)
+            .await
     }
     async fn inspect(
         &self,
@@ -1715,6 +1802,7 @@ mod recovery_tests {
             },
             artifacts: cfg.artifacts.clone(),
             selected_image: None,
+            rootfs_boot: None,
             capture_hold: None,
             rootfs_hold: None,
             restore: None,
@@ -1747,7 +1835,7 @@ mod recovery_tests {
         assert!(!observed[0].authenticated && observed[0].observed_state == ObservedState::Unknown);
         let outcome = tokio::time::timeout(
             Duration::from_millis(80),
-            engine.create_owned(&sandbox, &request, None, None),
+            engine.create_owned(&sandbox, &request, None, None, None),
         )
         .await;
         let unchanged = std::fs::read(cfg.record_path(id)).unwrap() == snapshot;

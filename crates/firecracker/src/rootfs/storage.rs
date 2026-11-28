@@ -16,7 +16,9 @@ use std::{
     },
     path::{Path, PathBuf},
 };
+mod boots;
 mod files;
+pub use boots::RootfsBootTarget;
 use files::{Directory, DiskReceipt, Identity, record_name};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -328,6 +330,12 @@ impl RootfsReadLease {
     pub fn file(&self) -> &File {
         &self.file
     }
+    /// The trusted supervisor inherits only this lock across exec. It acquires
+    /// its own verified reader before closing this descriptor; no host store
+    /// descriptor may reach the VMM/workload.
+    pub(crate) fn supervisor_lock(&self) -> Result<File> {
+        Ok(self._mutex.try_clone()?)
+    }
 }
 
 impl RootfsStore {
@@ -506,6 +514,49 @@ impl RootfsStore {
                 .ok_or_else(|| invalid("rootfs reservation overflows").into())
         })
     }
+    /// Rebind an inherited original mutex to a fresh data-reader description.
+    /// Never convert/unlock the inherited OFD: acquiring an independent shared
+    /// reader also fails closed if the incoming descriptor held another mode.
+    pub fn read_inherited(
+        &self,
+        reference: &RootfsReference,
+        expected_boot: &RootfsBoot,
+        inherited_mutex: File,
+    ) -> Result<RootfsReadLease> {
+        self.root.current()?;
+        let record = self.root.record(reference.capture)?;
+        let metadata = inherited_mutex.metadata()?;
+        if !metadata.is_file()
+            || metadata.uid() != 0
+            || metadata.mode() & 0o7777 != 0o600
+            || metadata.nlink() != 1
+            || Identity::of(&inherited_mutex)? != record.mutex
+        {
+            return Err(invalid("inherited rootfs mutex differs from the original object").into());
+        }
+        let reader = self.read(reference, expected_boot)?;
+        drop(inherited_mutex);
+        Ok(reader)
+    }
+    pub(crate) fn manifest_for_boot(
+        &self,
+        reference: &RootfsReference,
+        expected_boot: &RootfsBoot,
+    ) -> Result<RootfsManifest> {
+        self.root.current()?;
+        self.root.recover_capture(reference.capture)?;
+        let record = self.root.record(reference.capture)?;
+        if record.phase != Phase::Ready {
+            return Err(invalid("rootfs content is not Ready for new admission").into());
+        }
+        let manifest = record
+            .manifest
+            .ok_or_else(|| invalid("rootfs Ready manifest absent"))?;
+        manifest
+            .admit(reference, expected_boot, manifest.intent.disk_bytes)
+            .map_err(invalid)?;
+        Ok(manifest)
+    }
     pub fn read(
         &self,
         reference: &RootfsReference,
@@ -542,6 +593,7 @@ impl RootfsStore {
     pub fn collect(&self, id: Uuid) -> Result<serde_json::Value> {
         self.root.current()?;
         let _quota = self.root.quota(true)?;
+        self.require_no_pending_boots(id)?;
         self.root.recover_capture(id)?;
         let before = self.root.record(id)?;
         before.validate(&self.root)?;

@@ -17,7 +17,7 @@ from firecracker_manager_fixture import Manager
 
 
 def suite(binary, boot, fixture, guest_barrier=False, guest_authority=False, managed_checkpoint=False, managed_restore_only=False, managed_restore_cut=False,
-          rootfs_barrier=False, inspector_image=None, inspector_owner=None, source_commit=None, rootfs_producer=False, rootfs_inspector_parent=False):
+          rootfs_barrier=False, inspector_image=None, inspector_owner=None, source_commit=None, rootfs_producer=False, rootfs_inspector_parent=False, rootfs_coldboot=False):
     installation = str(uuid.uuid4())
     root = fixture / 'd'  # Native AF_UNIX endpoints must fit Linux's path bound.
     cfg = {'installation_id': installation, 'data_root': str(root), 'artifacts': boot,
@@ -29,6 +29,8 @@ def suite(binary, boot, fixture, guest_barrier=False, guest_authority=False, man
            'max_ttl_seconds': 300}
     if managed_checkpoint:
         cfg['checkpoints'] = {'max_bytes': 4 * 1024**3, 'max_checkpoints': 2}
+    if rootfs_coldboot:
+        cfg['capacity'].update(memory_bytes=4*1024**3,max_vms=3)
     if rootfs_producer:
         from firecracker_rootfs_producer_contract import policy
         cfg['rootfs'] = policy(inspector_image, inspector_owner, boot['rootfs']['size'], inspector_parent=rootfs_inspector_parent)
@@ -188,7 +190,7 @@ def suite(binary, boot, fixture, guest_barrier=False, guest_authority=False, man
         if rootfs_producer:
             from firecracker_rootfs_producer_contract import exercise
             exercise(a, a_record, runtime, cfg, manager, call, rpc, record, report,
-                     inspector_image, inspector_owner, source_commit, fixture, inspector_parent=rootfs_inspector_parent)
+                     inspector_image, inspector_owner, source_commit, fixture, inspector_parent=rootfs_inspector_parent, coldboot=rootfs_coldboot)
 
         forged = dict(a, backend_ref=f'fc1:{installation}:{uuid.uuid4()}')
         call({'operation': 'remove', 'handle': forged}, expect=False)
@@ -212,11 +214,16 @@ def suite(binary, boot, fixture, guest_barrier=False, guest_authority=False, man
         rpc(a, {'method': 'write_file', 'path': 'private-a', 'data_base64': data}, 'ok')
         assert rpc(b, {'method': 'read_file', 'path': 'private-a', 'max_bytes': 128})['status'] == 'error'
         quota_request = request()
+        capacity_fill=[]
+        for _ in range(cfg['capacity']['max_vms']-2):
+            extra=call(request(pids=48));handles[extra['sandbox_id']]=extra;capacity_fill.append(extra)
         denied = call(quota_request, expect=False)
         assert denied['code'] == 'quota_exceeded'
         assert not (root / 'records' / f'{quota_request["sandbox"]["id"]}.json').exists()
         assert call({'operation': 'inspect', 'handle': a})['state'] == 'running'
         report['cases'].append('independent_disks_and_dynamic_guest_limits_with_reserved_installation_capacity')
+        for extra in capacity_fill:
+            remove(extra)
         remove(b)
 
         # Interrupt the caller while the independently owned Rust supervisor is
@@ -332,6 +339,13 @@ def suite(binary, boot, fixture, guest_barrier=False, guest_authority=False, man
                     report['observations']['rootfs_final_collection']['remaining_provider_resources'] = observe_owned(cfg)
                 except Exception as observation_error:
                     report['observations']['rootfs_final_collection']['observation_error'] = str(observation_error)
+        if rootfs_coldboot:
+            try:
+                from firecracker_rootfs_coldboot_contract import collect_observed
+                report['observations']['rootfs_boot_final_collection']=collect_observed(cfg)
+            except Exception as error:
+                cleanup_errors.append('rootfs target reference collection: '+str(error))
+                report['observations']['rootfs_boot_final_collection']=dict(result='failed',error=str(error))
         manager_drained = False
         try:
             stop_error = manager.close()
@@ -353,6 +367,8 @@ def suite(binary, boot, fixture, guest_barrier=False, guest_authority=False, man
         try:
             assert manager_drained, 'production manager drain was not confirmed'
             assert report['observations']['manager']['process_collected']
+            if rootfs_coldboot:
+                assert report['observations'].get('rootfs_boot_final_collection',{}).get('result')=='passed'
             if rootfs_inspector_parent:
                 rootfs_collection = report['observations'].get('rootfs_final_collection', {})
                 assert rootfs_collection.get('result') == 'passed', 'rootfs disk/provider collection was not confirmed'

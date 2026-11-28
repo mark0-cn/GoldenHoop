@@ -1,5 +1,24 @@
 # Progress
 
+The next private M4 candidate implements two-target rootfs cold boot with separate
+durable source references, shared-mutex descriptor handoff, production Rust disk
+materialization and original native collection receipts. It keeps memory claims
+and prepared-image inputs separate. See [the candidate contract](rootfs-coldboot.md).
+The [Linux checks](evidence/m4-rootfs-coldboot-linux-copies.json) pass format,
+strict native/images all-target clippy and21 focused tests, including shared
+handoff and actual local two-copy GC fences/independent writes. Their guest and
+inspector receipts remain synthetic. The exact local check image is positively
+[collected](evidence/m4-rootfs-coldboot-copies-image-collection.json). The initial
+argument-wiring and strict-lint failures are retained separately. Full frozen
+Windows/workspace CI and actual fresh KVM acceptance are pending; no new public
+capability is registered. The final guard also refuses an apparently successful
+retry when a rootfs target was collected before ever acknowledging Ready.
+[Final Windows checks](evidence/m4-rootfs-coldboot-windows-final.json) pass format,
+strict workspace/all-target clippy,333 Rust and36 SDK tests; [final Linux checks](evidence/m4-rootfs-coldboot-linux-final.json)
+pass strict native/images all-target clippy and21 focused tests. Both bind the
+same408 runtime inputs. The final check image is positively
+[collected](evidence/m4-rootfs-coldboot-final-image-collection.json).
+
 The private M4 durable Rust isolated-inspector parent and `rootfs_validate` are
 accepted on frozen sourced82fa05. [Actual KVM/runsc46147252006](evidence/m4-rootfs-inspector-parent-46147252006-archive.json)
 passes27 groups and verifies404 source inputs. The primary disk reaches Ready

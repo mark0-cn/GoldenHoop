@@ -148,6 +148,9 @@ impl DriverConfig {
         Ok(artifacts)
     }
     pub(super) fn validate_journal_image(&self, record: &VmJournal) -> Result<()> {
+        if let Some(binding) = &record.rootfs_boot {
+            return binding.validate(self, record);
+        }
         let expected = match &record.selected_image {
             Some(info) => self.selected_artifacts(record.owner.generation, info)?,
             None => self.artifacts.clone(),

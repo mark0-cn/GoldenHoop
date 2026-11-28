@@ -381,15 +381,27 @@ pub async fn run_supervisor_with_input(
     let record_path = cfg.record_path(sandbox);
     let mut record: VmJournal = read_json(&record_path)?;
     record.validate(&cfg, sandbox)?;
-    match (&record.selected_image, &input) {
-        (None, None) => (),
-        (Some(info), Some(file)) => cfg
-            .prepared_images
-            .as_ref()
-            .ok_or_else(|| invalid("prepared images are not configured"))?
-            .validate_input(info, file)?,
+    let mut input = input;
+    let rootfs_input = match (&record.selected_image, &record.rootfs_boot, &input) {
+        (None, None, None) => None,
+        (Some(info), None, Some(file)) => {
+            cfg.prepared_images
+                .as_ref()
+                .ok_or_else(|| invalid("prepared images are not configured"))?
+                .validate_input(info, file)?;
+            None
+        }
+        (None, Some(binding), Some(_)) => {
+            let store = cfg.rootfs_store()?;
+            let lease = store.boot_reader_inherited(
+                &binding.target,
+                &cfg.rootfs_boot_contract()?,
+                input.take().expect("inherited rootfs mutex"),
+            )?;
+            Some((store, lease))
+        }
         _ => return Err(invalid("supervisor image descriptor and journal differ").into()),
-    }
+    };
     if record.owner.generation != generation || record.phase != "reserved" {
         return Err(invalid("native supervisor launch intent mismatch").into());
     }
@@ -425,6 +437,9 @@ pub async fn run_supervisor_with_input(
     let mut machine = Machine::persistent(&cfg, record)?;
     if let Some(file) = input {
         machine.prepared_input(file)?;
+    }
+    if let Some((store, lease)) = rootfs_input {
+        machine.rootfs_boot_input(store, lease)?;
     }
     let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let mut restoration: Option<Box<crate::checkpoint::storage::restore::RestoreSession>> = None;
@@ -567,6 +582,7 @@ mod tests {
             },
             artifacts: cfg.artifacts.clone(),
             selected_image: None,
+            rootfs_boot: None,
             profile_probe_context_sha256: None,
             capture_hold: Some(hold),
             rootfs_hold: None,
