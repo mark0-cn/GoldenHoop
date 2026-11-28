@@ -7,6 +7,7 @@ permissions:
 env:
   GH_BUILDER_OWNER: rootfs-inspection-${{ github.run_id }}-${{ github.run_attempt }}
   GH_BUILDER_IMAGE: goldenhoop-rootfs-inspector:${{ github.run_id }}-${{ github.run_attempt }}
+  GH_PREFLIGHT_IMAGE: goldenhoop-rootfs-preflight:${{ github.run_id }}-${{ github.run_attempt }}
 jobs:
   runsc:
     runs-on: ubuntu-latest
@@ -32,6 +33,10 @@ jobs:
           sudo systemctl reload docker
           runsc --version
           echo "GH_TEST_OWNER=$(python -c 'import uuid; print(uuid.uuid4().hex)')" >> "$GITHUB_ENV"
+      - name: Verify actual placement, host limits and private transport before compilation
+        run: |
+          docker build --label dev.goldenhoop.task=m4-image-builder-fixture --label dev.goldenhoop.owner="$GH_BUILDER_OWNER" --tag "$GH_PREFLIGHT_IMAGE" --file tests/fixtures/rootfs-preflight.Dockerfile .
+          python -B tests/rootfs_inspection_contract.py --preflight --source-commit "$GITHUB_SHA" --owner "$GH_TEST_OWNER" --image "$GH_PREFLIGHT_IMAGE" --image-owner "$GH_BUILDER_OWNER" --remove-image --output evidence/rootfs-inspection-preflight.json
       - name: Build the source-frozen static Rust inspector and pinned guest assets
         run: docker build --build-arg VALIDATE_WORKSPACE=0 --target image-builder --label dev.goldenhoop.task=m4-image-builder-fixture --label dev.goldenhoop.owner="$GH_BUILDER_OWNER" --tag "$GH_BUILDER_IMAGE" --file images/agent/Dockerfile .
       - name: Inspect actual ext4 under runsc with physical host limit observations
@@ -56,12 +61,12 @@ jobs:
                   assert value['Labels']['dev.goldenhoop.task']=='m4-image-builder-contract' and value['Labels']['dev.goldenhoop.owner']==owner
                   docker('volume','rm',volume)
               assert not docker('volume','ls','--quiet','--filter','label=dev.goldenhoop.owner='+owner)
-          image=os.environ['GH_BUILDER_IMAGE']
-          if docker('image','ls','--quiet','--filter','reference='+image):
-              value=json.loads(docker('image','inspect',image))[0]
-              assert value['Config']['Labels']['dev.goldenhoop.owner']==os.environ['GH_BUILDER_OWNER']
-              docker('image','rm',image)
-          assert not docker('image','ls','--quiet','--filter','reference='+image)
+          for image in [os.environ['GH_BUILDER_IMAGE'], os.environ['GH_PREFLIGHT_IMAGE']]:
+              if docker('image','ls','--quiet','--filter','reference='+image):
+                  value=json.loads(docker('image','inspect',image))[0]
+                  assert value['Config']['Labels']['dev.goldenhoop.owner']==os.environ['GH_BUILDER_OWNER']
+                  docker('image','rm',image)
+              assert not docker('image','ls','--quiet','--filter','reference='+image)
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -50,7 +50,22 @@ the same exact-set normalization and records its observed placement before any
 assertion. The [permission contract](evidence/m4-rootfs-inspection-permission-contract.json)
 observes a real never-started Docker container with CAP_ names and passes six
 unsafe-config refusals; its exact container is absent. Production Rust is
-unchanged. The final full production-runsc component gate remains pending.
+unchanged. Runsc46123585919 then stops before dispatch on the fixture's assumed
+StdinOnce=false. Docker CLI deliberately sets true for interactive creation;
+the [original artifact](evidence/m4-rootfs-inspection-46123585919-runsc-failed.json)
+again confirms Complete cleanup. The component fixture now checks and records
+that exact one-attachment CLI setting and keeps its sole writer open through
+confirmed exit. It makes no production-parent reconnection claim; the existing
+Rust tar parent uses false through its direct API.
+
+A trusted fixed-shell preflight now runs before the static build, checking the
+same actual placement, private transport, host cgroups and collection. It is
+explicitly not Rust authorization or disk validation. The initial local
+[transport attempt](evidence/m4-rootfs-inspection-local-transport.json) reproduces
+the mismatched assumption; the [final local preflight](evidence/m4-rootfs-inspection-local-transport-final.json)
+passes actual one-line handoff/exit and Complete collection. The workflow will
+require actual runsc host observations before spending time compiling Rust.
+The final full production-runsc component gate remains pending.
 No rootfs snapshot/template capability is advertised by this increment.
 
 [Actual public memory KVM46116996541](https://github.com/mark0-cn/GoldenHoop/actions/runs/46116996541)

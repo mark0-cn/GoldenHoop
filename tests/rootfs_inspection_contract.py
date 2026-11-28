@@ -25,7 +25,8 @@ class RootfsContract(Contract):
                           '--label', 'dev.goldenhoop.owner='+self.owner]
         self.report['owner'] = self.owner
         self.report['selected_cases'] = args.case
-        self.sources += [Path(__file__).resolve(), Path(host.__file__).resolve()]
+        self.sources += [Path(__file__).resolve(), Path(host.__file__).resolve(),
+                         Path(__file__).resolve().parent/'fixtures/rootfs-preflight.Dockerfile']
         root = Path(__file__).resolve().parents[1]
         self.source_hashes = {p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in self.sources}
         self.report.update(suite='actual-isolated-Rust-rootfs-inspection', source_commit=args.source_commit,
@@ -57,8 +58,9 @@ class RootfsContract(Contract):
         # Only the test parent has Docker/host access. Pin every effective
         # placement field before the permit; guest virtual cgroups are unused.
         self.counter += 1
-        command = ['create', '--interactive', '--name', f'ghib-{self.owner}-{self.counter}', *self.label,
-                   '--runtime', 'runsc', '--hostname', uuid.UUID(request['generation']).hex,
+        command = ['create', '--interactive', '--attach', 'stdout', '--attach', 'stderr',
+                   '--name', f'ghib-{self.owner}-{self.counter}', *self.label,
+                   '--runtime', self.args.runtime, '--hostname', uuid.UUID(request['generation']).hex,
                    '--network', 'none', '--read-only', '--cap-drop', 'ALL',
                    '--security-opt', 'no-new-privileges:true', '--cpus', '1', '--memory', '1g', '--memory-swap', '1g', '--pids-limit', '64']
         for capability in ['CHOWN', 'DAC_OVERRIDE', 'FOWNER', 'FSETID']:
@@ -76,11 +78,15 @@ class RootfsContract(Contract):
                     'CapDrop', 'CapAdd', 'SecurityOpt', 'PidsLimit', 'Memory', 'MemorySwap', 'NanoCpus']},
                 'mounts': [{k: m[k] for k in ['Type', 'Name', 'Destination', 'RW']} for m in actual['Mounts']],
             }
-            assert actual['Image'] == self.image and config['Runtime'] == 'runsc' and config['NetworkMode'] == 'none'
+            self.report['placement_observations'][cid]['stdin'] = {k: actual['Config'][k] for k in ['OpenStdin', 'AttachStdin', 'StdinOnce', 'Tty']}
+            assert actual['Image'] == self.image and config['Runtime'] == self.args.runtime and config['NetworkMode'] == 'none'
             host.builder_permissions(config)
             assert config['PidsLimit'] == 64, config['PidsLimit']
             assert config['Memory'] == config['MemorySwap'] == 1024**3 and config['NanoCpus'] == 10**9
-            assert actual['Config']['OpenStdin'] and not actual['Config']['Tty'] and not actual['Config']['StdinOnce']
+            # This is one CLI attachment, not production parent reconnection.
+            # Docker CLI intentionally sets StdinOnce for interactive creation;
+            # keep that one writer open until confirmed exit and record it.
+            assert actual['Config']['OpenStdin'] and not actual['Config']['Tty'] and actual['Config']['StdinOnce'], self.report['placement_observations'][cid]['stdin']
             expected = {(source, '/input', False), (target, '/output', True)}
             assert {(m['Name'], m['Destination'], m['RW']) for m in actual['Mounts']} == expected
             process = subprocess.Popen(['docker', 'start', '--attach', '--interactive', cid], stdin=subprocess.PIPE,
@@ -92,12 +98,17 @@ class RootfsContract(Contract):
                     break
                 assert state['Status'] == 'created' and time.monotonic() < deadline, state
                 time.sleep(0.05)
-            observation = host.observe(cid, state['Pid'])
-            self.report['host_observations'][cid] = observation
+            observation = host.observe(cid, state['Pid']) if self.args.runtime == 'runsc' else None
+            if observation:
+                self.report['host_observations'][cid] = observation
+            else:
+                assert self.args.preflight and self.args.allow_runc_development
             permit = dict(format=1, installation_id=str(uuid.uuid4()), job_id=str(uuid.uuid4()),
                           generation=request['generation'], nonce=str(uuid.uuid4()), builder_image=self.image,
-                          request_sha256=fingerprint, runtime='runsc', limits=observation['limits'])
-            assert host.ticks(state['Pid']) == observation['start_ticks']
+                          request_sha256=fingerprint, runtime='runsc' if observation else 'runc_development',
+                          limits=observation['limits'] if observation else dict(memory_max=1024**3, swap_max=0, pids_max=64, cpu_quota=100000, cpu_period=100000))
+            if observation:
+                assert host.ticks(state['Pid']) == observation['start_ticks']
             process.stdin.write(json.dumps(permit).encode()+b'\n'); process.stdin.flush()
             if cancel:
                 self.cancel_stage(cid, target)
@@ -187,6 +198,19 @@ class RootfsContract(Contract):
         assert actual['Config']['Labels']['dev.goldenhoop.task'] == 'm4-image-builder-fixture'
         assert actual['Config']['Labels']['dev.goldenhoop.owner'] == self.args.image_owner
         self.image = actual['Id']; self.report['image_id'] = self.image
+        if self.args.preflight:
+            self.report['suite'] = 'actual-builder-transport-preflight'
+            self.report['scope'] = 'Trusted fixed shell fixture transport/placement only; no Rust authorization or filesystem-inspection claim.'
+            self.report['preflight'] = True
+            source, target = self.volume(), self.volume()
+            request = dict(generation=str(uuid.uuid4()))
+            cid, receipt = self.authorized(request, source, target, 'preflight', 'a'*64)
+            self.remove_container(cid)
+            assert receipt == dict(passed=True, staging_absent=True, tools_collected=True, transport='one_newline_received'), receipt
+            self.empty(source); self.empty(target)
+            self.report['cases'].append('actual_pinned_placement_private_stdin_and_exit_with_confirmed_collection')
+            self.report['result'] = 'passed'
+            return
         inventory = json.loads(self.inspected(None, '/bin/cat', ['/opt/goldenhoop/rootfs-inventory.json']))
         archive = self.archive('positive')
         prepared = dict(generation=str(uuid.uuid4()), archive=digest(archive), agent=inventory['agent'], init=inventory['init'], disk_bytes=64*1024**2)
@@ -286,6 +310,7 @@ if __name__ == '__main__':
     parser.add_argument('--source-commit')
     parser.add_argument('--owner', help='explicit unique UUID for workflow cleanup')
     parser.add_argument('--case', action='append', help='run only named negative controls; the full gate omits this option')
+    parser.add_argument('--preflight', action='store_true', help='trusted transport fixture only; never inspection acceptance')
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--remove-image', action='store_true')
     args = parser.parse_args()

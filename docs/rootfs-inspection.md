@@ -41,6 +41,15 @@ container limits and is development evidence only. The harness does not replace
 the future Rust production parent. Both paths verify unchanged input bytes,
 actual refusal, tool/staging collection and owned resource absence.
 
+The component CLI fixture intentionally uses one private attachment with the
+CLI's StdinOnce=true, retaining its writer until observed exit. It does not test
+production Rust parent reconnection, whose direct Docker API uses false. A fixed
+trusted-shell preflight checks actual placement, host cgroups and private stdin
+before compiling Rust. It proves only transport; the separate full Rust/ext4 gate
+remains mandatory. Docker CLI's [creation logic](https://github.com/docker/cli/blob/v29.0.0/cli/command/container/opts.go)
+sets StdinOnce when OpenStdin and AttachStdin are enabled. Its reviewed SHA256 is
+`a280447cefffdf1632951e85eb41ad1de09cbf257708edffde07fdf567092126`.
+
 The existing image-preparation workflow can dispatch `component=rootfs` on a
 candidate branch, invoking the reusable [inspection gate](../.github/workflows/rootfs-inspection.yml).
 Full workspace CI and final M4 KVM acceptance remain separate gates.
