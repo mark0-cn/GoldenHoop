@@ -67,6 +67,12 @@ def exercise(client, endpoint, token, cli, native, config, fixture, root,
                     break
         finally:
             stream.close()
+            sample = {'events': events, 'stdout_base64': base64.b64encode(raw).decode()}
+            observed.setdefault('execution_output_observations', {})[eid] = sample
+            try:
+                sample['execution'] = owner.execution(eid)
+            except Exception as error:
+                sample['inspection_error'] = type(error).__name__ + ': ' + str(error)
         return events, raw
 
     def running_execution(eid):
@@ -110,10 +116,6 @@ def exercise(client, endpoint, token, cli, native, config, fixture, root,
     source_events, raw = stdout(old, stop_at_newline=True)
     ram_token = raw.decode().strip(); assert len(ram_token) == 64 and len(bytes.fromhex(ram_token)) == 32
     running = running_execution(old)
-    cancellable = client.start(sid, Command(['python3', '-c', "import time;print('cancel-ready',flush=True);time.sleep(240)"],
-                                          timeout_seconds=240, max_output_bytes=1024), 'retained-cancel-job')
-    _, cancel_stdout = stdout(cancellable['id'], stop_at_newline=True); assert cancel_stdout == b'cancel-ready\n'
-    cancellable = running_execution(cancellable['id'])
     captured = client.create_snapshot(sid, {'kind': 'memory_and_disk'}, 'public-capture')
     observed['capture_admission'] = captured
     snapshot = captured['snapshot']['id']; snapshots.append(snapshot)
@@ -166,9 +168,9 @@ def exercise(client, endpoint, token, cli, native, config, fixture, root,
     observed['restoration_admission'] = reply
     assert target != sid and reply['operation']['resource_id'] == target
     bindings = {binding['source_execution_id']: binding['execution'] for binding in reply['executions']}
-    assert set(bindings) == {old, cancellable['id']}, bindings
-    new, cancel_new = bindings[old]['id'], bindings[cancellable['id']]['id']
-    assert len({old, cancellable['id'], new, cancel_new}) == 4
+    assert set(bindings) == {old}, bindings
+    new = bindings[old]['id']
+    assert new != old
     request_file = fixture / 'public-restore.json'; request_file.write_text(json.dumps(request)); request_file.chmod(0o600)
     retried = subprocess.run([str(cli), 'snapshots', 'restore', snapshot, '--request', str(request_file),
                               '--idempotency-key', 'public-restore', '--no-wait'], env=cli_env,
@@ -181,18 +183,17 @@ def exercise(client, endpoint, token, cli, native, config, fixture, root,
     assert target_native['owner']['generation'] != source_native['owner']['generation']
     for path in [f'sandboxes/{target}', f'sandboxes/{target}/restoration', f'operations/{reply["operation"]["id"]}', f'executions/{new}']:
         denied(source_owner, 'GET', path)
-    denied(source_owner, 'POST', f'executions/{cancel_new}/cancel')
+    denied(source_owner, 'POST', f'executions/{new}/cancel')
     target_owner = key({'sandboxes': [target]})
     readonly = key({'sandboxes': [target]}, ('read',))
-    denied(readonly, 'POST', f'executions/{cancel_new}/cancel')
+    denied(readonly, 'POST', f'executions/{new}/cancel')
     denied(target_owner, 'POST', f'snapshots/{snapshot}/restore', request, 'public-restore')
     observed.update(source=sid, target=target, snapshot=snapshot, source_execution=running,
-                    source_cancel_execution=cancellable, source_events=source_events,
-                    restored_execution_ids={old: new, cancellable['id']: cancel_new},
+                    source_events=source_events, restored_execution_ids={old: new},
                     target_before_restart=target_native)
     report['cases'].append('SDK_and_Rust_CLI_explicit_retry_recover_one_target_new_public_execution_IDs_and_exact_target_grants')
 
-    # The original retained jobs remain alive through manager SIGKILL and worker
+    # The original retained job remains alive through manager SIGKILL and worker
     # reconnect. Their native generation, supervisor and VMM must be unchanged.
     manager.hard_kill(); stop('worker', kill=True); manager.start(); start('worker')
     after_restart = record(target)
@@ -205,15 +206,12 @@ def exercise(client, endpoint, token, cli, native, config, fixture, root,
     with Client(endpoint, target_owner) as owner:
         current = owner.snapshot_restoration(target)
         assert current['operation']['id'] == reply['operation']['id'] and current['sandbox']['state'] == 'running'
-        for old_execution, new_execution in [(running, new), (cancellable, cancel_new)]:
+        for old_execution, new_execution in [(running, new)]:
             actual = owner.execution(new_execution)
             assert actual['sandbox_id'] == target and actual['state'] == 'running'
             assert actual['started_at'] == old_execution['started_at'], actual
         assert owner.read_file(target, 'public-memory-disk') == payload
         assert owner.read_file(target, 'public-memory-once') == b'once'
-        owner.cancel(cancel_new)
-        cancelled = owner.wait_execution(cancel_new, timeout=30)
-        assert cancelled['state'] == 'cancelled' and cancelled['cleanup'] == 'complete', cancelled
         owner.write_file(target, 'public-memory-release', b'release')
         done = owner.wait_execution(new, timeout=30)
         assert done['state'] == 'succeeded' and done['exit_code'] == 0 and done['cleanup'] == 'complete', done
@@ -224,8 +222,8 @@ def exercise(client, endpoint, token, cli, native, config, fixture, root,
         completed = [event for event in events if event['kind'] == 'completed']
         assert len(completed) == 1 and completed[0]['data']['id'] == new and completed[0]['data']['sandbox_id'] == target
         assert owner.read_file(target, 'public-memory-once') == b'once'
-        observed['retained_completion'] = {'execution': done, 'events': events, 'stdout': result.decode(), 'cancelled': cancelled}
-    report['cases'].append('manager_SIGKILL_reconnects_same_native_generation_and_resumes_RAM_command_and_cancel_without_Start_replay')
+        observed['retained_completion'] = {'execution': done, 'events': events, 'stdout': result.decode()}
+    report['cases'].append('manager_SIGKILL_reconnects_same_native_generation_and_resumes_RAM_command_without_Start_replay')
     inspected = subprocess.run([str(cli), 'snapshots', 'restoration', target], env=cli_env,
                                capture_output=True, timeout=35, check=True)
     assert json.loads(inspected.stdout)['sandbox']['id'] == target
@@ -253,3 +251,55 @@ def exercise(client, endpoint, token, cli, native, config, fixture, root,
             raise AssertionError('single-use capture admitted another target')
     observed.update(target_after_collection=record(target), collected_snapshot=deleted, native_checkpoint=closed)
     report['cases'].append('public_deletion_retains_file_backing_until_VM_collection_and_permanently_preserves_single_use_restore_identity')
+
+    # Commands share one UID and serialize (docs/agent.md). A separate source
+    # retains cancellation coverage without assuming concurrent normal commands.
+    cancel_observed = observed['retained_cancel'] = {}
+    created_cancel = client.create(original, 'cancel-memory-source')
+    cancel_source = created_cancel['sandbox']['id']; sandboxes.append(cancel_source)
+    cancel_observed['source_admission'] = created_cancel
+    complete(created_cancel['operation'])
+    cancellable = client.start(cancel_source, Command(
+        ['python3', '-c', "import time;print('cancel-ready',flush=True);time.sleep(240)"],
+        timeout_seconds=240, max_output_bytes=1024), 'retained-cancel-job')
+    cancel_observed['execution_admission'] = cancellable
+    _, cancel_stdout = stdout(cancellable['id'], stop_at_newline=True)
+    assert cancel_stdout == b'cancel-ready\n', cancel_stdout
+    cancellable = running_execution(cancellable['id'])
+    capture_cancel = client.create_snapshot(cancel_source, {'kind': 'memory_and_disk'}, 'cancel-public-capture')
+    cancel_snapshot = capture_cancel['snapshot']['id']; snapshots.append(cancel_snapshot)
+    cancel_observed['capture_admission'] = capture_cancel
+    complete(capture_cancel['operation'])
+    cancel_source_native = record(cancel_source)
+    terminate(cancel_source)
+    cancel_source_after = manager.observe(cancel_source_native)
+    assert not any(cancel_source_after['paths'].values()), cancel_source_after
+    assert all(not value['present'] or value.get('identity_start_matches') is False
+               for value in cancel_source_after['processes'].values()), cancel_source_after
+    with Client(endpoint, global_owner) as creator:
+        cancel_reply = creator.restore_snapshot(cancel_snapshot, request, 'cancel-public-restore')
+    cancel_target = cancel_reply['sandbox']['id']; sandboxes.append(cancel_target)
+    cancel_observed['restoration_admission'] = cancel_reply
+    assert cancel_target != cancel_source
+    cancel_bindings = {binding['source_execution_id']: binding['execution'] for binding in cancel_reply['executions']}
+    assert set(cancel_bindings) == {cancellable['id']}, cancel_bindings
+    cancel_new = cancel_bindings[cancellable['id']]['id']
+    assert cancel_new != cancellable['id']
+    complete(cancel_reply['operation'])
+    cancel_target_owner = key({'sandboxes': [cancel_target]})
+    with Client(endpoint, cancel_target_owner) as owner:
+        retained_cancel = owner.execution(cancel_new)
+        assert retained_cancel['sandbox_id'] == cancel_target and retained_cancel['state'] == 'running', retained_cancel
+        assert retained_cancel['started_at'] == cancellable['started_at'], retained_cancel
+        owner.cancel(cancel_new)
+        cancelled = owner.wait_execution(cancel_new, timeout=30)
+        assert cancelled['state'] == 'cancelled' and cancelled['cleanup'] == 'complete', cancelled
+        assert owner.sandbox(cancel_target)['state'] == 'running'
+    terminate(cancel_target)
+    complete(client.delete_snapshot(cancel_snapshot, 'cancel-public-delete'))
+    cancel_closed = native_call({'operation': 'checkpoint_collect', 'capture': cancel_snapshot})
+    assert cancel_closed['objects_absent'] and cancel_closed['reserved_bytes'] == 0, cancel_closed
+    cancel_observed.update(source_execution=cancellable, retained_execution=retained_cancel,
+                           cancellation=cancelled, source_after_collection=cancel_source_after,
+                           target_after_collection=record(cancel_target), checkpoint=cancel_closed)
+    report['cases'].append('retained_execution_cancel_uses_new_public_ID_and_confirms_descendant_cleanup_in_a_separate_sandbox')

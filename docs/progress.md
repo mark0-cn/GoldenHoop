@@ -22,8 +22,17 @@ pass326 Rust/36 SDK tests with format and strict workspace/all-target clippy.
 [Focused Linux checks](evidence/m4-memory-probe-inspection-validation-linux-final.json)
 pass14 tests including the actual lock regression plus strict native/control
 all-target clippy. Both freeze the same392 current inputs. The exact owned image
-and its containers are absent. Updated full CI and actual public-memory KVM
-acceptance are required.
+and its containers are absent. [Complete Windows/Ubuntu CI46113974631](https://github.com/mark0-cn/GoldenHoop/actions/runs/46113974631)
+passes on63ff6d1 with all392 inputs verified. [Actual KVM46113997910](https://github.com/mark0-cn/GoldenHoop/actions/runs/46113997910)
+then completes its native RAM probe after one recorded metadata-busy observation:
+checked/collected=true, step=verified and positive object/quota collection. Its
+later public flow waits for a second ordinary command to run concurrently with
+the first, contrary to the existing per-sandbox serialization contract. The
+[corrected harness](evidence/m4-memory-public-serialized-command-validation.json)
+uses separate source/restore pairs for RAM success and retained cancellation.
+All399 source inputs match and collection is Complete; the complete public KVM
+replay remains required before main promotion. Runtime inputs remain byte-for-byte
+identical to the passing392-input CI.
 Rootfs/volume snapshots, templates, combined M4 and complete M5-M6 remain open.
 The [inspection diagnosis](evidence/m4-memory-probe-inspection-diagnosis.json)
 separates the deterministic local defect from the older hardware reports whose
@@ -48,7 +57,8 @@ references across76 components. Final musl21 checks, strict native/init all-targ
 clippy and four static component release builds also pass on those392 inputs.
 CI46105933351 passes both OS jobs on implementation commit3286781. All five local
 check tags and their owned containers are absent. Actual public KVM run46106322126
-failed after successful source capture/collection and before target allocation;
+failed before target allocation; later cleanup found captured Ready content and
+positively collected its source;
 memory capability stayed absent. All399 reported source inputs match commit3286781,
 and VM/object/fixture collection is Complete. A diagnostic candidate preserves
 internal restore errors in the private probe receipt while public errors retain

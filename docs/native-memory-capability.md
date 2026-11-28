@@ -55,7 +55,10 @@ real API, Python SDK and Rust CLI: probed capability, capture source fencing,
 explicit source collection, foreign generation refusal, all-resource restoration
 creation, exact new-target grants, stable retry, retained execution IDs/events/
 cancel, manager SIGKILL/reconnect, RAM/disk continuation and physical VM/object
-collection. Its evidence binds the source and all runtime inputs. A skipped or
+collection. Normal commands serialize within each sandbox, as described in [the agent
+contract](agent.md). The gate uses separate source/restore pairs for successful
+RAM continuation and retained running-job cancellation. Its evidence binds the
+source and all runtime inputs. A skipped or
 failed run is unverified; compilation and synthetic fixtures are not KVM evidence.
 
 This gate covers public memory continuation. Rootfs/volume snapshots, templates,
