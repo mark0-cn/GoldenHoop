@@ -1,5 +1,12 @@
 # Durable capture admission outcomes
 
+Current configured-baseline public memory acceptance is recorded in the
+[14-group actual KVM summary](evidence/m4-public-memory-acceptance-summary.json):
+399 source inputs and Complete collection. The notes below retain this earlier
+increment's validation scope and historical pending states. Additional failure
+cuts and combined M4-M6 remain required; deployment support still needs its real
+continuation/collection probe.
+
 The subsequent [public snapshot interface](public-snapshot-api.md) exposes stored
 resources and durable collection intent while retaining this refusal proof. Its
 native missing-record collection path also reconciles the same closed ID without

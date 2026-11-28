@@ -508,3 +508,29 @@ new focused runsc workflow, complete interrupted-allocation reconciliation,
 native ownership/recovery audits, snapshots/restore/templates and combined Stage
 remain required. M5 Kubernetes/operator/PostgreSQL/placement/pools/batches/volumes
 and M6 installation/upgrades/benchmarks/release audit are unchanged.
+
+## Public baseline memory continuation accepted
+
+[Actual KVM46116996541](https://github.com/mark0-cn/GoldenHoop/actions/runs/46116996541)
+atbfd6992 passes14 groups, including eight public groups, with399 byte-verified
+inputs and Complete collection. The capability probe recovers observed metadata
+lock contention by inspecting its original capture within the existing deadline;
+verified content and positive VM/object collection remain required.
+
+The public path proves source fencing/collection, pre-allocation foreign-source
+refusal, SDK/CLI exact retry, exact new-target grants, manager SIGKILL and worker
+restart with the same supervisor/VMM/retained task, original RAM/disk state,
+normalized events and Succeeded/exit0/Complete. A separate source/restore pair
+proves new-public-ID cancellation and Complete descendant cleanup while retaining
+the existing per-sandbox command serialization contract. Live target backing
+stays referenced. All eight VM generations, three checkpoint object/quota
+receipts, fixture, export container and exact workflow image are absent.
+
+Matching392-input [full Windows/Ubuntu CI46113974631](https://github.com/mark0-cn/GoldenHoop/actions/runs/46113974631)
+passes at63ff6d1. The [acceptance summary](evidence/m4-public-memory-acceptance-summary.json)
+retains source binding, prior failures and the guest/host clock distinction.
+Rootfs/volume snapshots, immutable templates, prepared-image continuation,
+additional failure/pressure/retained-state coverage, clock review, combined M4
+and complete M5-M6 remain required. The [rootfs/template contract](native-rootfs-templates.md)
+is planned work. The historical automatically blocked failed-test directory
+remains separately unverified; this successful gate does not collect it.

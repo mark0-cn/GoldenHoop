@@ -12,15 +12,17 @@ targeted native6/shared-guest6 gate passes12/90/Complete at0caa8a7. The independ
 actual missing-writer cut also passes9/90/Complete at2f3a8a5, including a live VMM
 unacknowledged by both native journal and store, original collection proof and
 Closed/Unconfirmed with exact quota/GC and no relaunch.
-Actual public native snapshot/restore/template acceptance and capability
-registration remain unaccepted. The [public operation foundation](public-snapshot-operations.md)
+The [actual public baseline memory gate](evidence/m4-public-memory-acceptance-summary.json)
+passes14 groups/399 inputs/Complete atbfd6992, including the capability probe.
+Rootfs/volume snapshots, templates and broader native profile acceptance remain
+required. The [public operation foundation](public-snapshot-operations.md)
 now persists capture intent, source fencing and immutable execution candidates;
 The [worker bridge](snapshot-worker.md) now implements private source-serialized
 admission, capture dispatch, inspection and failed-capture collection. The
 [durable capture outcome increment](capture-outcomes.md) adds source-bound
-pre-reservation refusal and late-producer fencing. Actual manager/worker KVM
-refusal acceptance, public KVM restoration and full profile acceptance remain
-required.
+pre-reservation refusal and late-producer fencing. The public baseline success,
+selected refusal, reconnect and deletion path now passes its actual KVM gate;
+additional producer/worker failure cuts and full profile acceptance remain required.
 The complete M0-M6 objective in [roadmap.md](roadmap.md) is unchanged.
 
 The [public snapshot interface](public-snapshot-api.md) adds gateway admission,
@@ -28,8 +30,9 @@ source-bound authorization, stored reads, pagination, durable deletion and
 Rust/Python/CLI methods. It retains the original source collection requirement
 and private references until positive backend GC. The [public restoration bridge](public-snapshot-restoration.md)
 now adds one durable new target, retained execution/event/cancellation bindings,
-exact new-target grants and native late-target closure. Actual capability
-and public KVM acceptance remain required.
+exact new-target grants and native late-target closure. Its configured-baseline
+capability/public KVM path is accepted in the summary above; prepared-image
+continuation and complete M4 remain required.
 
 ## Upstream constraints
 
@@ -72,7 +75,7 @@ The private [single-use continuation](native-continuation.md) implements a claim
 same-observer source-termination fences and a fresh owned-Machine loader. Its
 actual fresh-target gate passes70/384/Complete. Native persistent manager/supervisor
 coordination passes its separate targeted12/90 and writer-cut9/90 hardware gates;
-the public restoration bridge remains unaccepted on KVM. Old guests refuse
+the public baseline bridge passes its separate14-group KVM gate. Old guests refuse
 requests requiring unsupported semantics.
 
 PID1 remains outside workload task groups. The implemented private barrier closes
@@ -111,7 +114,8 @@ pathname or live producer. That materializer does not implement durable publicat
 shared quota, capture producer fencing or restore claims; anonymous staging is not persistent
 snapshot storage. The [persistent store and owned capture](native-checkpoint-store.md)
 passed its actual60-group gate at47ac2cc. Native-manager integration and private
-continuation have separate local/hardware evidence; public integration remains unaccepted.
+continuation have separate local/hardware evidence; public baseline integration
+now has the independent actual14-group acceptance described above.
 The existing VM-root receipt deliberately binds a host boot and PID namespace;
 it is not a persistent snapshot-reader contract. Separate immutable-object
 identity from the original producer's write/collection fence. A Ready reader

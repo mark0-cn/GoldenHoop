@@ -1,5 +1,12 @@
 # Worker-owned memory capture
 
+Current configured-baseline public memory acceptance is recorded in the
+[14-group actual KVM summary](evidence/m4-public-memory-acceptance-summary.json):
+399 source inputs and Complete collection. The notes below retain this earlier
+increment's validation scope and historical pending states. Additional failure
+cuts and combined M4-M6 remain required; deployment support still needs its real
+continuation/collection probe.
+
 The worker now owns authenticated private admission, first capture dispatch,
 inspection-only recovery and collection of positively failed captures. The
 complete M0-M6 objective remains in [roadmap.md](roadmap.md). Public snapshot

@@ -56,8 +56,10 @@ Inspect, event reads and cancellation translate the new public ID to the retaine
 agent ID through the original target handle. The new public event stream starts
 at sequence1 after the capture inventory's acknowledged agent cursor. Completed
 event payloads also receive the new public execution and sandbox identity.
-Already observed source output is not duplicated. Actual retained start times may
-precede the new public resource's creation time.
+Already observed source output is not duplicated. Retained agent start/completion
+timestamps come from the guest and can precede the new host resource's creation
+time after continuation. They are distinct from host operation observations.
+Guest wall-clock synchronization is not established by this contract gate.
 
 A missing retained agent execution fails the restoration and collects its target.
 It never enters Start. Source execution results and source cancellation handles
@@ -109,17 +111,20 @@ durable acceptance. Default waiting requires an observed Running target.
 
 SQLite migration, reopen, routing, authorization, loopback transport, CLI startup
 and native closure files can be checked locally. VM and agent observations in the
-worker fixtures are synthetic. Actual public KVM continuation, retained RAM/disk,
-authority rotation, target interruption, positive runtime/object collection and
-profile probing remain required before native capability advertisement. Rootfs
-and volume snapshots, templates, combined M4 and M5-M6 remain required work.
+worker fixtures are synthetic. The separate [actual public KVM gate](evidence/m4-public-memory-acceptance-summary.json)
+passes14 groups/399 inputs/Complete atbfd6992 on the configured baseline: actual
+RAM/disk continuation, capability probing, exact new-target grants, manager
+SIGKILL/worker reconnect, explicit completion/cancellation and positive VM/object
+collection. Matching392-input full Windows/Ubuntu CI passes at63ff6d1.
+Prepared-image continuation, additional retained state, rootfs/volume snapshots,
+templates, broader failure/pressure coverage, combined M4 and M5-M6 remain required.
 
 The real-backend gate must include validly encoded handles for a foreign source
 generation, foreign target/operation identities and corrupt content. Such requests
 must not acquire another generation's restoration or collection authority.
 RestoreSnapshot, RestoredExecution and SnapshotRestored are registered in the
 model schema export; generation resolves all93 references across76 components.
-This schema verification remains separate from actual public KVM acceptance.
+This schema verification remains separate from the actual baseline KVM gate.
 Concurrent restoration and native validation-slot pressure also require real
 acceptance: temporary capacity pressure should preserve the original pending
 target and recovery key rather than consume its one-use continuation.

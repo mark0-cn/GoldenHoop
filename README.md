@@ -22,7 +22,9 @@ The opt-in [basic local Firecracker profile](docs/m4-delivery.md) passes actual 
 capture admission, stored reads, pagination and durable deletion, with source
 authorization and Rust/Python/CLI methods. Native MemorySnapshot requires a
 configured [actual RAM continuation and collection probe](docs/native-memory-capability.md).
-Its public KVM workflow is a separate release gate. The
+Its separate [public KVM gate](docs/evidence/m4-public-memory-acceptance-summary.json)
+passes14 actual groups with source-verified Complete collection on the configured
+baseline image. The
 [restoration bridge](docs/public-snapshot-restoration.md) implements one new target,
 retained execution/event/cancel bindings and native late-target closure. Snapshot
 deletion requires positive source and target collection.

@@ -1,6 +1,34 @@
 # Progress
 
-The current candidate corrects transient checkpoint metadata contention. A real
+[Actual public memory KVM46116996541](https://github.com/mark0-cn/GoldenHoop/actions/runs/46116996541)
+passes all14 groups, including eight public groups, atbfd6992 with399 verified
+source inputs and Complete collection. The capability probe recovers an observed
+metadata-busy read while retaining its original capture. Public SDK/CLI retry,
+source fencing/collection, foreign-generation refusal, exact new-target grants,
+manager SIGKILL/worker reconnect, original VM/retained-task identity, RAM/disk
+continuation, normalized events and separate retained cancellation all pass.
+The RAM job explicitly Succeeds with exit0/Complete; the other job becomes
+Cancelled/Complete. All eight VM generations, three checkpoint object/quota
+receipts, export container, fixture and exact workflow image are absent.
+
+[Full Windows/Ubuntu CI46113974631](https://github.com/mark0-cn/GoldenHoop/actions/runs/46113974631)
+passes at63ff6d1; all392 runtime inputs match this candidate byte-for-byte.
+The [acceptance summary](evidence/m4-public-memory-acceptance-summary.json) binds
+the actual reports, local Windows326/SDK36 and focused Linux14 checks, source
+proof and explicit remaining scope. This accepts the tested configured-baseline
+public memory path. Prepared-image continuation, additional retained state and
+failure/pressure coverage, rootfs/volume snapshots, templates, clock review,
+combined M4 and complete M5-M6 remain required. The next
+[rootfs/template contract](native-rootfs-templates.md) remains planned work.
+One historical failed-test directory remains separately uncollected after an
+automatic approval rejection; this gate does not establish its absence.
+
+## Earlier candidate development notes
+
+These notes preserve earlier candidate and pending states. The source-verified
+acceptance above is the current baseline status.
+
+The earlier candidate corrected transient checkpoint metadata contention. A real
 Linux file-lock regression fails on the previous code with WouldBlock/os11 while
 a quota writer or Ready publisher owns its original lease. It closes the exact
 writer/filesystem fixture before asserting the failing baseline. Quota and job

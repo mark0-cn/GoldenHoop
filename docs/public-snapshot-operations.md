@@ -1,5 +1,12 @@
 # Public snapshot operation storage
 
+Current configured-baseline public memory acceptance is recorded in the
+[14-group actual KVM summary](evidence/m4-public-memory-acceptance-summary.json):
+399 source inputs and Complete collection. The notes below retain this earlier
+increment's validation scope and historical pending states. Additional failure
+cuts and combined M4-M6 remain required; deployment support still needs its real
+continuation/collection probe.
+
 The [public restoration bridge](public-snapshot-restoration.md) adds schema v21's
 single durable target, private retained-agent execution/cursor bindings and target
 collection references. REST, Rust/Python clients and CLI expose these operations;

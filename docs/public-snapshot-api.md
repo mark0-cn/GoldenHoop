@@ -1,5 +1,12 @@
 # Public snapshots and durable deletion
 
+Current configured-baseline public memory acceptance is recorded in the
+[14-group actual KVM summary](evidence/m4-public-memory-acceptance-summary.json):
+399 source inputs and Complete collection. The notes below retain this earlier
+increment's validation scope and historical pending states. Additional failure
+cuts and combined M4-M6 remain required; deployment support still needs its real
+continuation/collection probe.
+
 The [restoration interface](public-snapshot-restoration.md) adds a new target,
 retained execution bindings and target-held content references. Snapshot deletion
 also requires positive collection of that restoration target.

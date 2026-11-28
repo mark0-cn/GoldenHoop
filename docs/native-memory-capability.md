@@ -61,5 +61,12 @@ RAM continuation and retained running-job cancellation. Its evidence binds the
 source and all runtime inputs. A skipped or
 failed run is unverified; compilation and synthetic fixtures are not KVM evidence.
 
+[Actual run46116996541](https://github.com/mark0-cn/GoldenHoop/actions/runs/46116996541)
+passes14 groups with399 verified inputs and Complete collection on the configured
+baseline image. The [acceptance summary](evidence/m4-public-memory-acceptance-summary.json)
+also binds matching392-input full Windows/Ubuntu CI, explicit RAM-job success and
+separate retained cancellation. The gate does not establish guest wall-clock
+synchronization; retained guest timestamps are distinct from host observations.
+
 This gate covers public memory continuation. Rootfs/volume snapshots, templates,
 combined M4 acceptance and complete M5-M6 remain separate required work.
