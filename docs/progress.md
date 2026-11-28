@@ -1,6 +1,6 @@
 # Progress
 
-The private M4 two-target rootfs cold-boot increment is accepted on sourced9e0b37c.
+The private M4 two-target rootfs cold-boot increment is accepted on source9e0b37c.
 [Actual KVM/runsc46152336903](evidence/m4-rootfs-coldboot-46152336903-archive.json)
 passes31 groups with409 byte-verified inputs. One Rust-captured/inspected disk
 starts two distinct jailed VMMs and disk inodes with fresh execution state. The
@@ -15,6 +15,10 @@ passes. The [acceptance summary](evidence/m4-rootfs-coldboot-acceptance-summary.
 retains the failed first run and scoped collection records. Cold-boot copy-time
 manager/supervisor death, acknowledged-result inspector death, public rootfs,
 templates, volumes and combined M4-M6 acceptance remain pending.
+The [main promotion](evidence/m4-rootfs-coldboot-main-promotion.json) fast-forwards
+2925bb6 after both frozen-source gates. The active cold-boot worktree remains for
+the copy-time fault follow-up; all owned local test images/containers/volumes are
+absent and useful build caches are retained.
 
 The implementation uses separate
 durable source references, shared-mutex descriptor handoff, production Rust disk

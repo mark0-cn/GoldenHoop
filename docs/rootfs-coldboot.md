@@ -1,6 +1,6 @@
 # Private rootfs cold boot
 
-This increment is accepted on sourced9e0b37c by
+This increment is accepted on source9e0b37c by
 [actual KVM/runsc46152336903](evidence/m4-rootfs-coldboot-46152336903-archive.json)
 and [full CI46152295297](evidence/m4-rootfs-coldboot-ci-46152295297.json).
 The gate proves two fresh VMs, independent disk writes after source-content GC
