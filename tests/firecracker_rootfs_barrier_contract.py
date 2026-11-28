@@ -195,7 +195,15 @@ def exercise(handle, record, runtime, call, rpc, command, report, inspector_imag
         report['cases'].append('independent_live_source_copy_is_clean_and_boot_assets_verified_by_actual_runsc_inspector')
     finally:
         if not inspected: inspector.run()
-    rpc(handle, dict(method='cancel', id=execution), 'ok')
+    rpc(handle, dict(method='cancel', id=execution), 'execution')
+    deadline = time.monotonic()+20
+    while True:
+        cancelled = rpc(handle, dict(method='inspect', id=execution), 'execution')
+        assert cancelled['id'] == execution, cancelled
+        if cancelled['state'] == 'cancelled' and cancelled['cleanup'] == 'complete': break
+        assert time.monotonic() < deadline, cancelled
+        time.sleep(.05)
+    observations['original_counter_after_cancel'] = cancelled
 
     memory = str(uuid.uuid4())
     mem_receipt = control('quiesce', memory)

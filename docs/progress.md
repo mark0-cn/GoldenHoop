@@ -19,6 +19,23 @@ These checks are not KVM freeze or cold-boot evidence. The targeted actual
 KVM/runsc gate remains pending. The initial ABI compile failure and superseded
 20-test GNU follow-up are retained separately.
 
+[Full Windows/Ubuntu CI46128461372](https://github.com/mark0-cn/GoldenHoop/actions/runs/46128461372)
+passes with all396 inputs verified against the candidate. Its
+[archive](evidence/m4-rootfs-capture-ci-46128461372.json) records813 Rust and72 Python
+passes across jobs (aggregate counts). Actual KVM46128488173 passes the six guest
+baseline groups, four driver groups and the first five new rootfs groups:
+real original-root freeze/clean superblock, exact retry/refusal, independent
+copy, explicit source thaw and continuing writer, and actual runsc boot-asset
+inspection with independent copied counter data. The
+[failed gate archive](evidence/m4-rootfs-barrier-46128488173-archive.json) binds391
+source files and Complete VM/cgroup/fixture/container/volume/image collection.
+The failure is the new harness's Cancel response assumption: it expected Ok
+while the existing agent protocol returns an execution that may still be
+Running/Pending. The correction follows the existing native barrier contract,
+requiring that same ID to become Cancelled/Complete before the remaining
+memory-exclusion/lost-reply controls. Production Rust is unchanged; final actual
+KVM acceptance remains pending.
+
 [Actual runsc46124741317](https://github.com/mark0-cn/GoldenHoop/actions/runs/46124741317)
 accepts the private read-only rootfs inspector at8a776b9: all18 groups pass with377
 byte-verified inputs and Complete collection. The separate trusted transport
