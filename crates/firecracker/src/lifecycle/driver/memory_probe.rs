@@ -465,7 +465,10 @@ impl NativeEngine {
         if record.phase != "collected" || !self.physical_absence(&record)? {
             return Err(invalid("memory probe source still exists before transfer").into());
         }
-        let target = self.checkpoint_restore(&probe.restore_request()?).await?;
+        let restore = probe.restore_request()?;
+        let target = self
+            .create_with_input_observed(&probe.target, &probe.request, None, Some(&restore))
+            .await?;
         if target.sandbox_id != probe.target.id
             || target.backend_ref == source.backend_ref
             || self.inspect(&target).await?.state != ObservedState::Running
@@ -631,6 +634,31 @@ mod tests {
         changed.checked = true;
         assert!(changed.save(&cfg).is_err());
         assert!(!reopened.memory_probes().unwrap()[0].checked);
+        let mut missing = probe.clone();
+        missing.source_handle = Some(native_handle(
+            cfg.installation_id,
+            probe.source.id,
+            Uuid::new_v4(),
+        ));
+        missing.reference = Some(CheckpointReference {
+            installation: cfg.installation_id,
+            capture: probe.capture,
+            manifest_sha256: "a".repeat(64),
+        });
+        let restore = missing.restore_request().unwrap();
+        let observed = reopened
+            .create_with_input_observed(&missing.target, &missing.request, None, Some(&restore))
+            .await
+            .unwrap_err();
+        let public = reopened.checkpoint_restore(&restore).await.unwrap_err();
+        assert_eq!(public.code, ErrorCode::BackendUnavailable);
+        assert_eq!(
+            public.message,
+            "native operation is unconfirmed; reconcile the owned generation"
+        );
+        assert_ne!(observed.to_string(), public.to_string());
+        assert!(!cfg.record_path(missing.target.id).exists());
+        assert!(reopened.records().unwrap().is_empty());
         drop(reopened);
         let path = directory.path().to_owned();
         directory.close().unwrap();

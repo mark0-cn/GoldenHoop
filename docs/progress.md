@@ -15,8 +15,15 @@ source fences, exact target grants, retained event/cancel mappings and manager
 SIGKILL recovery. Final publication-source checks pass Windows326/GNU-root451 and Python36 on
 identical392 frozen inputs, with formatting, strict workspace all-target clippy
 and the GNU images-service release build. Schema generation resolves all93
-references across76 components. The final normalized-source musl check and the
-new actual public KVM gate remain pending; M4-M6 remain unaccepted. The
+references across76 components. Final musl21 checks, strict native/init all-target
+clippy and four static component release builds also pass on those392 inputs.
+CI46105933351 passes both OS jobs on implementation commit3286781. All five local
+check tags and their owned containers are absent. Actual public KVM run46106322126
+failed after successful source capture/collection and before target allocation;
+memory capability stayed absent. All399 reported source inputs match commit3286781,
+and VM/object/fixture collection is Complete. A diagnostic candidate preserves
+internal restore errors in the private probe receipt while public errors retain
+their existing format. M4-M6 remain unaccepted. The
 [implementation summary](evidence/m4-memory-profile-implementation-summary.json)
 binds the exact current reports, scoped image collection, initial diagnosis and
 explicitly superseded pre-normalization checks.

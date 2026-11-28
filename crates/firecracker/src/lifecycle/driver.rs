@@ -175,6 +175,22 @@ impl NativeEngine {
         input: Option<image::Input>,
         restore_request: Option<&ManagedRestoreRequest>,
     ) -> std::result::Result<RuntimeHandle, ApiError> {
+        self.create_with_input_observed(sandbox, request, input, restore_request)
+            .await
+            .map_err(|error| {
+                error
+                    .downcast_ref::<ApiError>()
+                    .cloned()
+                    .unwrap_or_else(|| unavailable(error))
+            })
+    }
+    async fn create_with_input_observed(
+        &self,
+        sandbox: &Sandbox,
+        request: &CreateSandbox,
+        input: Option<image::Input>,
+        restore_request: Option<&ManagedRestoreRequest>,
+    ) -> Result<RuntimeHandle> {
         let lock = self.vm_lock(sandbox.id).await;
         let _guard = lock.lock().await;
         let result = async {
@@ -202,12 +218,7 @@ impl NativeEngine {
             }
             let _ = self.remove_owned(&record).await;
         }
-        result.map_err(|error| {
-            error
-                .downcast_ref::<ApiError>()
-                .cloned()
-                .unwrap_or_else(|| unavailable(error))
-        })
+        result
     }
     pub fn connect(cfg: DriverConfig, lock: File) -> Result<Self> {
         cfg.validate()?;
