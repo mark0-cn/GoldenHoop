@@ -68,6 +68,11 @@ class ArtifactError(Error):
         super().__init__(f"artifact {artifact_id} operation failed: {error}")
 
 
+@dataclass(frozen=True)
+class CreateSnapshot:
+    kind: str
+
+
 class SessionControlError(Error):
     def __init__(self, execution_id: str, sequence: int, error: Error):
         self.execution_id, self.sequence, self.error = execution_id, sequence, error
@@ -174,8 +179,8 @@ class CodeRunOutput:
     errors: list[Json]
 
 
-def body(value: CreateSandbox | CreateIsolatedSession | Command | CreateArtifact | SessionSpec | SessionControl | CodeContextSpec | CodeRunSpec | Json) -> Json:
-    result = asdict(value) if isinstance(value, (CreateSandbox, CreateIsolatedSession, Command, CreateArtifact, SessionSpec, SessionControl, CodeContextSpec, CodeRunSpec)) else dict(value)
+def body(value: CreateSandbox | CreateIsolatedSession | Command | CreateArtifact | CreateSnapshot | SessionSpec | SessionControl | CodeContextSpec | CodeRunSpec | Json) -> Json:
+    result = asdict(value) if isinstance(value, (CreateSandbox, CreateIsolatedSession, Command, CreateArtifact, CreateSnapshot, SessionSpec, SessionControl, CodeContextSpec, CodeRunSpec)) else dict(value)
     if isinstance(value, (CreateSandbox, CreateIsolatedSession)):
         for name in ("child_budget", "feature_limit", "ttl_seconds", "image", "network"):
             if result.get(name) is None:

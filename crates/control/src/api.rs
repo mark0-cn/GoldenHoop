@@ -25,6 +25,7 @@ mod isolated;
 mod network_policy;
 mod security;
 mod sessions;
+mod snapshots;
 
 struct App {
     store: Store,
@@ -105,6 +106,15 @@ pub fn router_with_vault(
                 .layer(DefaultBodyLimit::max(64 * 1024)),
         )
         .route("/v1/sandboxes/{id}/commands", post(command))
+        .route(
+            "/v1/sandboxes/{id}/snapshots",
+            post(snapshots::create).layer(DefaultBodyLimit::max(8192)),
+        )
+        .route("/v1/snapshots", get(snapshots::list))
+        .route(
+            "/v1/snapshots/{id}",
+            get(snapshots::inspect).delete(snapshots::delete),
+        )
         .route("/v1/executions/{id}", get(execution))
         .route("/v1/executions/{id}/cancel", post(cancel))
         .route("/v1/executions/{id}/events", get(events))

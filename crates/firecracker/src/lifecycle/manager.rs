@@ -431,9 +431,18 @@ impl RuntimeDriver for FirecrackerDriver {
         &self,
         request: &MemoryCaptureRequest,
     ) -> std::result::Result<MemoryCaptureObservation, ApiError> {
-        let value = self
+        request.validate_identity()?;
+        let value = match self
             .checkpoint_collect_bound(&request.handle, request.id)
-            .await?;
+            .await
+        {
+            Ok(value) => value,
+            Err(error) if error.code == ErrorCode::NotFound => {
+                self.checkpoint_reconcile_bound(&request.handle, request.id)
+                    .await?
+            }
+            Err(error) => return Err(error),
+        };
         super::snapshots::project(&self.cfg, request, value)
     }
     async fn probe(&self) -> RuntimeProfile {

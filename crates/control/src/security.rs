@@ -165,9 +165,12 @@ async fn resource(store: &Store, namespace: &str, id: Uuid) -> Result<Uuid, ApiE
                 .sandbox_id
         }
         "artifacts" => store.artifact(id).await?.artifact.sandbox_id,
+        "snapshots" => store.snapshot(id).await?.snapshot.source_sandbox_id,
         "operations" => {
             let target = store.operation(id).await?.resource_id;
-            if store.sandbox(target).await.is_ok() {
+            if let Some(source) = store.snapshot_operation_source(id).await? {
+                source
+            } else if store.sandbox(target).await.is_ok() {
                 target
             } else {
                 store.artifact(target).await?.artifact.sandbox_id

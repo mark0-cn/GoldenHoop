@@ -886,7 +886,7 @@ async fn schema_six_complete_binding_keeps_original_payload_and_history_bytes() 
             let after: Vec<String> = sqlx::query_scalar("SELECT payload FROM network_allocation_events ORDER BY revision").fetch_all(&mut connection).await.unwrap();
             let current: String = sqlx::query_scalar("SELECT payload FROM network_allocations WHERE sandbox_id=?").bind(id.to_string()).fetch_one(&mut connection).await.unwrap();
             connection.close().await.unwrap();
-            assert_eq!(version, "19");
+            assert_eq!(version, "20");
             assert_eq!(before, after);
             assert_eq!(current, payload);
         }).catch_unwind().await;

@@ -18,6 +18,13 @@ Runtime support is declared per profile and checked against the host. Missing is
 
 The opt-in [basic local Firecracker profile](docs/m4-delivery.md) passes actual jailed bootstrap and the shared API/Python SDK/Rust CLI contract, including worker SIGKILL recovery and independent expiry. Only actually probed basic commands, files, pause, no-NIC isolation and retained artifacts are published. [The trusted image parent](docs/image-preparation.md) connects immutable source acquisition, host resource checks, isolated offline conversion and private disk storage. Production gVisor/produced-disk KVM gates, full allocation recovery, snapshots/restores/templates, hard-manager recovery and combined M4 acceptance remain required.
 
+[Public snapshot interfaces](docs/public-snapshot-api.md) now include gateway
+capture admission, stored reads, pagination and durable deletion, with source
+authorization and Rust/Python/CLI methods. Native MemorySnapshot remains
+unadvertised pending public restore/execution bindings and actual profile/KVM
+acceptance. Snapshot deletion requires positive collection and preserves the
+original source's lifecycle authority.
+
 ## Development
 
     cargo fmt --all --check

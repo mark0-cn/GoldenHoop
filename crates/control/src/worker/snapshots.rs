@@ -120,7 +120,10 @@ impl Worker {
                     && (matches!(
                         s.snapshot.state,
                         SnapshotState::Capturing | SnapshotState::Unknown
-                    ) || s.snapshot.state == SnapshotState::Failed && !s.source_collected)
+                    ) || s.snapshot.state == SnapshotState::Failed && !s.source_collected
+                        || s.snapshot.state == SnapshotState::Collecting
+                            && s.runtime_reference.is_none()
+                            && s.capture_refusal.is_none())
             })
             .map(|s| s.source_handle.profile.clone())
             .collect();
@@ -200,6 +203,32 @@ impl Worker {
                     "original snapshot driver is unavailable",
                 )
             })?;
+        if stored.snapshot.state == SnapshotState::Collecting {
+            self.store
+                .begin_snapshot_collection(id, &stored.source_handle)
+                .await?;
+            let observed = driver
+                .collect_memory_capture(&request(&stored, &source))
+                .await?;
+            observation_matches(&observed, &stored)?;
+            return match observed.state {
+                MemoryCaptureState::Collected => {
+                    self.store
+                        .complete_snapshot_collection(id, &stored.source_handle, None)
+                        .await
+                }
+                MemoryCaptureState::Refused { reason, receipt } => {
+                    self.store
+                        .complete_snapshot_collection(
+                            id,
+                            &stored.source_handle,
+                            Some((&reason, &receipt)),
+                        )
+                        .await
+                }
+                _ => Err(inconsistent()),
+            };
+        }
         if stored.snapshot.state == SnapshotState::Failed {
             return self.collect_failed_snapshot(stored, source, driver).await;
         }
@@ -352,6 +381,7 @@ impl Worker {
             SnapshotState::Failed if stored.snapshot.cleanup != CleanupState::Complete => {
                 self.store.snapshot_cleanup_unknown(id).await
             }
+            SnapshotState::Collecting => self.store.snapshot_collection_unknown(id, error).await,
             _ => Ok(()),
         }
     }

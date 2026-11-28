@@ -1,5 +1,47 @@
 # Progress
 
+The [public snapshot interface](public-snapshot-api.md) connects gateway capture,
+stored reads, source-filtered cursor pages and durable deletion with Rust/Python
+clients and CLI commands. All snapshot resources and capture/collection operations
+inherit the original source grant, including cross-table UUID collisions. The
+gateway validates authenticated private admission against the shared store and
+returns only public stored metadata. Exact capture retries survive a retired
+worker or unavailable profile; changed content conflicts without a new capture.
+
+SQLite v20 records one immutable collection operation. Deletion races atomically
+with the first dispatch marker; undispatched capture can cancel without backend
+effects. Dispatched resources require the original source collection receipt.
+Snapshot deletion never authorizes deleting the source. Source-bound native GC
+and durable missing-record refusal converge without VM creation or Start.
+Unknown/lost/foreign replies retain references and a Running collection operation;
+positive collection clears backend authority atomically. Original capture outcomes
+remain intact, and unpublished captures superseded by deletion become Cancelled.
+
+Same-source targeted checks pass Windows27/GNU27 and Python33; the
+[source/index audit](evidence/m4-snapshot-api-source-index-audit.json) binds383 Rust,
+manifest, Docker recipe and Python SDK/test inputs byte-for-byte. These checks
+cover actual SQLite migration/reopen, public routing, private/client loopback HTTP,
+CLI startup, source grants, cancellation/retry and collection recovery. VM/object
+observations are synthetic. The [development diagnosis](evidence/m4-snapshot-api-development-diagnosis.json)
+preserves initial test dependency failures and a first-Store.open GNU initialization
+failure before HTTP setup. Its underlying cause remains unconfirmed; the same
+source targeted rerun passes without changing production pool limits/timeouts.
+Full frozen-source workspace checks also pass Windows316/GNU-root438, including
+formatting and strict all-target clippy; Windows Python33 and the GNU host release
+build pass on those same383 inputs. Original transient initialization evidence is
+retained independently and is not described as a confirmed fixed root cause.
+Scoped musl21, strict firecracker/init all-target clippy and four static component
+release builds also pass on those383 inputs. All three owned check tags and their
+owned containers are positively absent. The [implementation summary](evidence/m4-snapshot-api-implementation-summary.json)
+binds the full source maps, validation reports, retained failures and collection
+receipts; no new KVM acceptance is claimed by these interface checks.
+The [upstream review](evidence/m4-snapshot-api-upstream-review.json) records OpenSandbox
+cleanup order, Kubernetes finalization and the pinned SQLx pool source contract.
+
+Public restoration/execution bindings, actual public KVM/capability acceptance,
+rootfs/volume snapshots, templates, combined M4 and complete M5-M6 remain active.
+MemorySnapshot stays unadvertised; this interface does not weaken that boundary.
+
 The [durable capture outcome increment](capture-outcomes.md) adds permanent,
 source-bound native refusals for the dispatch-marker-before-send window and
 pre-reservation failures. Reconciliation holds the original VM mutex, checks its

@@ -23,6 +23,12 @@ refusal acceptance, public restoration/clients and full profile acceptance remai
 required.
 The complete M0-M6 objective in [roadmap.md](roadmap.md) is unchanged.
 
+The [public snapshot interface](public-snapshot-api.md) adds gateway admission,
+source-bound authorization, stored reads, pagination, durable deletion and
+Rust/Python/CLI methods. It retains the original source collection requirement
+and private references until positive backend GC. Public restoration/execution
+bindings and actual capability/public KVM acceptance remain required.
+
 ## Upstream constraints
 
 The pinned Firecracker v1.18.0 revision is

@@ -1,5 +1,10 @@
 # Public snapshot operation storage
 
+The [public snapshot interface](public-snapshot-api.md) now connects gateway,
+source authorization, clients and durable deletion. Schema v20 retains a separate
+collection operation until positive backend GC, preserving original capture
+outcomes and backend authority across uncertain cleanup.
+
 The subsequent [durable capture outcome increment](capture-outcomes.md) adds
 schema v19's private refusal receipt and atomic release for positively proved
 pre-reservation failures. The original foundation's v18 evidence below remains

@@ -35,6 +35,10 @@ fn code_language(value: &str) -> std::result::Result<CodeLanguage, String> {
         .find(|language| language.as_str() == value)
         .ok_or_else(|| "language must be python, java, go, typescript, bash or javascript".into())
 }
+fn snapshot_kind(value: &str) -> std::result::Result<SnapshotKind, String> {
+    serde_json::from_value(serde_json::Value::String(value.into()))
+        .map_err(|_| "snapshot kind must be rootfs, volumes or memory_and_disk".into())
+}
 
 #[derive(clap::Args)]
 struct ScopeArgs {
@@ -76,6 +80,10 @@ impl ScopeArgs {
 #[derive(Subcommand)]
 enum Command {
     Profiles,
+    Snapshots {
+        #[command(subcommand)]
+        command: SnapshotCommand,
+    },
     Keys {
         #[command(subcommand)]
         command: KeyCommand,
@@ -111,6 +119,37 @@ enum KeyCommand {
     Create { request: PathBuf },
     Get { id: Uuid },
     Revoke { id: Uuid },
+}
+
+#[derive(Subcommand)]
+enum SnapshotCommand {
+    Create {
+        sandbox: Uuid,
+        #[arg(long,value_parser=snapshot_kind)]
+        kind: SnapshotKind,
+        #[arg(long)]
+        idempotency_key: Option<String>,
+        #[arg(long)]
+        no_wait: bool,
+    },
+    Get {
+        id: Uuid,
+    },
+    List {
+        #[arg(long)]
+        sandbox: Option<Uuid>,
+        #[arg(long)]
+        after: Option<Uuid>,
+        #[arg(long, default_value_t = 100)]
+        limit: u32,
+    },
+    Delete {
+        id: Uuid,
+        #[arg(long)]
+        idempotency_key: Option<String>,
+        #[arg(long)]
+        no_wait: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -516,6 +555,71 @@ async fn run(args: Args) -> CliResult<u8> {
     let client = Client::new(&args.endpoint, &token)?;
     match args.command {
         Command::Profiles => print_json(&client.profiles().await?)?,
+        Command::Snapshots { command } => match command {
+            SnapshotCommand::Create {
+                sandbox,
+                kind,
+                idempotency_key,
+                no_wait,
+            } => {
+                let key = key(idempotency_key);
+                eprintln!("idempotency_key={key}");
+                let created = client
+                    .create_snapshot(sandbox, &CreateSnapshot { kind }, &key)
+                    .await?;
+                eprintln!(
+                    "snapshot_id={} operation_id={}",
+                    created.snapshot.id, created.operation.id
+                );
+                if no_wait {
+                    print_json(&created)?;
+                } else {
+                    client
+                        .wait_operation(created.operation.id, Duration::from_secs(60))
+                        .await?;
+                    let snapshot = client.snapshot(created.snapshot.id).await?;
+                    if snapshot.state != SnapshotState::Ready {
+                        return Err(Error::Protocol(
+                            "snapshot is not Ready after capture operation",
+                        )
+                        .into());
+                    }
+                    print_json(&snapshot)?;
+                }
+            }
+            SnapshotCommand::Get { id } => print_json(&client.snapshot(id).await?)?,
+            SnapshotCommand::List {
+                sandbox,
+                after,
+                limit,
+            } => print_json(&client.list_snapshots(sandbox, after, limit).await?)?,
+            SnapshotCommand::Delete {
+                id,
+                idempotency_key,
+                no_wait,
+            } => {
+                let key = key(idempotency_key);
+                eprintln!("idempotency_key={key}");
+                let operation = client.delete_snapshot(id, &key).await?;
+                eprintln!("snapshot_id={id} operation_id={}", operation.id);
+                if no_wait {
+                    print_json(&operation)?;
+                } else {
+                    client
+                        .wait_operation(operation.id, Duration::from_secs(60))
+                        .await?;
+                    let snapshot = client.snapshot(id).await?;
+                    if snapshot.state != SnapshotState::Collected
+                        || snapshot.cleanup != CleanupState::Complete
+                    {
+                        return Err(
+                            Error::Protocol("snapshot object collection is not confirmed").into(),
+                        );
+                    }
+                    print_json(&snapshot)?;
+                }
+            }
+        },
         Command::Keys {
             command: KeyCommand::Create { request },
         } => {

@@ -1,5 +1,10 @@
 # Durable capture admission outcomes
 
+The subsequent [public snapshot interface](public-snapshot-api.md) exposes stored
+resources and durable collection intent while retaining this refusal proof. Its
+native missing-record collection path also reconciles the same closed ID without
+submitting a producer.
+
 The worker may commit its dispatch marker and lose the request before the native
 manager receives it. A timeout or missing native record cannot release that
 source's fence: an earlier request could still arrive later. The native manager

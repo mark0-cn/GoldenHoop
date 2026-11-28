@@ -1,5 +1,12 @@
 # Reference coverage and remaining acceptance
 
+The [public snapshot interface](public-snapshot-api.md) implements source-authorized
+capture/read/list/delete, durable collection and Rust/Python/CLI methods. Its
+runtime observations in focused interface tests are synthetic. Native public
+restore/execution binding and actual capability/KVM acceptance remain required;
+MemorySnapshot stays unadvertised. Rootfs/volume snapshots, templates and the
+complete M4-M6 requirements below are unchanged.
+
 GoldenHoop keeps the complete M0-M6 target. The independent APIs do not promise upstream SDK compatibility. Reference comparisons use the inspected OpenSandbox revision 8af823ed83f71209772d334df73626f90dd72496; a declaration or test fixture is not proof that a runtime works.
 
 ## Stateful code languages

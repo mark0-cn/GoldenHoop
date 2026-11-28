@@ -11,6 +11,7 @@ pub use goldenhoop_credentials::{
     SubstituteAt, Substitution, WriteCredential,
 };
 mod sessions;
+mod snapshots;
 pub use contexts::{CodeContextEventStream, CodeRunOutput};
 pub use events::{EventStream, RunOutput};
 pub use sessions::SessionSocket;

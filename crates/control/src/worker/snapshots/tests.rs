@@ -20,6 +20,7 @@ const PENDING: usize = 0;
 const READY: usize = 1;
 const FAILED: usize = 2;
 const REFUSED: usize = 3;
+mod collection;
 
 fn profile() -> RuntimeProfile {
     RuntimeProfile {
@@ -65,6 +66,8 @@ struct Backend {
     lose_reply: AtomicBool,
     remove_fails: AtomicBool,
     collect_fails: AtomicBool,
+    lose_collection_reply: AtomicBool,
+    collected: AtomicBool,
     wrong_source: AtomicBool,
     removed: AtomicBool,
     hold_rpc: AtomicBool,
@@ -157,9 +160,20 @@ impl RuntimeDriver for Backend {
             self.removed.load(Ordering::SeqCst),
             "object GC preceded source collection"
         );
+        if self.state.load(Ordering::SeqCst) == REFUSED {
+            return Ok(self.observation(request));
+        }
+        self.collected.store(true, Ordering::SeqCst);
+        if self.lose_collection_reply.swap(false, Ordering::SeqCst) {
+            return Err(failure());
+        }
+        let mut source = request.handle.clone();
+        if self.wrong_source.load(Ordering::SeqCst) {
+            source.backend_ref.push_str("-foreign");
+        }
         Ok(MemoryCaptureObservation {
             id: request.id,
-            source: request.handle.clone(),
+            source,
             state: MemoryCaptureState::Collected,
         })
     }

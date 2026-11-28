@@ -21,7 +21,8 @@ from ._code_sync import CodeClientMixin
 from ._protocol import CreateIsolatedSession
 from ._isolated import check_scope, check_isolated_created
 from ._network import policy_state, policy_request, policy_change
-from . import _credentials
+from . import _credentials, _snapshots
+from ._protocol import CreateSnapshot
 
 
 class Client(CodeClientMixin):
@@ -80,6 +81,22 @@ class Client(CodeClientMixin):
 
     def profiles(self) -> list[Json]:
         return self._request("GET", "v1/profiles")
+
+    def create_snapshot(self, sandbox_id: str, request: CreateSnapshot | Json, key: str) -> Json:
+        sid, request = identity(sandbox_id), _snapshots.request(request)
+        return _snapshots.created(self._request("POST", f"v1/sandboxes/{sid}/snapshots", request, key=key), sid, request["kind"])
+
+    def snapshot(self, snapshot_id: str) -> Json:
+        sid = identity(snapshot_id)
+        return _snapshots.record(self._request("GET", f"v1/snapshots/{sid}"), snapshot_id=sid)
+
+    def list_snapshots(self, sandbox_id: str | None = None, after: str | None = None, limit: int = 100) -> Json:
+        sandbox_id, after, params = _snapshots.parameters(sandbox_id, after, limit)
+        return _snapshots.page(self._request("GET", "v1/snapshots", params=params), sandbox_id, after, limit)
+
+    def delete_snapshot(self, snapshot_id: str, key: str) -> Json:
+        sid = identity(snapshot_id)
+        return _snapshots.operation(self._request("DELETE", f"v1/snapshots/{sid}", key=key), sid)
 
     def credentials(self, sandbox_id: str) -> list[Json]:
         sid = identity(sandbox_id)

@@ -5,6 +5,9 @@ fn actual_cli_help_starts_on_the_platform_default_stack_without_credentials() {
         vec!["create", "--help"],
         vec!["isolated-create", "--help"],
         vec!["code-run", "--help"],
+        vec!["snapshots", "--help"],
+        vec!["snapshots", "create", "--help"],
+        vec!["snapshots", "delete", "--help"],
     ] {
         let output = std::process::Command::new(env!("CARGO_BIN_EXE_goldenhoop"))
             .args(&args)

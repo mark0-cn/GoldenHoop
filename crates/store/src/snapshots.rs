@@ -1,6 +1,7 @@
 //! Durable snapshot intent and source admission fence. Runtime effects and
 //! physical collection are independently observed by a backend worker.
 use super::*;
+mod collection;
 
 /// Private worker metadata. Only `snapshot` is a public resource.
 #[derive(Debug, Clone)]
@@ -14,6 +15,7 @@ pub struct StoredSnapshot {
     pub source_collected: bool,
     pub runtime_reference: Option<serde_json::Value>,
     pub capture_refusal: Option<serde_json::Value>,
+    pub collect_operation: Option<Uuid>,
 }
 /// A first dispatch and an uncertain prior dispatch are deliberately distinct.
 /// An existing dispatch is queried/reconciled, never treated as a fresh permit.
@@ -51,6 +53,12 @@ fn row(value: &sqlx::sqlite::SqliteRow) -> Result<StoredSnapshot, ApiError> {
             .map_err(db)?
             .map(decode)
             .transpose()?,
+        collect_operation: value
+            .try_get::<Option<&str>, _>("collect_operation")
+            .map_err(db)?
+            .map(Uuid::parse_str)
+            .transpose()
+            .map_err(|_| internal())?,
     })
 }
 async fn load(
@@ -68,9 +76,9 @@ async fn save(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     record: &StoredSnapshot,
 ) -> Result<(), ApiError> {
-    sqlx::query("UPDATE snapshots SET state=?,payload=?,dispatched=?,source_fenced=?,runtime_reference=?,capture_refusal=? WHERE id=?")
+    sqlx::query("UPDATE snapshots SET state=?,payload=?,dispatched=?,source_fenced=?,runtime_reference=?,capture_refusal=?,collect_operation=? WHERE id=?")
         .bind(tag(&record.snapshot.state)?).bind(encode(&record.snapshot)?).bind(record.dispatched).bind(record.source_fenced)
-        .bind(record.runtime_reference.as_ref().map(encode).transpose()?).bind(record.capture_refusal.as_ref().map(encode).transpose()?).bind(record.snapshot.id.to_string()).execute(&mut **tx).await.map_err(db)?;
+        .bind(record.runtime_reference.as_ref().map(encode).transpose()?).bind(record.capture_refusal.as_ref().map(encode).transpose()?).bind(record.collect_operation.map(|id|id.to_string())).bind(record.snapshot.id.to_string()).execute(&mut **tx).await.map_err(db)?;
     Ok(())
 }
 async fn operation(
