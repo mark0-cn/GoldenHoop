@@ -1,25 +1,33 @@
 # Progress
 
-The candidate source-collection correction retains bounded private stop/collection
-errors and reconciles only the original authenticated VM handle for at most a
-40-second retry window. Success still requires the collected journal and fresh
-physical absence. Actual runs46108292452 and46109515778 completed native RAM
-self-probes but stopped on later harness assertions; run46110639140 again failed
-after source capture and before any target journal, with a sanitized removal
-error. All three runs have Complete VM/object/fixture collection and399 matching
-source inputs. The exact underlying stop error remains unconfirmed. The harness
-now reads actual collection receipts and waits for observed Running executions
-while preserving terminal failure assertions and recording transitions.
+The current candidate corrects transient checkpoint metadata contention. A real
+Linux file-lock regression fails on the previous code with WouldBlock/os11 while
+a quota writer or Ready publisher owns its original lease. It closes the exact
+writer/filesystem fixture before asserting the failing baseline. Quota and job
+lock contention now return a bounded retryable BackendUnavailable; owner/intent
+checks and non-contention failures are unchanged. The native probe only repeats
+inspection of its original capture under the existing120-second capture deadline.
+It records bounded observation errors and its durable current step, while still
+requiring verified Ready content and positive source/target/object collection.
+The earlier speculative40-second source-removal loop is removed; raw private
+collection diagnostics remain.
 
-The correction passes [Windows checks](evidence/m4-memory-probe-collection-validation-windows.json)
-with326 Rust/36 SDK tests, formatting and strict workspace/all-target clippy, plus
-[focused Linux checks](evidence/m4-memory-probe-collection-validation-linux.json)
-with13 tests and strict control/native all-target clippy on identical392 inputs.
-The exact owned check image and its containers are absent. A new full candidate
-CI and actual public-memory KVM run are required before main promotion. These
-checks do not accept public memory continuation or complete M4-M6. The
-[diagnosis](evidence/m4-memory-probe-source-collection-diagnosis.json) separates
-observed failures from the still-unconfirmed underlying cause.
+Actual run46112334249 still fails before target allocation with empty source
+collection error history, so that earlier removal hypothesis is not established.
+Its [archive](evidence/m4-memory-public-46112334249-archive.json) verifies399 inputs
+and Complete VM/object/fixture collection. CI46112316672 passes on the preceding
+22555cf candidate with392 verified inputs; it does not validate the new contention
+correction. Final corrected [Windows checks](evidence/m4-memory-probe-inspection-validation-windows-final.json)
+pass326 Rust/36 SDK tests with format and strict workspace/all-target clippy.
+[Focused Linux checks](evidence/m4-memory-probe-inspection-validation-linux-final.json)
+pass14 tests including the actual lock regression plus strict native/control
+all-target clippy. Both freeze the same392 current inputs. The exact owned image
+and its containers are absent. Updated full CI and actual public-memory KVM
+acceptance are required.
+Rootfs/volume snapshots, templates, combined M4 and complete M5-M6 remain open.
+The [inspection diagnosis](evidence/m4-memory-probe-inspection-diagnosis.json)
+separates the deterministic local defect from the older hardware reports whose
+exact failed step was not recorded.
 
 The [native memory capability probe](native-memory-capability.md) now performs a
 real single-use continuation before advertising memory support. Its durable

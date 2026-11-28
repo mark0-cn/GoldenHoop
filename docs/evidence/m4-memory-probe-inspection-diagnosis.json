@@ -1,0 +1,58 @@
+{
+  "timestamp": "2026-11-28T05:48:52.708647+00:00",
+  "result": "corrected Windows full and focused Linux checks passed; full CI and actual KVM pending",
+  "actual_kvm_run": 46112334249,
+  "actual_kvm_commit": "22555cfceaa37a8373d6304ef9fcb001703501ea",
+  "actual_kvm_archive": "m4-memory-public-46112334249-archive.json",
+  "actual_observation": "The cold probe failed before a target journal existed; its source collection_errors was empty. Cleanup was Complete and399 source files matched.",
+  "evidence_limit": "A checkpoint reference can be discovered by later cleanup; its presence in a final receipt does not prove the original probe reached source removal. The older receipts did not retain the failing step.",
+  "baseline_report": "m4-memory-probe-inspection-baseline-linux.json",
+  "baseline_collection": "m4-memory-probe-inspection-baseline-collection.json",
+  "baseline_observation": "Actual quota and Ready-publication job locks force observation errors. The old code returns an untyped WouldBlock/os11 rather than a retryable busy API error; the regression fails after positively closing its writer and temporary directory.",
+  "correction": [
+    "Classify only WouldBlock from authenticated quota/job file-lock acquisition as retryable BackendUnavailable. Other errors retain their original identity.",
+    "Poll only the same original capture under the existing120-second deadline; never infer Ready or replay a capture/Start from a busy read.",
+    "Persist the active ProbeStep and bounded observation error history; retain raw source collection diagnostics.",
+    "Remove the speculative40-second source-removal loop because the new actual evidence does not establish that hypothesis."
+  ],
+  "upstream": [
+    {
+      "project": "fs2",
+      "version": "0.4.3",
+      "url": "https://docs.rs/fs2/0.4.3/fs2/trait.FileExt.html",
+      "relevant_contract": "try_lock_shared/try_lock_exclusive return a contention error instead of blocking."
+    },
+    {
+      "project": "Rust std::io",
+      "url": "https://doc.rust-lang.org/std/io/enum.ErrorKind.html#variant.WouldBlock",
+      "relevant_contract": "WouldBlock represents an operation that must block before it can complete."
+    }
+  ],
+  "source_files_sha256": {
+    "crates/firecracker/src/checkpoint/storage/files.rs": "ceb2c1b3519676fb0c805bb5fc3bec4db82ffd1ca818b13799d1ee6c113aefe2",
+    "crates/firecracker/src/checkpoint/storage/tests.rs": "c7656fbdee06c67a6f6b40402d3b952af765775b5e09c7221982e598820fbec5",
+    "crates/firecracker/src/lifecycle/driver/memory_probe.rs": "c4395857ad4f60596c5d7b14ec372c4ea73f0dd07d5f888a2b35c3e076d743b4"
+  },
+  "pending_gates": [
+    "New complete CI and actual public KVM contract before main promotion."
+  ],
+  "remaining_scope": "M4 rootfs/volume snapshots, templates and combined acceptance plus complete M5-M6.",
+  "initial_compile_failure": "Initial GNU lint reported E0282 for a private async collection Result; an explicit Result<()> fixes inference. No runtime gate ran on that rejected build.",
+  "validation_reports": [
+    "m4-memory-probe-inspection-validation-windows-final.json",
+    "m4-memory-probe-inspection-validation-linux-final.json"
+  ],
+  "local_results": {
+    "windows_rust": 326,
+    "windows_sdk": 36,
+    "linux_focused": 14,
+    "actual_lock_regression": "passed",
+    "verified_inputs_each": 392
+  },
+  "image_collection": "m4-memory-probe-inspection-image-collection.json",
+  "owner_containers_absent": true,
+  "superseded_draft_reports": [
+    "m4-memory-probe-inspection-validation-linux.json",
+    "m4-memory-probe-inspection-validation-windows.json"
+  ]
+}

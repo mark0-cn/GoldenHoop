@@ -12,10 +12,13 @@ Size the byte budget for both captured files and restored target backing, and
 the count budget for concurrent captures. A setting alone does not grant support:
 the worker must complete its real startup probe. Operators can inspect the private
 probe receipt's bounded `error` field when memory support remains absent.
-The private `collection_errors` history retains the last eight bounded source
-collection errors. An uncertain stop response is reconciled against the same
-original owner within a 40-second retry window; it never authorizes a replacement
-VM, a repeated workload start, or success without positive physical absence.
+The private `collection_errors` and `observation_errors` histories each retain at
+most eight bounded entries. The durable `step` identifies the active check even
+when later cleanup discovers a checkpoint reference. Only file-lock contention
+is a retryable busy observation: the probe continues inspecting its same original
+capture within the existing120-second deadline. Ready still requires the writer's
+lease to be released and all content to be verified. Source collection retains
+its original stop/absence contract and raw private diagnostics.
 
 The manager publishes a private probe intent before allocating anything. It
 starts one original guest command that generates a random token in guest RAM,

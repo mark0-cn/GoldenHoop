@@ -6,6 +6,26 @@ const ROOT_ATTRIBUTE: &std::ffi::CStr = c"user.goldenhoop.checkpoint.root.v1";
 const READY_ATTRIBUTE: &std::ffi::CStr = c"user.goldenhoop.checkpoint.ready.v1";
 const OBJECT_ATTRIBUTE: &std::ffi::CStr = c"user.goldenhoop.checkpoint.object.v1";
 
+fn try_file_lock(file: &File, exclusive: bool) -> Result<()> {
+    let result = if exclusive {
+        fs2::FileExt::try_lock_exclusive(file)
+    } else {
+        fs2::FileExt::try_lock_shared(file)
+    };
+    result.map_err(|error| {
+        if error.kind() == io::ErrorKind::WouldBlock {
+            let mut busy = goldenhoop_protocol::ApiError::new(
+                goldenhoop_protocol::ErrorCode::BackendUnavailable,
+                "native checkpoint metadata is busy; inspect the original capture again",
+            );
+            busy.retryable = true;
+            busy.into()
+        } else {
+            error.into()
+        }
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Identity {
@@ -649,11 +669,7 @@ impl Root {
         {
             return Err(invalid("checkpoint quota binding differs").into());
         }
-        if exclusive {
-            fs2::FileExt::try_lock_exclusive(&f)?;
-        } else {
-            fs2::FileExt::try_lock_shared(&f)?;
-        }
+        try_file_lock(&f, exclusive)?;
         Ok(f)
     }
     pub fn ensure_job_lock(&self, id: Uuid, intent_sha256: &str) -> Result<Identity> {
@@ -718,11 +734,7 @@ impl Root {
         exclusive: bool,
     ) -> Result<File> {
         let f = self.job_mutex(id, expected, intent_sha256, exclusive)?;
-        if exclusive {
-            fs2::FileExt::try_lock_exclusive(&f)?;
-        } else {
-            fs2::FileExt::try_lock_shared(&f)?;
-        }
+        try_file_lock(&f, exclusive)?;
         Ok(f)
     }
     pub fn recover(&self) -> Result<()> {

@@ -135,6 +135,67 @@ fn stage(
 }
 
 #[test]
+fn busy_checkpoint_observation_keeps_the_original_capture_until_publication_settles() {
+    if unsafe { libc::geteuid() } != 0 {
+        return;
+    }
+    let mut f = Fixture::new();
+    let store = f.store();
+    let mut session = store.reserve(f.intent.clone()).unwrap();
+    session.begin().unwrap();
+    let quota = store.root.quota(true).unwrap();
+    let quota_error = store.inspect(f.cfg.capture).unwrap_err();
+    let source_error = store.source(f.cfg.capture).unwrap_err();
+    drop(quota);
+
+    let ready_error = std::cell::RefCell::new(None);
+    let reference = session
+        .publish_observed(f.staged(), |event| {
+            if event == "ready_synced" {
+                // Ready is durable, but the producer still owns its actual
+                // exclusive job lease until publish returns.
+                *ready_error.borrow_mut() = Some(store.inspect(f.cfg.capture).unwrap_err());
+                assert!(store.collect(f.cfg.capture).is_err());
+            }
+        })
+        .unwrap();
+    let value = store.inspect(f.cfg.capture).unwrap();
+    assert_eq!(value["content_verified"], true);
+    assert_eq!(value["reference"], serde_json::to_value(reference).unwrap());
+    assert_eq!(
+        store.source(f.cfg.capture).unwrap(),
+        Some(f.intent.source.clone())
+    );
+    assert_eq!(
+        store.reserved_bytes().unwrap(),
+        f.intent.validate().unwrap()
+    );
+    f.collect_source();
+    assert_eq!(
+        store.collect(f.cfg.capture).unwrap()["objects_absent"],
+        true
+    );
+    f.close();
+
+    // Assert after scoped fixture collection, including the failing baseline.
+    for (scope, error) in [
+        ("quota observation", quota_error),
+        ("source observation", source_error),
+        ("Ready publication lease", ready_error.into_inner().unwrap()),
+    ] {
+        assert!(
+            error
+                .downcast_ref::<goldenhoop_protocol::ApiError>()
+                .is_some_and(|error| {
+                    error.code == goldenhoop_protocol::ErrorCode::BackendUnavailable
+                        && error.retryable
+                }),
+            "{scope}: {error}"
+        );
+    }
+}
+
+#[test]
 fn owned_session_reports_pending_and_settled_failure_still_requires_source_collection() {
     if unsafe { libc::geteuid() } != 0 {
         return;

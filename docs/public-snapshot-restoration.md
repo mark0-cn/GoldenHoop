@@ -117,9 +117,9 @@ and volume snapshots, templates, combined M4 and M5-M6 remain required work.
 The real-backend gate must include validly encoded handles for a foreign source
 generation, foreign target/operation identities and corrupt content. Such requests
 must not acquire another generation's restoration or collection authority.
-The new restoration DTOs also remain to be added to the model schema export
-registry as part of public contract acceptance; their Rust/Python and HTTP shapes
-are implemented above.
+RestoreSnapshot, RestoredExecution and SnapshotRestored are registered in the
+model schema export; generation resolves all93 references across76 components.
+This schema verification remains separate from actual public KVM acceptance.
 Concurrent restoration and native validation-slot pressure also require real
 acceptance: temporary capacity pressure should preserve the original pending
 target and recovery key rather than consume its one-use continuation.

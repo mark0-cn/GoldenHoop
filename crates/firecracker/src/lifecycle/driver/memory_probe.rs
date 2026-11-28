@@ -4,6 +4,24 @@ use super::*;
 use crate::checkpoint::CheckpointReference;
 use base64::{Engine, engine::general_purpose::STANDARD};
 
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ProbeStep {
+    #[default]
+    Reserved,
+    SourceCreate,
+    SourceSetup,
+    SourceRunning,
+    CaptureSubmit,
+    CapturePoll,
+    SourceCollect,
+    TargetRestore,
+    TargetVerify,
+    TargetRelease,
+    TargetCompletion,
+    Verified,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct MemoryProbe {
@@ -27,6 +45,10 @@ struct MemoryProbe {
     error: Option<String>,
     #[serde(default)]
     collection_errors: Vec<String>,
+    #[serde(default)]
+    observation_errors: Vec<String>,
+    #[serde(default)]
+    step: ProbeStep,
 }
 
 impl MemoryProbe {
@@ -59,6 +81,11 @@ impl MemoryProbe {
             || self.checked && self.error.is_some()
             || self.collection_errors.len() > 8
             || self.collection_errors.iter().any(|error| error.len() > 512)
+            || self.observation_errors.len() > 8
+            || self
+                .observation_errors
+                .iter()
+                .any(|error| error.len() > 512)
         {
             return Err(invalid("native memory probe intent differs").into());
         }
@@ -106,6 +133,10 @@ impl MemoryProbe {
         self.validate(cfg, self.id)?;
         atomic_json(&self.path(cfg), self)
     }
+    fn at(&mut self, cfg: &DriverConfig, step: ProbeStep) -> Result<()> {
+        self.step = step;
+        self.save(cfg)
+    }
     fn restore_request(&self) -> Result<ManagedRestoreRequest> {
         Ok(ManagedRestoreRequest {
             sandbox: self.target.clone(),
@@ -129,24 +160,21 @@ impl NativeEngine {
         probe: &mut MemoryProbe,
         handle: &RuntimeHandle,
     ) -> Result<()> {
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(40);
-        loop {
-            let lock = self.vm_lock(handle.sandbox_id).await;
-            let guard = lock.lock().await;
-            // Authenticate this exact original owner on every attempt. An
-            // uncertain stop reply never authorizes another generation.
+        let lock = self.vm_lock(handle.sandbox_id).await;
+        let _guard = lock.lock().await;
+        let result: Result<()> = async {
             let record = self.for_handle(handle)?;
-            let result = self.remove_owned(&record).await;
-            if result.is_ok() {
-                let current = self.for_handle(handle)?;
-                if current.phase == "collected" && self.physical_absence(&current)? {
-                    return Ok(());
-                }
+            self.remove_owned(&record).await?;
+            let current = self.for_handle(handle)?;
+            if current.phase != "collected" || !self.physical_absence(&current)? {
+                return Err(
+                    invalid("probe source collection has no positive absence observation").into(),
+                );
             }
-            let error = result.err().unwrap_or_else(|| {
-                invalid("probe source collection has no positive absence observation").into()
-            });
-            drop(guard);
+            Ok(())
+        }
+        .await;
+        if let Err(error) = &result {
             if probe.collection_errors.len() == 8 {
                 probe.collection_errors.remove(0);
             }
@@ -154,11 +182,8 @@ impl NativeEngine {
                 .collection_errors
                 .push(error.to_string().chars().take(128).collect());
             probe.save(&self.inner.cfg)?;
-            if tokio::time::Instant::now() >= deadline {
-                return Err(error);
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
         }
+        result
     }
 
     fn memory_probes(&self) -> Result<Vec<MemoryProbe>> {
@@ -335,6 +360,8 @@ impl NativeEngine {
             collected: false,
             error: None,
             collection_errors: Vec::new(),
+            observation_errors: Vec::new(),
+            step: ProbeStep::Reserved,
         };
         probe.validate(cfg, probe.id)?;
         metadata::initial_json(&probe.path(cfg), &probe)?;
@@ -347,7 +374,12 @@ impl NativeEngine {
         probe.checked = passed;
         probe.error = match &checked {
             Ok(Ok(())) => None,
-            Ok(Err(error)) => Some(error.to_string().chars().take(128).collect()),
+            Ok(Err(error)) => Some(
+                format!("{:?}: {error}", probe.step)
+                    .chars()
+                    .take(128)
+                    .collect(),
+            ),
             Err(_) => Some("actual memory probe deadline elapsed".into()),
         };
         probe.save(cfg)?;
@@ -432,9 +464,10 @@ impl NativeEngine {
     }
     async fn check_memory_probe(&self, probe: &mut MemoryProbe) -> Result<()> {
         let cfg = &self.inner.cfg;
+        probe.at(cfg, ProbeStep::SourceCreate)?;
         let source = self.create(&probe.source, &probe.request).await?;
         probe.source_handle = Some(source.clone());
-        probe.save(cfg)?;
+        probe.at(cfg, ProbeStep::SourceSetup)?;
         let nonce = Uuid::new_v4().to_string();
         self.probe_write(&source, "memory-probe-disk", nonce.as_bytes())
             .await?;
@@ -454,6 +487,7 @@ impl NativeEngine {
         {
             return Err(invalid("memory probe execution owner differs").into());
         }
+        probe.at(cfg, ProbeStep::SourceRunning)?;
         let until = tokio::time::Instant::now() + Duration::from_secs(20);
         let token = loop {
             let stdout = self.probe_stdout(&source, job).await?;
@@ -486,31 +520,48 @@ impl NativeEngine {
         {
             return Err(invalid("memory probe execution has not actually started").into());
         }
+        probe.at(cfg, ProbeStep::CaptureSubmit)?;
         let mut status = self.checkpoint_capture(&source, probe.capture).await?;
+        probe.at(cfg, ProbeStep::CapturePoll)?;
         let until = tokio::time::Instant::now() + Duration::from_secs(120);
         while status["phase"] != "ready" {
             if status["capture_outcome"] != "pending" || tokio::time::Instant::now() >= until {
                 return Err(invalid("memory probe capture is not ready").into());
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
-            status = self
+            match self
                 .checkpoint_read_bound(&source, probe.capture, false)
-                .await?;
+                .await
+            {
+                Ok(next) => status = next,
+                Err(error) if error.code == ErrorCode::BackendUnavailable && error.retryable => {
+                    if probe.observation_errors.len() == 8 {
+                        probe.observation_errors.remove(0);
+                    }
+                    probe
+                        .observation_errors
+                        .push(error.to_string().chars().take(128).collect());
+                    probe.save(cfg)?;
+                }
+                Err(error) => return Err(error.into()),
+            }
         }
         if status["content_verified"] != true {
             return Err(invalid("memory probe capture content is unverified").into());
         }
         probe.reference = Some(serde_json::from_value(status["reference"].clone())?);
-        probe.save(cfg)?;
+        probe.at(cfg, ProbeStep::SourceCollect)?;
         self.collect_probe_source(probe, &source).await?;
         let record = self.for_handle(&source)?;
         if record.phase != "collected" || !self.physical_absence(&record)? {
             return Err(invalid("memory probe source still exists before transfer").into());
         }
         let restore = probe.restore_request()?;
+        probe.at(cfg, ProbeStep::TargetRestore)?;
         let target = self
             .create_with_input_observed(&probe.target, &probe.request, None, Some(&restore))
             .await?;
+        probe.at(cfg, ProbeStep::TargetVerify)?;
         if target.sandbox_id != probe.target.id
             || target.backend_ref == source.backend_ref
             || self.inspect(&target).await?.state != ObservedState::Running
@@ -533,8 +584,10 @@ impl NativeEngine {
             return Err(invalid("memory probe retained RAM/disk/execution binding differs").into());
         }
         // No Start is sent to the restored generation.
+        probe.at(cfg, ProbeStep::TargetRelease)?;
         self.probe_write(&target, "memory-probe-release", b"release")
             .await?;
+        probe.at(cfg, ProbeStep::TargetCompletion)?;
         let until = tokio::time::Instant::now() + Duration::from_secs(20);
         loop {
             let AgentResponse::Execution(done) = self
@@ -563,7 +616,7 @@ impl NativeEngine {
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
-        Ok(())
+        probe.at(cfg, ProbeStep::Verified)
     }
 }
 
@@ -648,6 +701,8 @@ mod tests {
             collected: false,
             error: None,
             collection_errors: Vec::new(),
+            observation_errors: Vec::new(),
+            step: ProbeStep::Reserved,
         };
         let lease = metadata::claim_installation(&cfg.data_root, cfg.installation_id).unwrap();
         let engine = NativeEngine::connect(cfg.clone(), lease).unwrap();
