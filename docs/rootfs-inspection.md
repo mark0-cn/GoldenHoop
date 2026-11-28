@@ -62,3 +62,10 @@ The reviewed file SHA256 is
 The current memory barrier's syncfs is not implemented filesystem freeze.
 Cold-disk capture still needs a separate bounded freeze/thaw protocol and actual
 source-resumption/clone-isolation evidence; this inspector does not supply it.
+
+Moby's [capability normalization](https://github.com/moby/moby/blob/v28.3.2/oci/caps/utils.go#L56)
+adds canonical CAP_ prefixes. The trusted test fixture follows the existing Rust
+parent's name normalization while requiring exactly CHOWN, DAC_OVERRIDE, FOWNER
+and FSETID, dropped defaults, a read-only root and no-new-privileges. A changed
+spelling is not a broader permission set; extra/missing capabilities and weaker
+permission settings are refused by explicit controls.

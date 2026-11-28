@@ -36,7 +36,21 @@ This is explicitly development evidence, not production-runsc acceptance.
 Candidateeac0525 starts full Windows/Ubuntu CI46122257413. Its first runsc gate
 46122291578 is explicitly cancelled while superseding the fixture; its exact
 resource-collection step succeeds, as recorded in the [cancellation receipt](evidence/m4-rootfs-inspection-runsc-candidate-cancelled.json).
-The final full production-runsc component gate remains pending.
+The [full Windows/Ubuntu CI46122257413](https://github.com/mark0-cn/GoldenHoop/actions/runs/46122257413)
+passes, with all394 runtime inputs matching the current candidate. The
+[CI archive](evidence/m4-rootfs-inspection-ci-46122257413.json) records806 Rust and72
+Python passes across its jobs (aggregate counts, not distinct tests).
+
+Actual runsc46122701340 builds the source image but stops before dispatching its
+first builder: the new Python fixture compares unprefixed capability spellings,
+where Docker returns CAP_CHOWN and the other CAP_ forms. The existing Rust parent
+already normalizes these names. The [failed artifact](evidence/m4-rootfs-inspection-46122701340-runsc-failed.json)
+preserves the original source and Complete cleanup. The corrected fixture applies
+the same exact-set normalization and records its observed placement before any
+assertion. The [permission contract](evidence/m4-rootfs-inspection-permission-contract.json)
+observes a real never-started Docker container with CAP_ names and passes six
+unsafe-config refusals; its exact container is absent. Production Rust is
+unchanged. The final full production-runsc component gate remains pending.
 No rootfs snapshot/template capability is advertised by this increment.
 
 [Actual public memory KVM46116996541](https://github.com/mark0-cn/GoldenHoop/actions/runs/46116996541)

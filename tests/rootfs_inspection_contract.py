@@ -31,6 +31,7 @@ class RootfsContract(Contract):
         self.report.update(suite='actual-isolated-Rust-rootfs-inspection', source_commit=args.source_commit,
                            scope='read-only ext4 component; production host rootfs orchestration, capture, cold boot and templates remain unverified')
         self.report['host_observations'] = {}
+        self.report['placement_observations'] = {}
 
     def writable(self, volume, program, arguments, extra=()):
         cid = self.container(arguments, entrypoint=program, mounts=[(volume, '/output', False), *extra])
@@ -69,10 +70,15 @@ class RootfsContract(Contract):
         try:
             actual = json.loads(docker('inspect', cid))[0]
             config = actual['HostConfig']
+            self.report['placement_observations'][cid] = {
+                'image': actual['Image'], 'hostname': actual['Config']['Hostname'],
+                'host_config': {k: config[k] for k in ['Runtime', 'NetworkMode', 'ReadonlyRootfs', 'Privileged',
+                    'CapDrop', 'CapAdd', 'SecurityOpt', 'PidsLimit', 'Memory', 'MemorySwap', 'NanoCpus']},
+                'mounts': [{k: m[k] for k in ['Type', 'Name', 'Destination', 'RW']} for m in actual['Mounts']],
+            }
             assert actual['Image'] == self.image and config['Runtime'] == 'runsc' and config['NetworkMode'] == 'none'
-            assert config['ReadonlyRootfs'] and not config['Privileged'] and config['CapDrop'] == ['ALL']
-            assert set(config['CapAdd']) == {'CHOWN', 'DAC_OVERRIDE', 'FOWNER', 'FSETID'}
-            assert config['SecurityOpt'] == ['no-new-privileges:true'] and config['PidsLimit'] == 64
+            host.builder_permissions(config)
+            assert config['PidsLimit'] == 64, config['PidsLimit']
             assert config['Memory'] == config['MemorySwap'] == 1024**3 and config['NanoCpus'] == 10**9
             assert actual['Config']['OpenStdin'] and not actual['Config']['Tty'] and not actual['Config']['StdinOnce']
             expected = {(source, '/input', False), (target, '/output', True)}

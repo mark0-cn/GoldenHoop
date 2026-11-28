@@ -8,6 +8,14 @@ import os
 import re
 
 
+def builder_permissions(config):
+    """Moby accepts both CAP_FOO and FOO; normalize names, never the set."""
+    caps = sorted(value.removeprefix('CAP_') for value in config['CapAdd'])
+    assert caps == ['CHOWN', 'DAC_OVERRIDE', 'FOWNER', 'FSETID'], config['CapAdd']
+    assert config['CapDrop'] == ['ALL'] and not config['Privileged'] and config['ReadonlyRootfs'], config
+    assert config['SecurityOpt'] in [['no-new-privileges'], ['no-new-privileges:true']], config['SecurityOpt']
+
+
 def ticks(pid):
     value = Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()
     assert len(value) >= 20 and value[0] not in {'Z', 'X', 'x'}
