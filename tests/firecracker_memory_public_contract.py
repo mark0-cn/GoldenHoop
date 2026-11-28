@@ -69,6 +69,19 @@ def exercise(client, endpoint, token, cli, native, config, fixture, root,
             stream.close()
         return events, raw
 
+    def running_execution(eid):
+        until = time.monotonic() + 20
+        samples = observed.setdefault('execution_start_observations', {}).setdefault(eid, [])
+        while True:
+            value = client.execution(eid)
+            if not samples or samples[-1] != value:
+                samples.append(value)
+            if value['state'] == 'running' and value['started_at']:
+                return value
+            assert value['state'] not in ['succeeded', 'failed', 'cancelled', 'timed_out'], value
+            assert time.monotonic() < until, value
+            time.sleep(.1)
+
     probes = [json.loads(path.read_text()) for path in (root / 'memory-probes').glob('*.json')]
     assert len(probes) == 1 and probes[0]['checked'] and probes[0]['collected'], probes
     proof = probes[0]
@@ -96,15 +109,17 @@ def exercise(client, endpoint, token, cli, native, config, fixture, root,
     old = running['id']
     source_events, raw = stdout(old, stop_at_newline=True)
     ram_token = raw.decode().strip(); assert len(ram_token) == 64 and len(bytes.fromhex(ram_token)) == 32
-    running = client.execution(old); assert running['state'] == 'running' and running['started_at']
+    running = running_execution(old)
     cancellable = client.start(sid, Command(['python3', '-c', "import time;print('cancel-ready',flush=True);time.sleep(240)"],
                                           timeout_seconds=240, max_output_bytes=1024), 'retained-cancel-job')
     _, cancel_stdout = stdout(cancellable['id'], stop_at_newline=True); assert cancel_stdout == b'cancel-ready\n'
-    cancellable = client.execution(cancellable['id']); assert cancellable['state'] == 'running' and cancellable['started_at']
+    cancellable = running_execution(cancellable['id'])
     captured = client.create_snapshot(sid, {'kind': 'memory_and_disk'}, 'public-capture')
+    observed['capture_admission'] = captured
     snapshot = captured['snapshot']['id']; snapshots.append(snapshot)
     complete(captured['operation'])
     ready = client.snapshot(snapshot)
+    observed['capture_ready'] = ready
     assert ready['state'] == 'ready' and ready['manifest']['source_sandbox_id'] == sid, ready
     assert client.create_snapshot(sid, {'kind': 'memory_and_disk'}, 'public-capture')['snapshot']['id'] == snapshot
     before = client.list()['items']
@@ -148,6 +163,7 @@ def exercise(client, endpoint, token, cli, native, config, fixture, root,
     with Client(endpoint, global_owner) as creator:
         reply = creator.restore_snapshot(snapshot, request, 'public-restore')
     target = reply['sandbox']['id']; sandboxes.append(target)
+    observed['restoration_admission'] = reply
     assert target != sid and reply['operation']['resource_id'] == target
     bindings = {binding['source_execution_id']: binding['execution'] for binding in reply['executions']}
     assert set(bindings) == {old, cancellable['id']}, bindings
