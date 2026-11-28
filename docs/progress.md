@@ -17,6 +17,12 @@ recovery, independent storage, fresh KVM clones, public operations, volume
 snapshots, templates, remaining memory coverage, clock review, combined M4 and
 complete M5-M6 remain required.
 
+The exact rootfs-inspection development worktree and its Git registration are
+now absent after all37 changed source/evidence files matched published main.
+The [collection receipt](evidence/m4-rootfs-inspection-worktree-collection.json)
+retains its owner, accepted commit/tree and file digests. Source, useful caches
+and the candidate branch remain available.
+
 ## Earlier inspector development notes
 
 These notes retain failed/pending candidates. The source-verified component
