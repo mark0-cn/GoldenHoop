@@ -38,6 +38,11 @@ tests and Linux static musl checks on the corrected source. All403 inputs match
 both local checks and the published commit;831 Rust and72 SDK passes are
 aggregate counts across jobs. [Component acceptance](evidence/m4-rootfs-producer-acceptance-summary.json)
 binds those checks, actual KVM/runsc, upstream review and exact owned collection.
+The [verified fast-forward](evidence/m4-rootfs-producer-promotion.json) places
+acceptance commit1838637 on main after both source-bound gates passed. Local and
+published main are byte-identical for all403 runtime inputs. The next isolated
+Rust inspector-parent implementation continues in its own active working copy;
+its draft checks do not extend this component's accepted scope.
 The earlier [CI46137560090](evidence/m4-rootfs-producer-ci-46137560090.json)
 remains distinct pre-correction evidence. Native rootfs public
 capabilities, product isolated-inspector transport, cold boot, volumes/templates
