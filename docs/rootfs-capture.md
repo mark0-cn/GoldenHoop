@@ -1,8 +1,10 @@
 # Private Rust rootfs capture coordinator
 
-This candidate connects the original-generation guest filesystem barrier to the
-Rust independent disk-content store through the native manager. It is not yet
-accepted by an actual KVM run. Public rootfs snapshots, product isolated-inspector
+This private component connects the original-generation guest filesystem barrier
+to the Rust independent disk-content store through the native manager. Frozen
+source9f181dc passes [actual KVM/runsc run46138925571](https://github.com/mark0-cn/GoldenHoop/actions/runs/46138925571)
+and full CI46138895448; [the acceptance record](evidence/m4-rootfs-producer-acceptance-summary.json)
+binds both gates and exact owned collection. Public rootfs snapshots, product isolated-inspector
 transport, fresh cold boots, volume snapshots, immutable templates and the
 remaining M4-M6 objectives remain required in [roadmap.md](roadmap.md) and
 [native-rootfs-templates.md](native-rootfs-templates.md).
@@ -81,6 +83,8 @@ new complete Rust capture. The independent published disk is then inspected
 inside actual runsc, with pinned agent/init/config and copied counter data, while
 the original source continues. That inspector parent is explicitly test code;
 it does not implement the product's durable Rust inspection transport.
+The accepted actual run passes all23 guest/driver groups, including8 rootfs
+groups, with original execution/VM/process/cgroup and disk quota collection.
 
 Full static CI runs on the frozen source. Full retained backend regression is
 reserved for final M4 acceptance; narrow checks are not cold-boot, template or

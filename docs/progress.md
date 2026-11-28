@@ -1,11 +1,18 @@
 # Progress
 
-The next M4 candidate connects actual Rust manager-owned original-generation
-rootfs capture and source recovery to the persistent disk store. It uses a
-separate durable source hold, pins the original disk identity before effects,
-and keeps source recovery distinct from producer I/O settlement. Unused guest
-operations can close without an unowned thaw, and earlier uncertain agent effects
-cannot reopen admission. See the [capture contract](rootfs-capture.md).
+The private M4 Rust manager-owned rootfs capture/source-recovery increment is
+accepted on frozen source9f181dc. [Actual KVM/runsc run46138925571](https://github.com/mark0-cn/GoldenHoop/actions/runs/46138925571)
+passes23 groups, including all8 new rootfs groups. The original manager is
+SIGKILLed after an acknowledged VMM pause; its durable source hold survives, and
+reconciliation recovers the same supervisor/VMM without replaying the incomplete
+copy. A new complete capture publishes an independent disk, explicitly resumes
+and thaws the original source, preserves exact retry, and leaves the original
+counter writer running. The Rust-published disk passes actual runsc inspection
+with pinned agent/init/config bytes and a copied counter. That inspector parent
+is still test code. [The400-input report](evidence/m4-rootfs-producer-46138925571-actual.json)
+and [source archive](evidence/m4-rootfs-producer-46138925571-archive.json) record
+Complete VM/process/cgroup, execution, disk quota and fixture collection.
+See the [capture contract](rootfs-capture.md).
 The [first actual KVM run46137587676](https://github.com/mark0-cn/GoldenHoop/actions/runs/46137587676)
 reached the original-manager SIGKILL and authenticated reconnection to the same
 paused VMM. Its durable rootfs hold remained intact, but the ordinary pause
@@ -13,8 +20,8 @@ adapter replaced the supervisor's typed InvalidState rejection with generic
 BackendUnavailable. The [failed source-bound report](evidence/m4-rootfs-producer-46137587676-actual.json)
 records that exact assertion and Complete VM/process/cgroup/fixture collection.
 Pause/resume adapters now preserve authenticated typed supervisor rejections;
-transport or identity uncertainty still fails closed. Corrected-source full CI
-and the targeted actual KVM retry remain pending.
+transport or identity uncertainty still fails closed. Corrected-source local,
+full CI and actual KVM evidence are separately retained from that failed run.
 [Final focused Linux checks](evidence/m4-rootfs-producer-linux-rejection.json) pass
 strict native/init all-target clippy and32 tests, including original VMM-control
 intent, source inode substitution and dead-source collection. Source pause and
@@ -25,10 +32,14 @@ workspace/all-target clippy,333 Rust tests and36 SDK tests. Both bind the same40
 current runtime inputs. Earlier30/31/32-test runs and initial compilation/lint
 failures remain separate. Exact check images/containers are
 [collected](evidence/m4-rootfs-producer-rejection-image-collection.json), including
-superseded images. [CI46137560090](evidence/m4-rootfs-producer-ci-46137560090.json)
-passed on73be97f with831 aggregate Rust and72 SDK passes across jobs; those
-results precede the typed-rejection correction. Targeted actual KVM/runsc
-acceptance remains pending. Native rootfs public
+superseded images. [CI46138895448](evidence/m4-rootfs-producer-ci-46138895448.json)
+passes Windows/Ubuntu format, strict workspace/all-target clippy, workspace/SDK
+tests and Linux static musl checks on the corrected source. All403 inputs match
+both local checks and the published commit;831 Rust and72 SDK passes are
+aggregate counts across jobs. [Component acceptance](evidence/m4-rootfs-producer-acceptance-summary.json)
+binds those checks, actual KVM/runsc, upstream review and exact owned collection.
+The earlier [CI46137560090](evidence/m4-rootfs-producer-ci-46137560090.json)
+remains distinct pre-correction evidence. Native rootfs public
 capabilities, product isolated-inspector transport, cold boot, volumes/templates
 and complete M4-M6 remain unaccepted.
 
