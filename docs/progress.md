@@ -6,18 +6,29 @@ separate durable source hold, pins the original disk identity before effects,
 and keeps source recovery distinct from producer I/O settlement. Unused guest
 operations can close without an unowned thaw, and earlier uncertain agent effects
 cannot reopen admission. See the [capture contract](rootfs-capture.md).
-[Final focused Linux checks](evidence/m4-rootfs-producer-linux-vmm.json) pass
+The [first actual KVM run46137587676](https://github.com/mark0-cn/GoldenHoop/actions/runs/46137587676)
+reached the original-manager SIGKILL and authenticated reconnection to the same
+paused VMM. Its durable rootfs hold remained intact, but the ordinary pause
+adapter replaced the supervisor's typed InvalidState rejection with generic
+BackendUnavailable. The [failed source-bound report](evidence/m4-rootfs-producer-46137587676-actual.json)
+records that exact assertion and Complete VM/process/cgroup/fixture collection.
+Pause/resume adapters now preserve authenticated typed supervisor rejections;
+transport or identity uncertainty still fails closed. Corrected-source full CI
+and the targeted actual KVM retry remain pending.
+[Final focused Linux checks](evidence/m4-rootfs-producer-linux-rejection.json) pass
 strict native/init all-target clippy and32 tests, including original VMM-control
 intent, source inode substitution and dead-source collection. Source pause and
 resume intent/observations are durable; ambiguous controls retain the original
 source hold and are not silently replayed. The
-[Windows checks](evidence/m4-rootfs-producer-windows-vmm.json) pass format, strict
+[Windows checks](evidence/m4-rootfs-producer-windows-rejection.json) pass format, strict
 workspace/all-target clippy,333 Rust tests and36 SDK tests. Both bind the same403
-current runtime inputs. Earlier30/31-test runs and initial compilation/lint
+current runtime inputs. Earlier30/31/32-test runs and initial compilation/lint
 failures remain separate. Exact check images/containers are
-[collected](evidence/m4-rootfs-producer-final-image-collection.json), including
-superseded images. Full CI and targeted actual KVM/runsc acceptance remain
-pending. Native rootfs public
+[collected](evidence/m4-rootfs-producer-rejection-image-collection.json), including
+superseded images. [CI46137560090](evidence/m4-rootfs-producer-ci-46137560090.json)
+passed on73be97f with831 aggregate Rust and72 SDK passes across jobs; those
+results precede the typed-rejection correction. Targeted actual KVM/runsc
+acceptance remains pending. Native rootfs public
 capabilities, product isolated-inspector transport, cold boot, volumes/templates
 and complete M4-M6 remain unaccepted.
 

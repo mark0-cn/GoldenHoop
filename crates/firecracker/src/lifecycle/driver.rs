@@ -1557,7 +1557,12 @@ impl RuntimeDriver for NativeEngine {
         }
         self.supervisor_call(&record, SupervisorOperation::Pause)
             .await
-            .map_err(unavailable)?;
+            .map_err(|error| {
+                error
+                    .downcast_ref::<ApiError>()
+                    .cloned()
+                    .unwrap_or_else(|| unavailable(error))
+            })?;
         Ok(())
     }
     async fn resume(&self, handle: &RuntimeHandle) -> std::result::Result<(), ApiError> {
@@ -1578,7 +1583,12 @@ impl RuntimeDriver for NativeEngine {
         }
         self.supervisor_call(&record, SupervisorOperation::Resume)
             .await
-            .map_err(unavailable)?;
+            .map_err(|error| {
+                error
+                    .downcast_ref::<ApiError>()
+                    .cloned()
+                    .unwrap_or_else(|| unavailable(error))
+            })?;
         Ok(())
     }
 }
