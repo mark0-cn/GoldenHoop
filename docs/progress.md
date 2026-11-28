@@ -1,5 +1,32 @@
 # Progress
 
+The next M4 candidate adds a separate Rust rootfs manifest, independent sparse
+disk production and persistent content store. Capture identity, boot/protected
+assets, source image, inspector inventory, logical quota and original
+producer/VMM identities are recorded before effects. A disk inode receipt is
+persisted before naming; exact recovery preserves failed/unconfirmed reservations
+and never implicitly freezes/thaws a guest. Ready requires explicit source
+recovery and pinned isolated inspection. See the
+[component contract and remaining integration](rootfs-content-store.md).
+[Focused Linux checks](evidence/m4-rootfs-store-linux-bound.json) pass strict
+native all-target clippy and17 tests with real files and actual SIGKILL cuts
+before naming, after naming and after Captured metadata. Transposed capture
+records are refused before inspection or collection effects. The earlier15/16-test
+runs and initial lint failures remain separate evidence. Superseded and final
+test images/containers are confirmed absent in their
+[collection](evidence/m4-rootfs-store-bound-image-collection.json)
+[records](evidence/m4-rootfs-store-superseded-image-collection.json).
+[Full Windows checks](evidence/m4-rootfs-store-windows-bound.json) pass format,
+strict workspace/all-target clippy,333 Rust tests and36 Python SDK tests. Windows
+and focused Linux bind the same401 current runtime inputs. An intermediate
+Windows check passed its tests but was invalidated by the Linux capture-ID
+binding correction; the unchanged-source follow-up is the accepted local check.
+Full CI remains pending.
+Synthetic guest/inspector receipts in these file/process tests are not actual
+KVM/runsc evidence. Native manager capture/inspection orchestration, new cold
+boots, public rootfs operations, volumes/templates, remaining memory coverage
+and complete final M4-M6 acceptance remain required.
+
 The private M4 guest ext4 freeze/thaw component is accepted. It implements
 barrier, exact source-generation/root-descriptor receipts, permanent thaw intent,
 cross-kind exclusion and original-operation recovery after lost replies. It uses

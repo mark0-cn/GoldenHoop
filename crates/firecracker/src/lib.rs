@@ -14,6 +14,7 @@ pub mod lifecycle;
 #[cfg(target_os = "linux")]
 pub mod machine;
 pub mod models;
+pub mod rootfs;
 #[cfg(target_os = "linux")]
 pub mod vsock;
 

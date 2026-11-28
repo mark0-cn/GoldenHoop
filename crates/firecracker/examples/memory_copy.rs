@@ -38,7 +38,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         file.write_all(b"tail")?;
         file.sync_all()?;
         drop(file);
-        let expected = fileio::digest(File::open(&source)?)?;
+        let expected = fileio::digest_exact(File::open(&source)?, size)?;
         require(expected.1 == size, "source logical length mismatch")?;
         fileio::copy(File::open(&source)?, &destination, &expected.0, size, 0o600)?;
         let metadata = destination.metadata()?;

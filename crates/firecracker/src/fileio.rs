@@ -32,7 +32,15 @@ fn discard(file: &File, offset: u64, length: u64) -> io::Result<()> {
     Ok(())
 }
 
-pub(crate) fn digest(mut input: File) -> io::Result<(String, u64)> {
+pub(crate) fn digest(input: File) -> io::Result<(String, u64)> {
+    digest_inner(input, None)
+}
+
+pub(crate) fn digest_exact(input: File, expected_size: u64) -> io::Result<(String, u64)> {
+    digest_inner(input, Some(expected_size))
+}
+
+fn digest_inner(mut input: File, expected_size: Option<u64>) -> io::Result<(String, u64)> {
     // Disable speculative readahead on this descriptor. DONTNEED remains a
     // kernel hint; the actual memory boundary still needs the native gate.
     advise(&input, 0, 0, libc::POSIX_FADV_RANDOM)?;
@@ -46,16 +54,22 @@ pub(crate) fn digest(mut input: File) -> io::Result<(String, u64)> {
         if read == 0 {
             break;
         }
-        hash.update(&buffer[..read]);
         count = count
             .checked_add(read as u64)
             .ok_or_else(|| invalid("file hash length overflow"))?;
+        if expected_size.is_some_and(|size| count > size) {
+            return Err(invalid("file exceeds its reserved hash length"));
+        }
+        hash.update(&buffer[..read]);
         if count - window >= WINDOW {
             discard(&input, start + window, count - window)?;
             window = count;
         }
     }
     discard(&input, start + window, count - window)?;
+    if expected_size.is_some_and(|size| count != size) {
+        return Err(invalid("file hash length differs"));
+    }
     Ok((format!("{:x}", hash.finalize()), count))
 }
 
@@ -164,6 +178,12 @@ mod tests {
         file.sync_all().unwrap();
         drop(file);
         let expected = format!("{:x}", Sha256::digest(std::fs::read(&source).unwrap()));
+        assert_eq!(
+            digest_exact(File::open(&source).unwrap(), size).unwrap(),
+            (expected.clone(), size)
+        );
+        assert!(digest_exact(File::open(&source).unwrap(), size - 1).is_err());
+        assert!(digest_exact(File::open(&source).unwrap(), size + 1).is_err());
         copy(
             File::open(&source).unwrap(),
             &target,
