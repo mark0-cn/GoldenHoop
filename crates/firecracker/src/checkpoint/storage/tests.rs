@@ -6,6 +6,7 @@ use std::{
     process::{Child, Command},
     time::{Duration, Instant},
 };
+mod outcomes;
 
 struct ChildOwner(Child);
 impl ChildOwner {

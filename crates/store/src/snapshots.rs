@@ -13,6 +13,7 @@ pub struct StoredSnapshot {
     pub source_fenced: bool,
     pub source_collected: bool,
     pub runtime_reference: Option<serde_json::Value>,
+    pub capture_refusal: Option<serde_json::Value>,
 }
 /// A first dispatch and an uncertain prior dispatch are deliberately distinct.
 /// An existing dispatch is queried/reconciled, never treated as a fresh permit.
@@ -45,6 +46,11 @@ fn row(value: &sqlx::sqlite::SqliteRow) -> Result<StoredSnapshot, ApiError> {
             .map_err(db)?
             .map(decode)
             .transpose()?,
+        capture_refusal: value
+            .try_get::<Option<&str>, _>("capture_refusal")
+            .map_err(db)?
+            .map(decode)
+            .transpose()?,
     })
 }
 async fn load(
@@ -62,9 +68,9 @@ async fn save(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     record: &StoredSnapshot,
 ) -> Result<(), ApiError> {
-    sqlx::query("UPDATE snapshots SET state=?,payload=?,dispatched=?,source_fenced=?,runtime_reference=? WHERE id=?")
+    sqlx::query("UPDATE snapshots SET state=?,payload=?,dispatched=?,source_fenced=?,runtime_reference=?,capture_refusal=? WHERE id=?")
         .bind(tag(&record.snapshot.state)?).bind(encode(&record.snapshot)?).bind(record.dispatched).bind(record.source_fenced)
-        .bind(record.runtime_reference.as_ref().map(encode).transpose()?).bind(record.snapshot.id.to_string()).execute(&mut **tx).await.map_err(db)?;
+        .bind(record.runtime_reference.as_ref().map(encode).transpose()?).bind(record.capture_refusal.as_ref().map(encode).transpose()?).bind(record.snapshot.id.to_string()).execute(&mut **tx).await.map_err(db)?;
     Ok(())
 }
 async fn operation(
@@ -445,6 +451,7 @@ impl Store {
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
         let mut stored = load(&mut tx, id).await?;
         if !stored.dispatched
+            || stored.capture_refusal.is_some()
             || !matches!(
                 stored.snapshot.state,
                 SnapshotState::Capturing | SnapshotState::Unknown
@@ -475,6 +482,7 @@ impl Store {
         let mut stored = load(&mut tx, id).await?;
         let original = super::isolated::source(&mut tx, stored.snapshot.source_sandbox_id).await?;
         if !stored.dispatched
+            || stored.capture_refusal.is_some()
             || !same_handle(source, &stored.source_handle)
             || manifest.format_version != 1
             || manifest.id != id
@@ -551,6 +559,75 @@ impl Store {
     }
     pub async fn snapshot_work(&self) -> Result<Vec<StoredSnapshot>, ApiError> {
         sqlx::query("SELECT * FROM snapshots WHERE state IN('pending','capturing','unknown','collecting') OR source_fenced=1 OR (state='failed' AND json_extract(payload,'$.cleanup')!='complete') ORDER BY id LIMIT 256").fetch_all(&self.pool).await.map_err(db)?.iter().map(row).collect()
+    }
+    /// Only a positively validated durable backend refusal grants this release.
+    /// A timeout or NotFound must use Unknown, even if nothing appears allocated.
+    pub async fn snapshot_capture_refused(
+        &self,
+        id: Uuid,
+        source: &RuntimeHandle,
+        reason: &ApiError,
+        receipt: &serde_json::Value,
+    ) -> Result<(), ApiError> {
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+        let mut stored = load(&mut tx, id).await?;
+        if !stored.dispatched
+            || !same_handle(source, &stored.source_handle)
+            || !receipt.as_object().is_some_and(|o| !o.is_empty())
+            || encode(receipt)?.len() > 65536
+            || stored.runtime_reference.is_some()
+            || stored.snapshot.manifest.is_some()
+        {
+            return Err(ApiError::new(
+                ErrorCode::Conflict,
+                "capture refusal differs from its dispatched source binding",
+            ));
+        }
+        if let Some(previous) = &stored.capture_refusal {
+            if previous != receipt
+                || stored.snapshot.state != SnapshotState::Failed
+                || stored.snapshot.cleanup != CleanupState::Complete
+                || stored
+                    .snapshot
+                    .error
+                    .as_ref()
+                    .map(encode)
+                    .transpose()?
+                    .as_deref()
+                    != Some(encode(reason)?.as_str())
+            {
+                return Err(ApiError::new(
+                    ErrorCode::Conflict,
+                    "durable capture refusal is immutable",
+                ));
+            }
+            tx.commit().await.map_err(db)?;
+            return Ok(());
+        }
+        if !matches!(
+            stored.snapshot.state,
+            SnapshotState::Capturing | SnapshotState::Unknown
+        ) {
+            return Err(ApiError::new(
+                ErrorCode::InvalidState,
+                "snapshot has no uncertain capture to close",
+            ));
+        }
+        stored.snapshot.state = SnapshotState::Failed;
+        stored.snapshot.cleanup = CleanupState::Complete;
+        stored.snapshot.observed_at = Some(Utc::now());
+        stored.snapshot.error = Some(reason.clone());
+        stored.capture_refusal = Some(receipt.clone());
+        stored.source_fenced = false;
+        save(&mut tx, &stored).await?;
+        operation(
+            &mut tx,
+            stored.create_operation,
+            OperationState::Failed,
+            Some(reason.clone()),
+        )
+        .await?;
+        tx.commit().await.map_err(db)
     }
     /// A positively observed backend failure settles business state while
     /// preserving its independent physical cleanup obligation and source fence.

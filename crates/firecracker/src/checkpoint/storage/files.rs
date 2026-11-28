@@ -403,8 +403,52 @@ pub(super) fn record_name(id: Uuid) -> String {
 pub(super) fn lock_name(id: Uuid) -> String {
     format!("capture-{id}.lock")
 }
+pub(super) fn admission_name(id: Uuid) -> String {
+    format!("admission-{id}.json")
+}
+pub(super) fn refusal_name(id: Uuid) -> String {
+    format!("refusal-{id}.json")
+}
 
 impl Root {
+    pub(super) fn optional_json<T: serde::de::DeserializeOwned>(
+        &self,
+        name: &str,
+    ) -> Result<Option<T>> {
+        self.current()?;
+        if child(&self.directory, name, false)?.is_none() {
+            return Ok(None);
+        }
+        self.json(name).map(Some)
+    }
+    pub(super) fn capture_mutex_exists(&self, id: Uuid) -> Result<bool> {
+        self.current()?;
+        Ok(child(&self.directory, &lock_name(id), false)?.is_some())
+    }
+    pub(super) fn metadata_ids(&self, prefix: &str) -> Result<Vec<Uuid>> {
+        self.current()?;
+        let mut ids = Vec::new();
+        for (count, entry) in std::fs::read_dir(&self.path)?.enumerate() {
+            if count >= 8192 {
+                return Err(invalid("checkpoint catalog exceeds bound").into());
+            }
+            let name = entry?
+                .file_name()
+                .into_string()
+                .map_err(|_| invalid("invalid checkpoint catalog name"))?;
+            if let Some(text) = name
+                .strip_prefix(prefix)
+                .and_then(|n| n.strip_suffix(".json"))
+            {
+                let id = Uuid::parse_str(text)?;
+                if id.is_nil() || name != format!("{prefix}{id}.json") {
+                    return Err(invalid("noncanonical checkpoint outcome name").into());
+                }
+                ids.push(id);
+            }
+        }
+        Ok(ids)
+    }
     pub(super) fn continuation_exists(&self, id: Uuid) -> Result<bool> {
         Ok(child(&self.directory, &continuation_name(id), false)?.is_some())
     }
@@ -688,7 +732,9 @@ impl Root {
         let record = record_name(id);
         let lock = lock_name(id);
         let continuation = continuation_name(id);
-        self.recover_selected(&[&record, &lock, &continuation])
+        let admission = admission_name(id);
+        let refusal = refusal_name(id);
+        self.recover_selected(&[&record, &lock, &continuation, &admission, &refusal])
     }
     fn recover_selected(&self, selected: &[&str]) -> Result<()> {
         self.current()?;
@@ -709,6 +755,18 @@ impl Root {
                     }
                 {
                     return Err(invalid("pending checkpoint lock differs").into());
+                }
+            } else if name.starts_with("admission-") {
+                let value: CaptureAdmission = serde_json::from_slice(bytes)?;
+                value.validate(self)?;
+                if admission_name(value.source.capture) != name {
+                    return Err(invalid("pending capture admission name differs").into());
+                }
+            } else if name.starts_with("refusal-") {
+                let value: CaptureRefusal = serde_json::from_slice(bytes)?;
+                value.validate(self)?;
+                if refusal_name(value.receipt.source.capture) != name {
+                    return Err(invalid("pending capture refusal name differs").into());
                 }
             } else {
                 let r: Record = serde_json::from_slice(bytes)?;
@@ -745,6 +803,9 @@ impl Root {
                 }
                 let r: Record = self.json(&name)?;
                 r.validate(self)?;
+                if self.refusal(id)?.is_some() {
+                    return Err(invalid("capture reservation contradicts a durable refusal").into());
+                }
                 result.push(r);
             }
         }

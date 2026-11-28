@@ -472,6 +472,14 @@ pub enum DriverCall {
         handle: goldenhoop_runtime::RuntimeHandle,
         capture: Uuid,
     },
+    CheckpointCaptureObserved {
+        handle: goldenhoop_runtime::RuntimeHandle,
+        capture: Uuid,
+    },
+    CheckpointReconcileBound {
+        handle: goldenhoop_runtime::RuntimeHandle,
+        capture: Uuid,
+    },
     CheckpointInspect {
         capture: Uuid,
     },
@@ -527,6 +535,12 @@ pub async fn run_driver_call(config: PathBuf, request: PathBuf) -> Result<serde_
             DriverCall::Reap => serde_json::to_value(driver.reap_expired().await?).unwrap(),
             DriverCall::CheckpointCapture { handle, capture } => {
                 driver.checkpoint_capture(&handle, capture).await?
+            }
+            DriverCall::CheckpointCaptureObserved { handle, capture } => {
+                driver.checkpoint_capture_observed(&handle, capture).await?
+            }
+            DriverCall::CheckpointReconcileBound { handle, capture } => {
+                driver.checkpoint_reconcile_bound(&handle, capture).await?
             }
             DriverCall::CheckpointInspect { capture } => driver.checkpoint_inspect(capture).await?,
             DriverCall::CheckpointInspectBound { handle, capture } => {

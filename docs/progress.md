@@ -1,5 +1,40 @@
 # Progress
 
+The [durable capture outcome increment](capture-outcomes.md) adds permanent,
+source-bound native refusals for the dispatch-marker-before-send window and
+pre-reservation failures. Reconciliation holds the original VM mutex, checks its
+unchanged owner and capture hold, and recovers exact metadata under the store
+quota lock. New admission sidecars bind incomplete reservations without changing
+legacy job headers. Existing reservations remain inspection-only. A durable
+refusal prevents late or legacy submissions from dispatching the same capture ID.
+SQLite v19 stores its private immutable receipt and atomically settles Failed /
+Cleanup Complete with fence release; it does not collect or acknowledge removal
+of the healthy source. Plain NotFound, uncertain writers, foreign bindings and
+unbound legacy partial mutexes retain uncertainty rather than granting closure.
+
+Full Windows304 and GNU-root426 workspace checks pass on identical356 inputs,
+including formatting and strict all-target clippy; GNU host release also builds.
+Scoped musl21, strict firecracker/init all-target clippy and four static component
+release builds also pass on those356 inputs. All three owned check tags are
+positively absent. The [implementation summary](evidence/m4-capture-outcomes-implementation-summary.json)
+binds the complete source maps, validation reports and collection receipts.
+Focused GNU-root31 exercises12 storage,5 native projection,8 worker and6 snapshot
+database checks. Actual root-owned files, child SIGKILL, v18-to-v19 migration,
+database reopen, lost replies, source mismatch, old-key immutability and producer
+slot release are covered; VM/backend observations are synthetic. The earlier
+Windows focused14 uses the earlier source map and remains separate. Both original
+native compile failures and exact failed-tag absence are retained in the
+[diagnosis](evidence/m4-capture-outcomes-development-diagnosis.json). No production
+permission, deadline or ownership condition was weakened. The
+[upstream review](evidence/m4-capture-outcomes-upstream-review.json) pins OpenSandbox
+convergence and Temporal duplicate-ID policy source; GoldenHoop's permanent
+source/metadata refusal proof remains its own requirement.
+
+This is private implementation validation. Actual manager/worker KVM refusal and
+public capture/restore/delete acceptance remain required. MemorySnapshot stays
+unadvertised. Public target/execution identity bindings, actual capability probe,
+rootfs/volume snapshots, templates, combined M4 and complete M5-M6 remain active.
+
 The [worker memory-capture bridge](snapshot-worker.md) adds authenticated private
 admission under the ordinary source RPC mutex, pure driver preflight and read-only
 exact retries after source/backend retirement. Durable dispatch distinguishes the

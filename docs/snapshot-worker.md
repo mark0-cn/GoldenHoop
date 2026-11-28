@@ -6,6 +6,12 @@ complete M0-M6 objective remains in [roadmap.md](roadmap.md). Public snapshot
 REST/CLI/SDK routes, public restoration/execution bindings and the actual public
 profile probe remain required. MemorySnapshot is still unadvertised.
 
+The subsequent [durable capture outcome increment](capture-outcomes.md) closes
+positively proved pre-reservation refusals without removing a healthy source.
+Plain NotFound and uncertain ownership still retain Unknown. Its SQLite v19
+receipt, native permanent refusal and focused fault checks supplement the bridge
+evidence below.
+
 ## Admission and producer ownership
 
 `POST /internal/snapshots` is a private control-to-worker call, protected by the
@@ -88,9 +94,10 @@ pool wait and unit-binding lint are retained. The corrected mutex test keeps the
 admission future polled alongside its observer and proves it has queued on the
 original lock before checking the fence; it changes no production timeout or limit.
 
-Before enabling the capability, implement and actually verify definitive native
-refusal/no-intent convergence for the marker-before-send crash window. The current
-conservative state stays Unknown when native inspection cannot prove what happened,
+Before enabling the capability, actually verify the native/worker refusal path for
+the marker-before-send crash window on KVM. The implemented durable decision is
+described in [capture-outcomes.md](capture-outcomes.md). The conservative state
+stays Unknown when native inspection/reconciliation cannot prove what happened,
 including after source collection; it does not recapture, release unknown object
 references or claim cleanup from NotFound. Complete public capture/restore/delete,
 rotated target/public execution IDs, guest retained-ID/event/cancel bindings, actual

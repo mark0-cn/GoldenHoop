@@ -529,3 +529,165 @@ async fn actual_v17_database_migration_preserves_installation_and_existing_sourc
     directory.close().unwrap();
     assert!(!path.exists());
 }
+
+#[tokio::test]
+async fn v18_migration_and_durable_refusal_release_only_original_dispatch_without_collecting_source()
+ {
+    use sqlx::Connection;
+    let directory = tempfile::Builder::new()
+        .prefix("gh-snapshot-refusal-")
+        .tempdir()
+        .unwrap();
+    let path = directory.path().join("state.db");
+    let store = Store::open(&path).await.unwrap();
+    let installation = store.installation_id();
+    let (src, handle) = source(&store).await;
+    let execution = running(&store, src.id).await;
+    let created = store
+        .create_snapshot(&profile(), src.id, &capture(), "original")
+        .await
+        .unwrap();
+    let id = created.snapshot.id;
+    let reason = ApiError::new(
+        ErrorCode::QuotaExceeded,
+        "synthetic durable backend refusal",
+    );
+    let receipt = serde_json::json!({"capture":id,"source":handle.backend_ref,"private_backend_proof":"synthetic-private-proof"});
+    assert!(
+        store
+            .snapshot_capture_refused(id, &handle, &reason, &receipt)
+            .await
+            .is_err()
+    );
+    store.begin_snapshot_capture(id, &handle).await.unwrap();
+    store
+        .snapshot_capture_unknown(
+            id,
+            &ApiError::new(ErrorCode::NotFound, "absence is not a refusal"),
+        )
+        .await
+        .unwrap();
+    assert!(store.snapshot_source_fenced(src.id).await.unwrap());
+    store.close().await;
+    let mut connection = sqlx::SqliteConnection::connect_with(
+        &sqlx::sqlite::SqliteConnectOptions::new().filename(&path),
+    )
+    .await
+    .unwrap();
+    sqlx::raw_sql("ALTER TABLE snapshots DROP COLUMN capture_refusal; UPDATE meta SET value='18' WHERE key='schema_version';").execute(&mut connection).await.unwrap();
+    connection.close().await.unwrap();
+    let store = Store::open(&path).await.unwrap();
+    assert_eq!(store.installation_id(), installation);
+    assert!(store.snapshot(id).await.unwrap().capture_refusal.is_none());
+    assert_eq!(
+        store.snapshot_execution_candidates(id).await.unwrap()[0]
+            .execution
+            .id,
+        execution.id
+    );
+    let mut foreign = handle.clone();
+    foreign.backend_ref.push_str("-foreign");
+    assert!(
+        store
+            .snapshot_capture_refused(id, &foreign, &reason, &receipt)
+            .await
+            .is_err()
+    );
+    assert!(
+        store
+            .snapshot_capture_refused(id, &handle, &reason, &serde_json::json!({}))
+            .await
+            .is_err()
+    );
+    assert!(store.snapshot_source_fenced(src.id).await.unwrap());
+    store
+        .snapshot_capture_refused(id, &handle, &reason, &receipt)
+        .await
+        .unwrap();
+    let stored = store.snapshot(id).await.unwrap();
+    assert_eq!(stored.snapshot.state, SnapshotState::Failed);
+    assert_eq!(stored.snapshot.cleanup, CleanupState::Complete);
+    assert!(!stored.source_fenced && !stored.source_collected);
+    assert_eq!(stored.capture_refusal, Some(receipt.clone()));
+    assert!(stored.runtime_reference.is_none());
+    assert!(store.snapshot_work().await.unwrap().is_empty());
+    let original = store.sandbox(src.id).await.unwrap();
+    assert_eq!(original.sandbox.state, SandboxState::Running);
+    assert_eq!(original.handle.unwrap().backend_ref, handle.backend_ref);
+    store
+        .authorize_work(src.id, Capability::Files)
+        .await
+        .unwrap();
+    let public = store.snapshot_created(id).await.unwrap();
+    assert_eq!(public.operation.state, OperationState::Failed);
+    assert_eq!(
+        public.snapshot.error.as_ref().unwrap().code,
+        ErrorCode::QuotaExceeded
+    );
+    let body = serde_json::to_string(&public).unwrap();
+    assert!(!body.contains("synthetic-private-proof") && !body.contains(&handle.backend_ref));
+    store
+        .snapshot_capture_refused(id, &handle, &reason, &receipt)
+        .await
+        .unwrap();
+    let changed = ApiError::new(ErrorCode::Internal, "different reason");
+    assert!(
+        store
+            .snapshot_capture_refused(id, &handle, &changed, &receipt)
+            .await
+            .is_err()
+    );
+    assert!(
+        store
+            .snapshot_capture_refused(id, &handle, &reason, &serde_json::json!({"changed":true}))
+            .await
+            .is_err()
+    );
+    assert!(
+        store
+            .snapshot_capture_ready(
+                id,
+                &handle,
+                &manifest(id, &src),
+                &serde_json::json!({"synthetic":true})
+            )
+            .await
+            .is_err()
+    );
+    store.close().await;
+    let store = Store::open(&path).await.unwrap();
+    assert_eq!(
+        store.snapshot(id).await.unwrap().capture_refusal,
+        Some(receipt)
+    );
+    assert_eq!(
+        store
+            .create_snapshot(&profile(), src.id, &capture(), "original")
+            .await
+            .unwrap()
+            .snapshot
+            .id,
+        id
+    );
+    let fresh = store
+        .create_snapshot(&profile(), src.id, &capture(), "fresh")
+        .await
+        .unwrap();
+    assert_ne!(fresh.snapshot.id, id);
+    assert_eq!(fresh.snapshot.state, SnapshotState::Pending);
+    assert!(store.snapshot_source_fenced(src.id).await.unwrap());
+    store.close().await;
+    let mut connection = sqlx::SqliteConnection::connect_with(
+        &sqlx::sqlite::SqliteConnectOptions::new().filename(&path),
+    )
+    .await
+    .unwrap();
+    let version: String = sqlx::query_scalar("SELECT value FROM meta WHERE key='schema_version'")
+        .fetch_one(&mut connection)
+        .await
+        .unwrap();
+    assert_eq!(version, "19");
+    connection.close().await.unwrap();
+    directory.close().unwrap();
+    assert!(!path.exists());
+}

@@ -19,6 +19,7 @@ const TOKEN: &str = "synthetic-snapshot-worker-token-0123456789abcdef";
 const PENDING: usize = 0;
 const READY: usize = 1;
 const FAILED: usize = 2;
+const REFUSED: usize = 3;
 
 fn profile() -> RuntimeProfile {
     RuntimeProfile {
@@ -98,6 +99,13 @@ impl Backend {
                 reference: serde_json::json!({"capture":request.id,"private_host_path":"/synthetic/private-reference"}),
             },
             FAILED => MemoryCaptureState::Failed(failure()),
+            REFUSED => MemoryCaptureState::Refused {
+                reason: ApiError::new(
+                    ErrorCode::QuotaExceeded,
+                    "synthetic durable pre-reservation refusal",
+                ),
+                receipt: serde_json::json!({"capture":request.id,"source":request.handle.backend_ref,"private_receipt":"synthetic-permanently-closed-id"}),
+            },
             PENDING => MemoryCaptureState::Pending,
             _ => unreachable!("unknown synthetic capture scenario"),
         };
@@ -128,7 +136,8 @@ impl RuntimeDriver for Backend {
         request: &MemoryCaptureRequest,
     ) -> Result<MemoryCaptureObservation, ApiError> {
         self.inspections.fetch_add(1, Ordering::SeqCst);
-        if self.captures.load(Ordering::SeqCst) == 0 {
+        if self.captures.load(Ordering::SeqCst) == 0 && self.state.load(Ordering::SeqCst) != REFUSED
+        {
             return Err(ApiError::new(
                 ErrorCode::NotFound,
                 "synthetic original capture absent",
@@ -770,4 +779,129 @@ async fn pending_backend_job_retains_its_dispatch_slot_across_polling_tasks() {
         assert_eq!(backend.captures.load(Ordering::SeqCst), 2);
     })
     .await;
+}
+
+#[tokio::test]
+async fn durable_refusal_after_missing_send_or_lost_reply_survives_reopen_and_releases_producer_slot()
+ {
+    for sent in [false, true] {
+        checked(move |worker, backend, path| async move {
+            let (src, handle) = source(&worker).await;
+            let (other, _) = source(&worker).await;
+            let id = worker
+                .admit_snapshot(src.id, &intent(), "original")
+                .await
+                .unwrap()
+                .snapshot
+                .id;
+            let queued = worker
+                .admit_snapshot(other.id, &intent(), "queued")
+                .await
+                .unwrap()
+                .snapshot
+                .id;
+            if sent {
+                backend.state.store(REFUSED, Ordering::SeqCst);
+                backend.lose_reply.store(true, Ordering::SeqCst);
+            } else {
+                worker
+                    .store
+                    .begin_snapshot_capture(id, &handle)
+                    .await
+                    .unwrap();
+            }
+            assert!(step(&worker, id).await.is_err());
+            let unknown = worker.store.snapshot(id).await.unwrap();
+            assert_eq!(unknown.snapshot.state, SnapshotState::Unknown);
+            assert!(unknown.source_fenced && unknown.capture_refusal.is_none());
+            backend.state.store(REFUSED, Ordering::SeqCst);
+            backend.wrong_source.store(true, Ordering::SeqCst);
+            assert!(step(&worker, id).await.is_err());
+            assert!(worker.store.snapshot_source_fenced(src.id).await.unwrap());
+            backend.wrong_source.store(false, Ordering::SeqCst);
+            worker.store.close().await;
+            let replacement = super::tests::worker(
+                Store::open(&path).await.unwrap(),
+                backend.clone(),
+                worker.artifacts.clone(),
+            );
+            let result = AssertUnwindSafe(async {
+                step(&replacement, id).await.unwrap();
+                let closed = replacement.store.snapshot(id).await.unwrap();
+                assert_eq!(closed.snapshot.state, SnapshotState::Failed);
+                assert_eq!(closed.snapshot.cleanup, CleanupState::Complete);
+                assert!(!closed.source_collected && !closed.source_fenced);
+                assert!(closed.capture_refusal.is_some());
+                assert_eq!(replacement.store.snapshot_work().await.unwrap().len(), 1);
+                let original = replacement.store.sandbox(src.id).await.unwrap();
+                assert_eq!(original.sandbox.state, SandboxState::Running);
+                assert_eq!(original.handle.unwrap().backend_ref, handle.backend_ref);
+                replacement
+                    .rpc(
+                        backend.as_ref(),
+                        &handle,
+                        &AgentRequest::ReadFile {
+                            path: "still-usable".into(),
+                            max_bytes: 16,
+                        },
+                    )
+                    .await
+                    .unwrap();
+                backend.unsupported.store(true, Ordering::SeqCst);
+                let public = replacement
+                    .admit_snapshot(src.id, &intent(), "original")
+                    .await
+                    .unwrap();
+                assert_eq!(public.snapshot.id, id);
+                assert_eq!(public.operation.state, OperationState::Failed);
+                let body = serde_json::to_string(&public).unwrap();
+                assert!(
+                    !body.contains("synthetic-permanently-closed-id")
+                        && !body.contains(&handle.backend_ref)
+                );
+                step(&replacement, id).await.unwrap();
+                assert_eq!(backend.captures.load(Ordering::SeqCst), usize::from(sent));
+                assert_eq!(backend.removals.load(Ordering::SeqCst), 0);
+                assert_eq!(backend.collections.load(Ordering::SeqCst), 0);
+                backend.unsupported.store(false, Ordering::SeqCst);
+                backend.state.store(PENDING, Ordering::SeqCst);
+                let mut tasks = JoinSet::new();
+                replacement
+                    .schedule_snapshot_work(&mut tasks, &mut 0)
+                    .await
+                    .unwrap();
+                while let Some(result) = tasks.join_next().await {
+                    result.unwrap();
+                }
+                assert_eq!(
+                    replacement
+                        .store
+                        .snapshot(queued)
+                        .await
+                        .unwrap()
+                        .snapshot
+                        .state,
+                    SnapshotState::Capturing
+                );
+                assert_eq!(
+                    backend.captures.load(Ordering::SeqCst),
+                    usize::from(sent) + 1
+                );
+                let fresh = replacement
+                    .admit_snapshot(src.id, &intent(), "fresh")
+                    .await
+                    .unwrap();
+                assert_ne!(fresh.snapshot.id, id);
+                assert_eq!(backend.starts.load(Ordering::SeqCst), 0);
+            })
+            .catch_unwind()
+            .await;
+            replacement.store.close().await;
+            drop(replacement);
+            if let Err(error) = result {
+                std::panic::resume_unwind(error);
+            }
+        })
+        .await;
+    }
 }

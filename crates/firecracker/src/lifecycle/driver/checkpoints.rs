@@ -22,6 +22,94 @@ impl DriverConfig {
 }
 
 impl NativeEngine {
+    /// Legacy raw submission keeps its previous error contract. The worker's
+    /// observed submission may instead return a durable pre-reservation refusal.
+    pub(in crate::lifecycle) async fn checkpoint_capture_observed(
+        &self,
+        handle: &RuntimeHandle,
+        capture: Uuid,
+    ) -> std::result::Result<serde_json::Value, ApiError> {
+        match self.start_capture(handle, capture).await {
+            Ok(value) => Ok(value),
+            Err(error) => {
+                let original = error
+                    .downcast_ref::<ApiError>()
+                    .cloned()
+                    .unwrap_or_else(|| unavailable(error));
+                self.reconcile_capture(handle, capture, original.clone())
+                    .await
+                    .or(Err(original))
+            }
+        }
+    }
+    pub(in crate::lifecycle) async fn checkpoint_reconcile_bound(
+        &self,
+        handle: &RuntimeHandle,
+        capture: Uuid,
+    ) -> std::result::Result<serde_json::Value, ApiError> {
+        self.reconcile_capture(
+            handle,
+            capture,
+            ApiError::new(
+                ErrorCode::BackendUnavailable,
+                "capture intent was not visible at reconciliation",
+            ),
+        )
+        .await
+    }
+    async fn reconcile_capture(
+        &self,
+        handle: &RuntimeHandle,
+        capture: Uuid,
+        reason: ApiError,
+    ) -> std::result::Result<serde_json::Value, ApiError> {
+        let result = async {
+            let cfg = self.inner.cfg.checkpoint_config(capture)?;
+            let store = CheckpointStore::open_or_initialize(&cfg)?;
+            let before = self.for_handle(handle)?;
+            if let Some(value) = self.original_capture(&store, &before, capture).await? {
+                return Ok(value);
+            }
+            let _guard = self.vm_lock(handle.sandbox_id).await.lock_owned().await;
+            let current = self.for_handle(handle)?;
+            if current.owner != before.owner {
+                return Err(invalid("capture source changed during reconciliation").into());
+            }
+            if let Some(value) = self.original_capture(&store, &current, capture).await? {
+                return Ok(value);
+            }
+            if current.capture_hold == Some(capture) {
+                return Err(invalid(
+                    "capture hold exists without its acknowledged reservation; refusal is unproven",
+                )
+                .into());
+            }
+            let source = crate::checkpoint::CaptureIdentity {
+                installation: current.owner.installation_id,
+                sandbox: current.owner.sandbox_id,
+                source_generation: current.owner.generation,
+                capture,
+                request_sha256: current.owner.request_sha256,
+            };
+            let outcome =
+                tokio::task::spawn_blocking(move || store.close_unstarted(source, &reason))
+                    .await??;
+            match outcome {
+                Some(value) => Ok(value),
+                None => self
+                    .checkpoint_read_bound(handle, capture, false)
+                    .await
+                    .map_err(Into::into),
+            }
+        }
+        .await;
+        result.map_err(|error: Box<dyn std::error::Error + Send + Sync>| {
+            error
+                .downcast_ref::<ApiError>()
+                .cloned()
+                .unwrap_or_else(|| unavailable(error))
+        })
+    }
     pub(in crate::lifecycle) async fn checkpoint_capture(
         &self,
         handle: &RuntimeHandle,

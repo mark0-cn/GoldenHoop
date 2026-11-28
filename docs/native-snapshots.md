@@ -16,9 +16,11 @@ Public native snapshot/restore/template execution and capability registration
 remain unavailable. The [public operation foundation](public-snapshot-operations.md)
 now persists capture intent, source fencing and immutable execution candidates;
 The [worker bridge](snapshot-worker.md) now implements private source-serialized
-admission, capture dispatch, inspection and failed-capture collection. Definitive
-no-intent/refusal convergence, public restoration/clients and actual acceptance
-remain required.
+admission, capture dispatch, inspection and failed-capture collection. The
+[durable capture outcome increment](capture-outcomes.md) adds source-bound
+pre-reservation refusal and late-producer fencing. Actual manager/worker KVM
+refusal acceptance, public restoration/clients and full profile acceptance remain
+required.
 The complete M0-M6 objective in [roadmap.md](roadmap.md) is unchanged.
 
 ## Upstream constraints

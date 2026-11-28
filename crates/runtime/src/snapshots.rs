@@ -44,6 +44,12 @@ pub enum MemoryCaptureState {
     },
     /// A durable backend capture failed. This is not a collection receipt.
     Failed(ApiError),
+    /// Durable backend closure before reservation; a late producer cannot
+    /// dispatch this ID. The private receipt must survive controller restart.
+    Refused {
+        reason: ApiError,
+        receipt: serde_json::Value,
+    },
     /// Positive backend object/quota collection, bound to the original source.
     Collected,
 }

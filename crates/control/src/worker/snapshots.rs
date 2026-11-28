@@ -218,6 +218,11 @@ impl Worker {
         };
         observation_matches(&observation, &stored)?;
         match observation.state {
+            MemoryCaptureState::Refused { reason, receipt } => {
+                self.store
+                    .snapshot_capture_refused(id, &stored.source_handle, &reason, &receipt)
+                    .await
+            }
             MemoryCaptureState::Pending => Ok(()),
             MemoryCaptureState::Ready {
                 manifest,

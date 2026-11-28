@@ -12,6 +12,9 @@ use std::{
     path::{Path, PathBuf},
 };
 mod files;
+mod outcomes;
+pub(crate) use outcomes::RefusalReceipt;
+use outcomes::{CaptureAdmission, CaptureRefusal};
 pub(crate) mod restore;
 pub(crate) use files::Destination;
 pub(crate) use files::SourceDirectory;
@@ -282,6 +285,12 @@ struct Record {
 }
 impl Record {
     fn validate(&self, root: &Root) -> Result<()> {
+        if let Some(admission) = root.admission(self.intent.source.capture)?
+            && (admission.source != self.intent.source
+                || admission.intent_sha256 != self.intent.digest()?)
+        {
+            return Err(invalid("capture reservation differs from its original admission").into());
+        }
         self.producer.validate()?;
         if let Some(restoration) = &self.restoration {
             restoration.validate(self, root)?;
@@ -389,6 +398,11 @@ impl CheckpointStore {
         let _quota = self.root.quota(true)?;
         self.root.recover()?;
         let records = self.root.records()?;
+        if self.root.refusal(intent.source.capture)?.is_some() {
+            return Err(
+                invalid("capture intent is durably refused; a new dispatch is forbidden").into(),
+            );
+        }
         if records.iter().any(|r| {
             r.intent.source.capture == intent.source.capture
                 || r.intent.source.source_generation == intent.source.source_generation
@@ -416,12 +430,9 @@ impl CheckpointStore {
             )
             .into());
         }
-        if records.len() >= 1024 {
-            return Err(
-                invalid("checkpoint history is full; no identifier history is evicted").into(),
-            );
-        }
+        self.root.require_history_room(intent.source.capture)?;
         let id = intent.source.capture;
+        self.root.admit_capture(&intent)?;
         let mutex = self.root.ensure_job_lock(id, &intent.digest()?)?;
         let lease = self.root.job_lock(id, &mutex, &intent.digest()?, true)?;
         let record = Record {
@@ -480,6 +491,9 @@ impl CheckpointStore {
     }
     pub(crate) fn inspect(&self, id: Uuid) -> Result<serde_json::Value> {
         let _quota = self.root.quota(false)?;
+        if let Some(refusal) = self.root.refusal(id)? {
+            return Ok(refusal.status());
+        }
         let record: Record = self.root.json(&record_name(id))?;
         record.validate(&self.root)?;
         self.root
@@ -503,6 +517,9 @@ impl CheckpointStore {
     /// the job lease. A pending status never claims verified content.
     pub(crate) fn source(&self, id: Uuid) -> Result<Option<CaptureIdentity>> {
         let _quota = self.root.quota(false)?;
+        if let Some(refusal) = self.root.refusal(id)? {
+            return Ok(Some(refusal.receipt.source));
+        }
         if let Some(record) = self
             .root
             .records()?
@@ -530,6 +547,9 @@ impl CheckpointStore {
     pub(crate) fn collect(&self, id: Uuid) -> Result<serde_json::Value> {
         let _quota = self.root.quota(true)?;
         self.root.recover_capture(id)?;
+        if let Some(refusal) = self.root.refusal(id)? {
+            return Ok(refusal.status());
+        }
         let mut record: Record = self.root.json(&record_name(id))?;
         record.validate(&self.root)?;
         let _lease = self

@@ -1,5 +1,10 @@
 # Public snapshot operation storage
 
+The subsequent [durable capture outcome increment](capture-outcomes.md) adds
+schema v19's private refusal receipt and atomic release for positively proved
+pre-reservation failures. The original foundation's v18 evidence below remains
+bound to its original source.
+
 The storage increment supplies domain resources, durable capture intent and source
 admission fencing. The [worker bridge](snapshot-worker.md) now adds authenticated
 private admission, native capture/inspection and failed-capture collection. Public

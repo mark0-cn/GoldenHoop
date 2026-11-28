@@ -343,6 +343,28 @@ impl FirecrackerDriver {
         })
         .await
     }
+    pub async fn checkpoint_capture_observed(
+        &self,
+        handle: &RuntimeHandle,
+        capture: Uuid,
+    ) -> std::result::Result<serde_json::Value, ApiError> {
+        self.call(DriverCall::CheckpointCaptureObserved {
+            handle: handle.clone(),
+            capture,
+        })
+        .await
+    }
+    pub async fn checkpoint_reconcile_bound(
+        &self,
+        handle: &RuntimeHandle,
+        capture: Uuid,
+    ) -> std::result::Result<serde_json::Value, ApiError> {
+        self.call(DriverCall::CheckpointReconcileBound {
+            handle: handle.clone(),
+            capture,
+        })
+        .await
+    }
     pub async fn checkpoint_collect_bound(
         &self,
         handle: &RuntimeHandle,
@@ -383,16 +405,26 @@ impl RuntimeDriver for FirecrackerDriver {
         request: &MemoryCaptureRequest,
     ) -> std::result::Result<MemoryCaptureObservation, ApiError> {
         self.validate_memory_capture(request)?;
-        let value = self.checkpoint_capture(&request.handle, request.id).await?;
+        let value = self
+            .checkpoint_capture_observed(&request.handle, request.id)
+            .await?;
         super::snapshots::project(&self.cfg, request, value)
     }
     async fn inspect_memory_capture(
         &self,
         request: &MemoryCaptureRequest,
     ) -> std::result::Result<MemoryCaptureObservation, ApiError> {
-        let value = self
+        let value = match self
             .checkpoint_inspect_bound(&request.handle, request.id)
-            .await?;
+            .await
+        {
+            Ok(value) => value,
+            Err(error) if error.code == ErrorCode::NotFound => {
+                self.checkpoint_reconcile_bound(&request.handle, request.id)
+                    .await?
+            }
+            Err(error) => return Err(error),
+        };
         super::snapshots::project(&self.cfg, request, value)
     }
     async fn collect_memory_capture(
@@ -509,6 +541,12 @@ async fn dispatch(
         DriverCall::Reap => serde_json::to_value(engine.reap_expired().await?),
         DriverCall::CheckpointCapture { handle, capture } => {
             Ok(engine.checkpoint_capture(&handle, capture).await?)
+        }
+        DriverCall::CheckpointCaptureObserved { handle, capture } => {
+            Ok(engine.checkpoint_capture_observed(&handle, capture).await?)
+        }
+        DriverCall::CheckpointReconcileBound { handle, capture } => {
+            Ok(engine.checkpoint_reconcile_bound(&handle, capture).await?)
         }
         DriverCall::CheckpointInspect { capture } => {
             Ok(engine.checkpoint_read(capture, false).await?)

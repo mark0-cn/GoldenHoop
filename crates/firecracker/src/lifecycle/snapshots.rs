@@ -1,5 +1,6 @@
 //! Projection of authenticated, source-bound native observations for the worker.
 use super::*;
+use crate::checkpoint::storage::RefusalReceipt;
 use crate::checkpoint::{CheckpointManifest, CheckpointReference};
 use goldenhoop_runtime::{MemoryCaptureObservation, MemoryCaptureRequest, MemoryCaptureState};
 use std::collections::BTreeMap;
@@ -44,6 +45,8 @@ struct Status {
     objects_absent: Option<bool>,
     #[serde(default)]
     error: Option<String>,
+    #[serde(default)]
+    refusal: Option<RefusalReceipt>,
     #[serde(default, rename = "restoration")]
     _restoration: Option<serde_json::Value>,
 }
@@ -55,10 +58,62 @@ pub(super) fn project(
 ) -> std::result::Result<MemoryCaptureObservation, ApiError> {
     request.validate_identity()?;
     let status: Status = serde_json::from_value(value).map_err(|_| inconsistent())?;
-    if status.capture != request.id {
+    if request.handle.profile != PROFILE
+        || status.capture != request.id
+        || (status.phase != "refused" && status.refusal.is_some())
+    {
         return Err(inconsistent());
     }
     let state = match (status.phase.as_str(), status.capture_outcome.as_str()) {
+        ("refused", "not_started")
+            if status.objects_absent == Some(true)
+                && status.reserved_bytes == 0
+                && status.content_verified == Some(false)
+                && status.manifest.is_none()
+                && status.reference.is_none()
+                && status.error.is_none() =>
+        {
+            let receipt = status.refusal.ok_or_else(inconsistent)?;
+            if receipt.format != 1
+                || receipt.store.is_nil()
+                || [
+                    receipt.source.installation,
+                    receipt.source.sandbox,
+                    receipt.source.source_generation,
+                    receipt.source.capture,
+                ]
+                .iter()
+                .any(Uuid::is_nil)
+                || receipt.source.installation != cfg.installation_id
+                || receipt.source.sandbox != request.source.id
+                || receipt.source.capture != request.id
+                || receipt.source.request_sha256.len() != 64
+                || !receipt
+                    .source
+                    .request_sha256
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                || receipt.reason.message.len() > 512
+                || super::driver::native_handle(
+                    receipt.source.installation,
+                    receipt.source.sandbox,
+                    receipt.source.source_generation,
+                )
+                .backend_ref
+                    != request.handle.backend_ref
+            {
+                return Err(inconsistent());
+            }
+            let message = if receipt.reason.code == ErrorCode::QuotaExceeded {
+                "native capture capacity refused before reservation"
+            } else {
+                "native capture intent closed before reservation"
+            };
+            MemoryCaptureState::Refused {
+                reason: ApiError::new(receipt.reason.code, message),
+                receipt: serde_json::to_value(receipt).map_err(|_| inconsistent())?,
+            }
+        }
         ("reserved" | "capturing" | "publishing", "pending")
             if status.content_verified != Some(true)
                 && status.objects_absent != Some(true)

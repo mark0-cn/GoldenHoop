@@ -161,3 +161,59 @@ fn pending_failure_and_positive_collection_remain_distinct_and_disabled_prefligh
         ErrorCode::UnsupportedCapability
     );
 }
+
+fn refused(manifest: &CheckpointManifest) -> serde_json::Value {
+    serde_json::json!({"capture":manifest.source.capture,"phase":"refused","capture_outcome":"not_started",
+        "reserved_bytes":0,"objects_absent":true,"content_verified":false,"manifest":null,"reference":null,"error":null,
+        "refusal":{"format":1,"store":Uuid::new_v4(),"source":manifest.source,"reason":ApiError::new(ErrorCode::QuotaExceeded,"/operator/private/diagnostic")}})
+}
+
+#[test]
+fn source_bound_durable_refusal_projects_independently_of_failure_and_sanitizes_public_error() {
+    let (cfg, request, manifest) = fixture();
+    let value = refused(&manifest);
+    let observed = project(&cfg, &request, value.clone()).unwrap();
+    let MemoryCaptureState::Refused { reason, receipt } = observed.state else {
+        panic!("not a durable refusal")
+    };
+    assert_eq!(reason.code, ErrorCode::QuotaExceeded);
+    assert!(!reason.message.contains("/operator"));
+    assert_eq!(receipt, value["refusal"]);
+    assert_eq!(observed.source.backend_ref, request.handle.backend_ref);
+}
+
+#[test]
+fn missing_foreign_and_contradictory_refusal_receipts_never_release_source() {
+    let (cfg, request, manifest) = fixture();
+    for variant in 0..20 {
+        let mut value = refused(&manifest);
+        match variant {
+            0 => value["refusal"] = serde_json::Value::Null,
+            1 => value["refusal"]["format"] = 2.into(),
+            2 => value["refusal"]["store"] = serde_json::json!(Uuid::nil()),
+            3 => value["refusal"]["source"]["installation"] = serde_json::json!(Uuid::new_v4()),
+            4 => value["refusal"]["source"]["sandbox"] = serde_json::json!(Uuid::new_v4()),
+            5 => {
+                value["refusal"]["source"]["source_generation"] = serde_json::json!(Uuid::new_v4())
+            }
+            6 => value["refusal"]["source"]["capture"] = serde_json::json!(Uuid::new_v4()),
+            7 => value["refusal"]["source"]["request_sha256"] = "not-a-digest".into(),
+            8 => value["reserved_bytes"] = 1.into(),
+            9 => value["objects_absent"] = false.into(),
+            10 => value["content_verified"] = true.into(),
+            11 => value["reference"] = serde_json::to_value(manifest.reference().unwrap()).unwrap(),
+            12 => value["manifest"] = serde_json::to_value(&manifest).unwrap(),
+            13 => value["error"] = "failed capture".into(),
+            14 => value["capture_outcome"] = "failed".into(),
+            15 => value["phase"] = "failed".into(),
+            16 => value["refusal"]["source"]["source_generation"] = serde_json::json!(Uuid::nil()),
+            17 => value["refusal"]["reason"]["message"] = "x".repeat(513).into(),
+            18 => {
+                value.as_object_mut().unwrap().remove("objects_absent");
+            }
+            19 => value["refusal"]["source"]["request_sha256"] = "A".repeat(64).into(),
+            _ => unreachable!(),
+        }
+        assert!(project(&cfg, &request, value).is_err(), "variant {variant}");
+    }
+}
